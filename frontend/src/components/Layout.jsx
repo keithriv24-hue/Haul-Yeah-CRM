@@ -2,7 +2,7 @@ import React from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import {
   LayoutDashboard, Users, BookUser, Truck, KanbanSquare, PenLine, Receipt,
-  CreditCard, Handshake, HelpCircle, Eye, EyeOff, RefreshCw, KeyRound,
+  CreditCard, Handshake, HelpCircle, Eye, EyeOff, RefreshCw, KeyRound, LogOut,
 } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { Button } from "@/components/ui/button";
@@ -92,6 +92,20 @@ export default function Layout() {
               >
                 {privacy ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 {privacy ? "Privacy on" : "Privacy off"}
+              </Button>
+              <Button
+                data-testid="logout-btn"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  localStorage.removeItem("hy_token");
+                  window.dispatchEvent(new Event("hy-logout"));
+                }}
+                className="gap-1.5"
+              >
+                <LogOut className="w-4 h-4" />
+                <span className="hidden sm:inline">Log out</span>
+                <span className="sm:hidden">Out</span>
               </Button>
             </div>
           </div>
