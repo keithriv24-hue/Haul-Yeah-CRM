@@ -13,6 +13,8 @@ proxies every read/write through the Airtable REST API using **field IDs** (neve
 |---|---|
 | `AIRTABLE_API_KEY` | Airtable Personal Access Token. **Add via the secrets panel — never in code or chat.** |
 | `AIRTABLE_BASE_ID` | The Airtable base (`appFAHTRNrRckuxI8`). |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google Cloud OAuth credentials for Calendar sync (owner connects their account). |
+| `PUBLIC_BASE_URL` | Public app URL, used for the Google OAuth redirect URI. |
 | `APP_PASSWORD` | Owner password — full access. |
 | `SALES_PASSWORD` | Sales rep password — Leads + Quote Calculator only. |
 | `EMPLOYEE_PASSWORD` | Crew password — Projects (no money fields) + To-Do only. |

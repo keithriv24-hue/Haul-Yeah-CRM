@@ -9,6 +9,7 @@ import { InstructionBanner, PageTitle, Private, Money, EmptyState, LoadingRows }
 import { PF, f, PROJECT_STATUSES, TRUCKS, STATUS_PILL } from "@/lib/fields";
 import { fmtDate, fmtMoney, calendarTemplate } from "@/lib/format";
 import { useAuth } from "@/components/AuthGate";
+import JobsCalendar from "@/components/JobsCalendar";
 
 const NumField = ({ record, fieldId, label, testId }) => {
   const { updateRecord } = useApp();
@@ -151,6 +152,8 @@ export default function Projects() {
           ? "Your booked jobs, next date first. Update the status as the day goes. Open Details for crew, truck, and margin."
           : "Your jobs, next date first. Update the status as the day goes. Open Details for addresses, crew, and truck."}
       </InstructionBanner>
+      <JobsCalendar projects={records("projects")} />
+      <h2 className="font-display font-bold text-lg text-[#1B2A4A] mb-3">All jobs</h2>
       {loading && !projects.length ? (
         <LoadingRows />
       ) : error && !projects.length ? (

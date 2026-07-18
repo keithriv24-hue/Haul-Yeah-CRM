@@ -278,3 +278,32 @@ class TestRoleSwitch:
         r = requests.post(f"{BASE_URL}/api/auth/switch-role", json={"role": "admin"},
                           headers={"Authorization": f"Bearer {owner['token']}"}, timeout=15)
         assert r.status_code == 422
+
+
+class TestGoogleCalendar:
+    def test_gcal_status_owner_only(self):
+        owner = _login(CORRECT_PW)["token"]
+        r = requests.get(f"{BASE_URL}/api/oauth/calendar/status", headers={"Authorization": f"Bearer {owner}"}, timeout=15)
+        assert r.status_code == 200
+        body = r.json()
+        assert "connected" in body and "creds_configured" in body
+
+    def test_gcal_status_blocked_for_sales(self):
+        tok = _login(SALES_PW)["token"]
+        r = requests.get(f"{BASE_URL}/api/oauth/calendar/status", headers={"Authorization": f"Bearer {tok}"}, timeout=15)
+        assert r.status_code == 403
+
+    def test_gcal_login_without_creds_returns_503(self):
+        owner = _login(CORRECT_PW)["token"]
+        r = requests.get(f"{BASE_URL}/api/oauth/calendar/login", headers={"Authorization": f"Bearer {owner}"}, timeout=15)
+        assert r.status_code in (200, 503)
+
+    def test_gcal_sync_blocked_for_employee(self):
+        tok = _login(EMPLOYEE_PW)["token"]
+        r = requests.post(f"{BASE_URL}/api/calendar/sync", headers={"Authorization": f"Bearer {tok}"}, timeout=15)
+        assert r.status_code == 403
+
+    def test_gcal_callback_rejects_bad_state(self):
+        r = requests.get(f"{BASE_URL}/api/oauth/calendar/callback?code=x&state=garbage", timeout=15, allow_redirects=False)
+        assert r.status_code in (302, 307)
+        assert "gcal=error" in r.headers.get("location", "")
