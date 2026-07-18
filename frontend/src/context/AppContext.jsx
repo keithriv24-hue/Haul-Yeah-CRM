@@ -1,6 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { apiErrorMessage, createRecordApi, getHealth, getRates, listRecords, saveRatesApi, updateRecordApi } from "@/lib/api";
+import { apiErrorMessage, createRecordApi, getHealth, getRates, getSchemaApi, listRecords, saveRatesApi, updateRecordApi } from "@/lib/api";
 import { DEFAULT_RATES } from "@/lib/pricing";
 import { useAuth } from "@/components/AuthGate";
 
@@ -15,6 +15,8 @@ export const AppProvider = ({ children }) => {
   const [data, setData] = useState({});
   const [refreshing, setRefreshing] = useState(false);
   const [rates, setRates] = useState(DEFAULT_RATES);
+  const [schemas, setSchemas] = useState({});
+  const schemaRequested = useRef(new Set());
   const dataRef = useRef(data);
   dataRef.current = data;
   const { role } = useAuth();
@@ -24,6 +26,8 @@ export const AppProvider = ({ children }) => {
     if (prevRoleRef.current !== role) {
       prevRoleRef.current = role;
       setData({});
+      setSchemas({});
+      schemaRequested.current = new Set();
     }
   }, [role]);
 
@@ -54,6 +58,17 @@ export const AppProvider = ({ children }) => {
     const saved = await saveRatesApi(newRates);
     setRates(saved);
     return saved;
+  }, []);
+
+  const loadSchema = useCallback(async (table) => {
+    if (schemaRequested.current.has(table)) return;
+    schemaRequested.current.add(table);
+    try {
+      const d = await getSchemaApi(table);
+      setSchemas((s) => ({ ...s, [table]: d.fields }));
+    } catch {
+      schemaRequested.current.delete(table);
+    }
   }, []);
 
   const loadTable = useCallback(async (table, force = false) => {
@@ -128,7 +143,7 @@ export const AppProvider = ({ children }) => {
 
   return (
     <AppContext.Provider
-      value={{ privacy, togglePrivacy, health, checkHealth, loadTable, refreshAll, refreshing, updateRecord, createRecord, records, tableState, rates, saveRates }}
+      value={{ privacy, togglePrivacy, health, checkHealth, loadTable, refreshAll, refreshing, updateRecord, createRecord, records, tableState, rates, saveRates, schemas, loadSchema }}
     >
       {children}
     </AppContext.Provider>

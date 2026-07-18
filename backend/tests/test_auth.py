@@ -307,3 +307,21 @@ class TestGoogleCalendar:
         r = requests.get(f"{BASE_URL}/api/oauth/calendar/callback?code=x&state=garbage", timeout=15, allow_redirects=False)
         assert r.status_code in (302, 307)
         assert "gcal=error" in r.headers.get("location", "")
+
+
+class TestSchema:
+    def test_schema_requires_auth(self):
+        r = requests.get(f"{BASE_URL}/api/schema/leads", timeout=15)
+        assert r.status_code == 401
+
+    def test_schema_role_gating(self):
+        sales = _login(SALES_PW)["token"]
+        r = requests.get(f"{BASE_URL}/api/schema/leads", headers={"Authorization": f"Bearer {sales}"}, timeout=15)
+        assert r.status_code in (200, 503)
+        r = requests.get(f"{BASE_URL}/api/schema/projects", headers={"Authorization": f"Bearer {sales}"}, timeout=15)
+        assert r.status_code == 403
+
+    def test_schema_unknown_table(self):
+        owner = _login(CORRECT_PW)["token"]
+        r = requests.get(f"{BASE_URL}/api/schema/nope", headers={"Authorization": f"Bearer {owner}"}, timeout=15)
+        assert r.status_code == 404

@@ -53,11 +53,25 @@ const AddNoteDialog = ({ lead, open, onOpenChange }) => {
   );
 };
 
+const KNOWN_LEAD_FIELD_IDS = new Set(Object.values(LF));
+
+const formatExtraValue = (v) => {
+  if (Array.isArray(v)) return v.map((x) => (typeof x === "object" ? x?.name || x?.url || "" : x)).filter(Boolean).join(", ");
+  if (typeof v === "boolean") return v ? "Yes" : "No";
+  if (typeof v === "object" && v !== null) return v.name || v.url || "";
+  return String(v);
+};
+
 const LeadCard = ({ lead, onQuote, onDeposit, onNote }) => {
-  const { updateRecord, createRecord } = useApp();
+  const { updateRecord, createRecord, schemas } = useApp();
   const { role } = useAuth();
   const isSales = role === "sales";
   const [booking, setBooking] = useState(false);
+
+  const extras = (schemas.leads || [])
+    .filter((fd) => !KNOWN_LEAD_FIELD_IDS.has(fd.id))
+    .map((fd) => ({ ...fd, display: formatExtraValue(f(lead, fd.id)) }))
+    .filter((x) => f(lead, x.id) !== undefined && f(lead, x.id) !== null && x.display !== "");
   const status = f(lead, LF.status) || "New";
   const name = f(lead, LF.name) || "No name";
   const phone = f(lead, LF.phone);
@@ -117,6 +131,17 @@ const LeadCard = ({ lead, onQuote, onDeposit, onNote }) => {
           </span>
         )}
       </div>
+
+      {extras.length > 0 && (
+        <div data-testid="lead-extra-fields" className="space-y-1 text-xs text-slate-600 border-t border-slate-100 pt-2">
+          {extras.map((x) => (
+            <div key={x.id} className="flex gap-1.5">
+              <span className="font-semibold text-slate-500 shrink-0">{x.name}:</span>
+              <Private className="min-w-0 break-words">{x.display}</Private>
+            </div>
+          ))}
+        </div>
+      )}
 
       {f(lead, LF.notes) && (
         <p data-testid="lead-notes-preview" className="text-xs text-slate-500 line-clamp-2 whitespace-pre-wrap border-t border-slate-100 pt-2">
@@ -192,7 +217,7 @@ const LeadCard = ({ lead, onQuote, onDeposit, onNote }) => {
 };
 
 export default function Leads() {
-  const { loadTable, records, tableState } = useApp();
+  const { loadTable, loadSchema, records, tableState } = useApp();
   const [filter, setFilter] = useState("All");
   const [quoteLead, setQuoteLead] = useState(null);
   const [depositLead, setDepositLead] = useState(null);
@@ -201,7 +226,8 @@ export default function Leads() {
 
   useEffect(() => {
     loadTable("leads");
-  }, [loadTable]);
+    loadSchema("leads");
+  }, [loadTable, loadSchema]);
 
   const all = [...records("leads")].sort((a, b) => (b.createdTime || "").localeCompare(a.createdTime || ""));
   const leads = filter === "All" ? all : all.filter((l) => f(l, LF.status) === filter);

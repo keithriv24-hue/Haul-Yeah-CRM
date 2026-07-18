@@ -36,6 +36,7 @@ the token in localStorage so each device stays logged in. Five wrong tries from 
 | GET | `/api/health` | Is the Airtable key configured? |
 | GET | `/api/airtable/verify` | Fetches 1 record from Leads to confirm the connection works |
 | GET | `/api/tables/{table}` | List all records (paginated internally, `returnFieldsByFieldId=true`) |
+| GET | `/api/schema/{table}` | Live field list (id, name, type) from the Airtable Meta API — needs token scope `schema.bases:read` |
 | POST | `/api/tables/{table}` | Create a record (`{"fields": {fieldId: value}}`, typecast on) |
 | PATCH | `/api/tables/{table}/{record_id}` | Update a record (partial fields, typecast on) |
 

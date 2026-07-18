@@ -328,6 +328,42 @@ async def verify_connection(role: str = Depends(require_auth)):
     return {"ok": True, "records_seen": len(data.get("records", []))}
 
 
+_schema_cache: Dict[str, Dict[str, Any]] = {}
+
+
+@api_router.get("/schema/{table_key}")
+async def get_table_schema(table_key: str, role: str = Depends(require_auth)):
+    table_id = resolve_table(table_key)
+    check_table_access(role, table_key)
+    cached = _schema_cache.get(table_key)
+    if cached and time.time() - cached["at"] < 600:
+        fields = cached["fields"]
+    else:
+        key = get_api_key()
+        if not key:
+            raise HTTPException(status_code=503, detail={
+                "error": "missing_key",
+                "message": "Airtable key is not set. Add AIRTABLE_API_KEY in the secrets panel, then press Refresh."})
+        url = f"{AIRTABLE_API_URL}/meta/bases/{get_base_id()}/tables"
+        await limiter.wait()
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.get(url, headers={"Authorization": f"Bearer {key}"})
+        except httpx.HTTPError:
+            raise HTTPException(status_code=502, detail="Could not reach Airtable. Check your internet and try again.")
+        if resp.status_code == 403:
+            raise HTTPException(status_code=403, detail="The Airtable token can't read the table layout. Recreate it with the schema.bases:read scope added.")
+        if resp.status_code != 200:
+            raise HTTPException(status_code=resp.status_code, detail="Airtable could not send the table layout.")
+        table = next((t for t in resp.json().get("tables", []) if t.get("id") == table_id), None)
+        if not table:
+            raise HTTPException(status_code=404, detail="Table not found in the base.")
+        fields = [{"id": fl["id"], "name": fl["name"], "type": fl.get("type", "")} for fl in table.get("fields", [])]
+        _schema_cache[table_key] = {"fields": fields, "at": time.time()}
+    blocked = BLOCKED_FIELDS.get((role, table_key), set())
+    return {"fields": [fl for fl in fields if fl["id"] not in blocked]}
+
+
 @api_router.get("/tables/{table_key}")
 async def list_records(table_key: str, role: str = Depends(require_auth)):
     table_id = resolve_table(table_key)

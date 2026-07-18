@@ -25,6 +25,7 @@ export const gcalStatusApi = () => axios.get(`${API}/oauth/calendar/status`).the
 export const gcalLoginApi = () => axios.get(`${API}/oauth/calendar/login`).then((r) => r.data);
 export const gcalSyncApi = () => axios.post(`${API}/calendar/sync`).then((r) => r.data);
 export const gcalDisconnectApi = () => axios.post(`${API}/oauth/calendar/disconnect`).then((r) => r.data);
+export const getSchemaApi = (table) => axios.get(`${API}/schema/${table}`).then((r) => r.data);
 
 export const getHealth = () => axios.get(`${API}/health`).then((r) => r.data);
 export const verifyAirtable = () => axios.get(`${API}/airtable/verify`).then((r) => r.data);
