@@ -73,7 +73,7 @@ class TestMe:
         r = requests.get(f"{BASE_URL}/api/auth/me", headers={"Authorization": f"Bearer {token}"}, timeout=15)
         assert r.status_code == 200, r.text
         body = r.json()
-        assert body == {"ok": True, "role": "owner"}
+        assert body == {"ok": True, "role": "owner", "can_switch": True}
 
     def test_me_without_auth_header_returns_401(self):
         r = requests.get(f"{BASE_URL}/api/auth/me", timeout=15)
@@ -240,3 +240,41 @@ class TestRoles:
         tok = _login(SALES_PW)["token"]
         r = requests.get(f"{BASE_URL}/api/airtable/verify", headers={"Authorization": f"Bearer {tok}"}, timeout=15)
         assert r.status_code == 403
+
+
+class TestRoleSwitch:
+    def test_owner_can_switch_to_sales_and_back(self):
+        owner = _login(CORRECT_PW)
+        assert owner["can_switch"] is True
+        r = requests.post(f"{BASE_URL}/api/auth/switch-role", json={"role": "sales"},
+                          headers={"Authorization": f"Bearer {owner['token']}"}, timeout=15)
+        assert r.status_code == 200, r.text
+        sw = r.json()
+        assert sw["role"] == "sales" and sw["can_switch"] is True
+        leads = requests.get(f"{BASE_URL}/api/tables/leads", headers={"Authorization": f"Bearer {sw['token']}"}, timeout=15)
+        assert leads.status_code in (200, 503)
+        blocked = requests.get(f"{BASE_URL}/api/tables/invoices", headers={"Authorization": f"Bearer {sw['token']}"}, timeout=15)
+        assert blocked.status_code == 403
+        back = requests.post(f"{BASE_URL}/api/auth/switch-role", json={"role": "owner"},
+                             headers={"Authorization": f"Bearer {sw['token']}"}, timeout=15)
+        assert back.status_code == 200
+        assert back.json()["role"] == "owner"
+
+    def test_real_sales_token_cannot_switch(self):
+        data = _login(SALES_PW)
+        assert data.get("can_switch") is False
+        r = requests.post(f"{BASE_URL}/api/auth/switch-role", json={"role": "owner"},
+                          headers={"Authorization": f"Bearer {data['token']}"}, timeout=15)
+        assert r.status_code == 403
+
+    def test_real_employee_token_cannot_switch(self):
+        data = _login(EMPLOYEE_PW)
+        r = requests.post(f"{BASE_URL}/api/auth/switch-role", json={"role": "owner"},
+                          headers={"Authorization": f"Bearer {data['token']}"}, timeout=15)
+        assert r.status_code == 403
+
+    def test_switch_to_unknown_role_rejected(self):
+        owner = _login(CORRECT_PW)
+        r = requests.post(f"{BASE_URL}/api/auth/switch-role", json={"role": "admin"},
+                          headers={"Authorization": f"Bearer {owner['token']}"}, timeout=15)
+        assert r.status_code == 422

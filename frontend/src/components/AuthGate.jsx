@@ -2,7 +2,7 @@ import React, { createContext, useContext, useEffect, useState } from "react";
 import { Lock, LogIn } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { loginApi, authMe, apiErrorMessage } from "@/lib/api";
+import { loginApi, authMe, switchRoleApi, apiErrorMessage } from "@/lib/api";
 
 const AuthContext = createContext({ role: null });
 export const useAuth = () => useContext(AuthContext);
@@ -10,6 +10,7 @@ export const useAuth = () => useContext(AuthContext);
 export default function AuthGate({ children }) {
   const [authed, setAuthed] = useState(null);
   const [role, setRole] = useState(() => localStorage.getItem("hy_role"));
+  const [canSwitch, setCanSwitch] = useState(() => localStorage.getItem("hy_can_switch") === "1");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -23,7 +24,9 @@ export default function AuthGate({ children }) {
     authMe()
       .then((d) => {
         setRole(d.role);
+        setCanSwitch(!!d.can_switch);
         localStorage.setItem("hy_role", d.role);
+        localStorage.setItem("hy_can_switch", d.can_switch ? "1" : "0");
         setAuthed(true);
       })
       .catch(() => setAuthed(false));
@@ -41,10 +44,12 @@ export default function AuthGate({ children }) {
     setBusy(true);
     setError("");
     try {
-      const { token, role: r } = await loginApi(password);
+      const { token, role: r, can_switch } = await loginApi(password);
       localStorage.setItem("hy_token", token);
       localStorage.setItem("hy_role", r);
+      localStorage.setItem("hy_can_switch", can_switch ? "1" : "0");
       setRole(r);
+      setCanSwitch(!!can_switch);
       setAuthed(true);
     } catch (err) {
       setError(apiErrorMessage(err));
@@ -91,5 +96,15 @@ export default function AuthGate({ children }) {
     );
   }
 
-  return <AuthContext.Provider value={{ role }}>{children}</AuthContext.Provider>;
+  const switchRole = async (targetRole) => {
+    const d = await switchRoleApi(targetRole);
+    localStorage.setItem("hy_token", d.token);
+    localStorage.setItem("hy_role", d.role);
+    localStorage.setItem("hy_can_switch", "1");
+    setRole(d.role);
+    setCanSwitch(true);
+    return d.role;
+  };
+
+  return <AuthContext.Provider value={{ role, canSwitch, switchRole }}>{children}</AuthContext.Provider>;
 }

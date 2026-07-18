@@ -28,6 +28,7 @@ Full-stack internal CRM PWA for Haul Yeah Moving (weekend moving company, North 
 - [x] Owner Settings page: editable calculator rates (man-hour, travel ×2, stairs, pianos) stored in MongoDB, GET /api/settings/rates (all roles) + PUT (owner only), "Save preferences" updates every account; QuoteModal/Calculator/Help all use dynamic rates (10% cushion + 25% deposit stay fixed) — verified via curl + browser (rate change propagated to sales calculator: $1,175–$1,293/$323)
 - [x] Crew account: Privacy toggle removed (and blur never applies to employee role)
 - [x] Sales "Script" page: 6-step call script with say-this boxes + objection handling, sales nav only
+- [x] Owner account switcher: header dropdown (Owner/Sales/Crew view) swaps role tokens via POST /api/auth/switch-role with signed owner_switch claim; real sales/crew tokens get 403; data cache cleared on switch — 29 pytest + browser verified
 
 ## Current status / blockers
 - AIRTABLE_API_KEY not yet added by user (secrets panel). All data routes return friendly 503 until then. Verify with GET /api/airtable/verify after key is added.

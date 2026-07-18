@@ -1,5 +1,6 @@
 import React from "react";
 import { NavLink, Outlet } from "react-router-dom";
+import { toast } from "sonner";
 import {
   LayoutDashboard, Users, BookUser, Truck, KanbanSquare, PenLine, Receipt,
   CreditCard, Handshake, HelpCircle, Eye, EyeOff, RefreshCw, KeyRound, LogOut, Calculator, SlidersHorizontal, MessageSquareText,
@@ -7,6 +8,7 @@ import {
 import { useApp } from "@/context/AppContext";
 import { useAuth } from "@/components/AuthGate";
 import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const NAV = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, roles: ["owner"] },
@@ -39,8 +41,14 @@ const LiveIndicator = () => {
 
 export default function Layout() {
   const { privacy, togglePrivacy, refreshAll, refreshing, health } = useApp();
-  const { role } = useAuth();
+  const { role, canSwitch, switchRole } = useAuth();
   const navItems = NAV.filter((n) => n.roles.includes(role || "owner"));
+
+  const handleSwitch = (r) => {
+    switchRole(r)
+      .then((newRole) => toast.success(`You're now in the ${ROLE_LABEL[newRole]} view.`))
+      .catch(() => toast.error("Could not switch accounts. Try again."));
+  };
 
   return (
     <div className="min-h-screen bg-[#F2F4F8]">
@@ -80,9 +88,22 @@ export default function Layout() {
             </div>
             <div className="hidden md:block" />
             <div className="flex items-center gap-2">
-              <span data-testid="role-chip" className="inline-flex items-center text-xs font-bold uppercase tracking-wide bg-[#1B2A4A]/5 text-[#1B2A4A] border border-[#1B2A4A]/20 rounded-full px-2.5 py-1">
-                {ROLE_LABEL[role] || "Owner"}
-              </span>
+              {canSwitch ? (
+                <Select value={role || "owner"} onValueChange={handleSwitch}>
+                  <SelectTrigger data-testid="role-switch-select" className="w-[130px] h-8 text-xs font-bold uppercase tracking-wide text-[#1B2A4A] border-[#1B2A4A]/20 bg-[#1B2A4A]/5">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="owner">Owner view</SelectItem>
+                    <SelectItem value="sales">Sales view</SelectItem>
+                    <SelectItem value="employee">Crew view</SelectItem>
+                  </SelectContent>
+                </Select>
+              ) : (
+                <span data-testid="role-chip" className="inline-flex items-center text-xs font-bold uppercase tracking-wide bg-[#1B2A4A]/5 text-[#1B2A4A] border border-[#1B2A4A]/20 rounded-full px-2.5 py-1">
+                  {ROLE_LABEL[role] || "Owner"}
+                </span>
+              )}
               <LiveIndicator />
               <Button
                 data-testid="refresh-data-btn"
@@ -113,6 +134,7 @@ export default function Layout() {
                 onClick={() => {
                   localStorage.removeItem("hy_token");
                   localStorage.removeItem("hy_role");
+                  localStorage.removeItem("hy_can_switch");
                   window.dispatchEvent(new Event("hy-logout"));
                 }}
                 className="gap-1.5"

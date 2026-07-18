@@ -18,6 +18,7 @@ axios.interceptors.response.use(null, (error) => {
 
 export const loginApi = (password) => axios.post(`${API}/auth/login`, { password }).then((r) => r.data);
 export const authMe = () => axios.get(`${API}/auth/me`).then((r) => r.data);
+export const switchRoleApi = (role) => axios.post(`${API}/auth/switch-role`, { role }).then((r) => r.data);
 export const getRates = () => axios.get(`${API}/settings/rates`).then((r) => r.data);
 export const saveRatesApi = (rates) => axios.put(`${API}/settings/rates`, rates).then((r) => r.data);
 

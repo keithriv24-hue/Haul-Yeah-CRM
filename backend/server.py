@@ -65,23 +65,35 @@ DRIVER_RATE = 28
 HELPER_RATE = 24
 
 
-def require_auth(request: Request) -> str:
+def decode_token(request: Request) -> Dict[str, Any]:
     auth_header = request.headers.get("Authorization", "")
     token = auth_header[7:] if auth_header.startswith("Bearer ") else None
     if not token:
         raise HTTPException(status_code=401, detail="Not authenticated")
     try:
         payload = jwt.decode(token, os.environ["JWT_SECRET"], algorithms=[JWT_ALGORITHM])
-        if payload.get("type") != "access":
-            raise HTTPException(status_code=401, detail="Invalid token type")
-        role = payload.get("role") or payload.get("sub") or "owner"
-        if role not in ROLES:
-            raise HTTPException(status_code=401, detail="Invalid session. Log in again.")
-        return role
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Session expired. Log in again.")
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid session. Log in again.")
+    if payload.get("type") != "access":
+        raise HTTPException(status_code=401, detail="Invalid token type")
+    return payload
+
+
+def make_token(role: str, owner_switch: bool = False) -> str:
+    claims = {"sub": role, "role": role, "type": "access", "exp": datetime.now(timezone.utc) + timedelta(days=30)}
+    if owner_switch:
+        claims["owner_switch"] = True
+    return jwt.encode(claims, os.environ["JWT_SECRET"], algorithm=JWT_ALGORITHM)
+
+
+def require_auth(request: Request) -> str:
+    payload = decode_token(request)
+    role = payload.get("role") or payload.get("sub") or "owner"
+    if role not in ROLES:
+        raise HTTPException(status_code=401, detail="Invalid session. Log in again.")
+    return role
 
 
 def check_table_access(role: str, table_key: str):
@@ -245,17 +257,32 @@ async def login(payload: LoginPayload, request: Request):
             rec["count"] = 0
         raise HTTPException(status_code=401, detail="Wrong password. Try again.")
     _login_attempts.pop(ip, None)
-    token = jwt.encode(
-        {"sub": role, "role": role, "type": "access", "exp": datetime.now(timezone.utc) + timedelta(days=30)},
-        os.environ["JWT_SECRET"],
-        algorithm=JWT_ALGORITHM,
-    )
-    return {"token": token, "role": role}
+    return {"token": make_token(role), "role": role, "can_switch": role == "owner"}
+
+
+class SwitchPayload(BaseModel):
+    role: str
+
+
+@auth_router.post("/switch-role")
+async def switch_role(payload: SwitchPayload, request: Request):
+    token_payload = decode_token(request)
+    current = token_payload.get("role") or "owner"
+    if current != "owner" and not token_payload.get("owner_switch"):
+        raise HTTPException(status_code=403, detail="Only the owner can switch accounts.")
+    if payload.role not in ROLES:
+        raise HTTPException(status_code=422, detail="Unknown role.")
+    return {"token": make_token(payload.role, owner_switch=True), "role": payload.role, "can_switch": True}
 
 
 @auth_router.get("/me")
-async def me(role: str = Depends(require_auth)):
-    return {"ok": True, "role": role}
+async def me(request: Request):
+    payload = decode_token(request)
+    role = payload.get("role") or payload.get("sub") or "owner"
+    if role not in ROLES:
+        raise HTTPException(status_code=401, detail="Invalid session. Log in again.")
+    can_switch = role == "owner" or bool(payload.get("owner_switch"))
+    return {"ok": True, "role": role, "can_switch": can_switch}
 
 
 @api_router.get("/")

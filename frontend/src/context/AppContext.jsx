@@ -2,6 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useRef, useSt
 import { toast } from "sonner";
 import { apiErrorMessage, createRecordApi, getHealth, getRates, listRecords, saveRatesApi, updateRecordApi } from "@/lib/api";
 import { DEFAULT_RATES } from "@/lib/pricing";
+import { useAuth } from "@/components/AuthGate";
 
 const AppContext = createContext(null);
 export const useApp = () => useContext(AppContext);
@@ -16,6 +17,15 @@ export const AppProvider = ({ children }) => {
   const [rates, setRates] = useState(DEFAULT_RATES);
   const dataRef = useRef(data);
   dataRef.current = data;
+  const { role } = useAuth();
+  const prevRoleRef = useRef(role);
+
+  useEffect(() => {
+    if (prevRoleRef.current !== role) {
+      prevRoleRef.current = role;
+      setData({});
+    }
+  }, [role]);
 
   const togglePrivacy = () => {
     setPrivacy((p) => {
