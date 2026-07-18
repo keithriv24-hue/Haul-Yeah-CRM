@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Info, Clock } from "lucide-react";
 import { useApp } from "@/context/AppContext";
+import { useAuth } from "@/components/AuthGate";
 import { fmtMoney, minutesSince, ageLabel } from "@/lib/format";
 import { STATUS_PILL } from "@/lib/fields";
 
@@ -13,8 +14,10 @@ export const InstructionBanner = ({ children, testId = "instruction-banner" }) =
 
 export const Private = ({ children, block = false, className = "" }) => {
   const { privacy } = useApp();
+  const { role } = useAuth();
+  const masked = privacy && role !== "employee";
   const Tag = block ? "div" : "span";
-  return <Tag className={`${privacy ? "privacy-blur" : ""} ${className}`.trim()}>{children}</Tag>;
+  return <Tag className={`${masked ? "privacy-blur" : ""} ${className}`.trim()}>{children}</Tag>;
 };
 
 export const Money = ({ value, className = "" }) => (

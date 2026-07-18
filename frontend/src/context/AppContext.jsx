@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { apiErrorMessage, createRecordApi, getHealth, listRecords, updateRecordApi } from "@/lib/api";
+import { apiErrorMessage, createRecordApi, getHealth, getRates, listRecords, saveRatesApi, updateRecordApi } from "@/lib/api";
+import { DEFAULT_RATES } from "@/lib/pricing";
 
 const AppContext = createContext(null);
 export const useApp = () => useContext(AppContext);
@@ -12,6 +13,7 @@ export const AppProvider = ({ children }) => {
   const [health, setHealth] = useState({ airtable_configured: null });
   const [data, setData] = useState({});
   const [refreshing, setRefreshing] = useState(false);
+  const [rates, setRates] = useState(DEFAULT_RATES);
   const dataRef = useRef(data);
   dataRef.current = data;
 
@@ -35,7 +37,14 @@ export const AppProvider = ({ children }) => {
 
   useEffect(() => {
     checkHealth();
+    getRates().then(setRates).catch(() => {});
   }, [checkHealth]);
+
+  const saveRates = useCallback(async (newRates) => {
+    const saved = await saveRatesApi(newRates);
+    setRates(saved);
+    return saved;
+  }, []);
 
   const loadTable = useCallback(async (table, force = false) => {
     const existing = dataRef.current[table];
@@ -109,7 +118,7 @@ export const AppProvider = ({ children }) => {
 
   return (
     <AppContext.Provider
-      value={{ privacy, togglePrivacy, health, checkHealth, loadTable, refreshAll, refreshing, updateRecord, createRecord, records, tableState }}
+      value={{ privacy, togglePrivacy, health, checkHealth, loadTable, refreshAll, refreshing, updateRecord, createRecord, records, tableState, rates, saveRates }}
     >
       {children}
     </AppContext.Provider>

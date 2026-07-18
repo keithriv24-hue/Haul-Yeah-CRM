@@ -5,6 +5,8 @@ import { Toaster } from "@/components/ui/sonner";
 import { AppProvider } from "@/context/AppContext";
 import AuthGate, { useAuth } from "@/components/AuthGate";
 import Calculator from "@/pages/Calculator";
+import Script from "@/pages/Script";
+import Settings from "@/pages/Settings";
 import Layout from "@/components/Layout";
 import Dashboard from "@/pages/Dashboard";
 import Leads from "@/pages/Leads";
@@ -25,6 +27,7 @@ function RoleRoutes() {
         <Route element={<Layout />}>
           <Route path="/leads" element={<Leads />} />
           <Route path="/calculator" element={<Calculator />} />
+          <Route path="/script" element={<Script />} />
           <Route path="*" element={<Navigate to="/leads" replace />} />
         </Route>
       </Routes>
@@ -54,6 +57,7 @@ function RoleRoutes() {
         <Route path="/invoices" element={<Invoices />} />
         <Route path="/subscriptions" element={<Subscriptions />} />
         <Route path="/partner" element={<Partner />} />
+        <Route path="/settings" element={<Settings />} />
         <Route path="/help" element={<Help />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

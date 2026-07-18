@@ -2,6 +2,8 @@ import React from "react";
 import { PhoneCall, Calculator, CreditCard, Truck, CheckCircle2, Star, Video } from "lucide-react";
 import { InstructionBanner, PageTitle } from "@/components/Bits";
 import { Button } from "@/components/ui/button";
+import { useApp } from "@/context/AppContext";
+import { fmtMoney } from "@/lib/format";
 
 const STEPS = [
   {
@@ -37,6 +39,7 @@ const STEPS = [
 ];
 
 export default function Help() {
+  const { rates } = useApp();
   return (
     <div data-testid="help-page">
       <PageTitle title="Help" subtitle="From new lead to cash in the bank." />
@@ -57,16 +60,16 @@ export default function Help() {
       </div>
 
       <div className="bg-[#1B2A4A] text-white rounded-lg p-6 mb-8">
-        <h2 className="font-display font-bold text-lg mb-3">Pricing cheat sheet (locked v1.0)</h2>
+        <h2 className="font-display font-bold text-lg mb-3">Pricing cheat sheet (current rates)</h2>
         <ul className="text-sm space-y-1.5 text-white/85">
-          <li>$65 per man-hour</li>
-          <li>Travel fee: $125 with truck · $75 labor-only</li>
-          <li>Stairs: $85 per flight</li>
-          <li>Piano: $500 upright · $800 grand (flat)</li>
+          <li>{fmtMoney(rates.manHour)} per man-hour</li>
+          <li>Travel fee: {fmtMoney(rates.travelTruck)} with truck · {fmtMoney(rates.travelLabor)} labor-only</li>
+          <li>Stairs: {fmtMoney(rates.stairFlight)} per flight</li>
+          <li>Piano: {fmtMoney(rates.pianoUpright)} upright · {fmtMoney(rates.pianoGrand)} grand (flat)</li>
           <li>Quote high end = subtotal + 10% cushion</li>
           <li>Deposit = 25% of the high end</li>
         </ul>
-        <p className="text-xs text-white/60 mt-3">Quotes always show as a range. Final price confirmed by phone.</p>
+        <p className="text-xs text-white/60 mt-3">Quotes always show as a range. Change these rates on the Settings page.</p>
       </div>
 
       <div className="bg-white border border-slate-200 rounded-lg p-5">

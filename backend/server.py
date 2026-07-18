@@ -12,6 +12,7 @@ import httpx
 import jwt
 from dotenv import load_dotenv
 from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Request
+from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel
 from starlette.middleware.cors import CORSMiddleware
 
@@ -190,6 +191,28 @@ class RecordPayload(BaseModel):
     fields: Dict[str, Any]
 
 
+mongo_client = AsyncIOMotorClient(os.environ["MONGO_URL"])
+mongo_db = mongo_client[os.environ["DB_NAME"]]
+
+DEFAULT_RATES = {
+    "manHour": 65,
+    "travelTruck": 125,
+    "travelLabor": 75,
+    "stairFlight": 85,
+    "pianoUpright": 500,
+    "pianoGrand": 800,
+}
+
+
+class RatesPayload(BaseModel):
+    manHour: float
+    travelTruck: float
+    travelLabor: float
+    stairFlight: float
+    pianoUpright: float
+    pianoGrand: float
+
+
 app = FastAPI(title="Haul Yeah Moving CRM Proxy")
 api_router = APIRouter(prefix="/api", dependencies=[Depends(require_auth)])
 auth_router = APIRouter(prefix="/api/auth")
@@ -243,6 +266,23 @@ async def root():
 @api_router.get("/health")
 async def health():
     return {"airtable_configured": bool(get_api_key()), "base_id_configured": bool(get_base_id())}
+
+
+@api_router.get("/settings/rates")
+async def get_rates(role: str = Depends(require_auth)):
+    doc = await mongo_db.settings.find_one({"_id": "calculator_rates"}) or {}
+    return {**DEFAULT_RATES, **{k: v for k, v in doc.items() if k in DEFAULT_RATES}}
+
+
+@api_router.put("/settings/rates")
+async def save_rates(payload: RatesPayload, role: str = Depends(require_auth)):
+    if role != "owner":
+        raise HTTPException(status_code=403, detail="Only the owner can change rates.")
+    rates = payload.model_dump()
+    if any(v < 0 for v in rates.values()):
+        raise HTTPException(status_code=422, detail="Rates can't be negative.")
+    await mongo_db.settings.update_one({"_id": "calculator_rates"}, {"$set": rates}, upsert=True)
+    return rates
 
 
 @api_router.get("/airtable/verify")

@@ -1,4 +1,4 @@
-export const RATES = {
+export const DEFAULT_RATES = {
   manHour: 65,
   travelTruck: 125,
   travelLabor: 75,
@@ -7,11 +7,11 @@ export const RATES = {
   pianoGrand: 800,
 };
 
-export function computeQuote({ crew, hours, travel, flights, piano }) {
-  const base = (crew || 0) * (hours || 0) * RATES.manHour;
-  const travelFee = travel === "labor" ? RATES.travelLabor : RATES.travelTruck;
-  const stairs = (flights || 0) * RATES.stairFlight;
-  const pianoFee = piano === "upright" ? RATES.pianoUpright : piano === "grand" ? RATES.pianoGrand : 0;
+export function computeQuote({ crew, hours, travel, flights, piano }, rates = DEFAULT_RATES) {
+  const base = (crew || 0) * (hours || 0) * rates.manHour;
+  const travelFee = travel === "labor" ? rates.travelLabor : rates.travelTruck;
+  const stairs = (flights || 0) * rates.stairFlight;
+  const pianoFee = piano === "upright" ? rates.pianoUpright : piano === "grand" ? rates.pianoGrand : 0;
   const low = base + travelFee + stairs + pianoFee;
   const high = Math.round(low * 1.1);
   const deposit = Math.round(high * 0.25);

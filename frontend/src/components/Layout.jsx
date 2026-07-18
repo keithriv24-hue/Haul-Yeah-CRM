@@ -2,7 +2,7 @@ import React from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import {
   LayoutDashboard, Users, BookUser, Truck, KanbanSquare, PenLine, Receipt,
-  CreditCard, Handshake, HelpCircle, Eye, EyeOff, RefreshCw, KeyRound, LogOut, Calculator,
+  CreditCard, Handshake, HelpCircle, Eye, EyeOff, RefreshCw, KeyRound, LogOut, Calculator, SlidersHorizontal, MessageSquareText,
 } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { useAuth } from "@/components/AuthGate";
@@ -12,6 +12,7 @@ const NAV = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, roles: ["owner"] },
   { to: "/leads", label: "Leads", icon: Users, roles: ["owner", "sales"] },
   { to: "/calculator", label: "Quote Calculator", icon: Calculator, roles: ["sales"] },
+  { to: "/script", label: "Script", icon: MessageSquareText, roles: ["sales"] },
   { to: "/contacts", label: "Contacts", icon: BookUser, roles: ["owner"] },
   { to: "/projects", label: "Projects", icon: Truck, roles: ["owner", "employee"] },
   { to: "/tasks", label: "To-Do", icon: KanbanSquare, roles: ["owner", "employee"] },
@@ -19,6 +20,7 @@ const NAV = [
   { to: "/invoices", label: "Invoices", icon: Receipt, roles: ["owner"] },
   { to: "/subscriptions", label: "Subscriptions", icon: CreditCard, roles: ["owner"] },
   { to: "/partner", label: "Partner View", icon: Handshake, roles: ["owner"] },
+  { to: "/settings", label: "Settings", icon: SlidersHorizontal, roles: ["owner"] },
   { to: "/help", label: "Help", icon: HelpCircle, roles: ["owner"] },
 ];
 
@@ -93,15 +95,17 @@ export default function Layout() {
                 <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
                 Refresh
               </Button>
-              <Button
-                data-testid="privacy-toggle-btn"
-                size="sm"
-                onClick={togglePrivacy}
-                className={`gap-1.5 ${privacy ? "bg-[#E8743B] hover:bg-[#d4632e] text-white" : "bg-[#1B2A4A] hover:bg-[#26395f] text-white"}`}
-              >
-                {privacy ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                {privacy ? "Privacy on" : "Privacy off"}
-              </Button>
+              {role !== "employee" && (
+                <Button
+                  data-testid="privacy-toggle-btn"
+                  size="sm"
+                  onClick={togglePrivacy}
+                  className={`gap-1.5 ${privacy ? "bg-[#E8743B] hover:bg-[#d4632e] text-white" : "bg-[#1B2A4A] hover:bg-[#26395f] text-white"}`}
+                >
+                  {privacy ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  {privacy ? "Privacy on" : "Privacy off"}
+                </Button>
+              )}
               <Button
                 data-testid="logout-btn"
                 variant="outline"

@@ -52,6 +52,9 @@ the token in localStorage so each device stays logged in. Five wrong tries from 
 | `/invoices` | Invoice KPIs + table with one-click "Mark paid" |
 | `/subscriptions` | Monthly burn + annualized totals |
 | `/partner` | Read-only financial summary — no customer names |
+| `/settings` | Owner only — edit calculator rates, "Save preferences" applies to all accounts |
+| `/script` | Sales only — 6-step phone script with objection handling |
+| `/calculator` | Sales (and owner) — standalone quote calculator |
 | `/help` | The full lead-to-cash flow, in plain language |
 
 ## Key behaviors

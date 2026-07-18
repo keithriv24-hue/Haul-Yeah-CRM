@@ -7,13 +7,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { computeQuote } from "@/lib/pricing";
+import { fmtMoney } from "@/lib/format";
 import { useApp } from "@/context/AppContext";
 import { LF, f } from "@/lib/fields";
 import { PREFILL_BY_SIZE, QUOTE_COACH_LINE, quoteSaveFields } from "@/lib/quote";
 import { Money } from "@/components/Bits";
 
 export default function QuoteModal({ lead, open, onOpenChange }) {
-  const { updateRecord } = useApp();
+  const { updateRecord, rates } = useApp();
   const size = f(lead, LF.homeSize);
   const pre = PREFILL_BY_SIZE[size] || { crew: "3", hours: "5" };
   const [crew, setCrew] = useState(pre.crew);
@@ -29,7 +30,7 @@ export default function QuoteModal({ lead, open, onOpenChange }) {
     travel,
     flights: Number(flights) || 0,
     piano,
-  });
+  }, rates);
 
   const save = async () => {
     setSaving(true);
@@ -69,8 +70,8 @@ export default function QuoteModal({ lead, open, onOpenChange }) {
             <Select value={travel} onValueChange={setTravel}>
               <SelectTrigger data-testid="quote-travel-select"><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="truck">With truck ($125)</SelectItem>
-                <SelectItem value="labor">Labor-only ($75)</SelectItem>
+                <SelectItem value="truck">With truck ({fmtMoney(rates.travelTruck)})</SelectItem>
+                <SelectItem value="labor">Labor-only ({fmtMoney(rates.travelLabor)})</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -84,15 +85,15 @@ export default function QuoteModal({ lead, open, onOpenChange }) {
               <SelectTrigger data-testid="quote-piano-select"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="none">No piano</SelectItem>
-                <SelectItem value="upright">Upright piano ($500 flat)</SelectItem>
-                <SelectItem value="grand">Grand piano ($800 flat)</SelectItem>
+                <SelectItem value="upright">Upright piano ({fmtMoney(rates.pianoUpright)} flat)</SelectItem>
+                <SelectItem value="grand">Grand piano ({fmtMoney(rates.pianoGrand)} flat)</SelectItem>
               </SelectContent>
             </Select>
           </div>
         </div>
         <div className="border border-[#1B2A4A]/15 bg-[#1B2A4A]/[0.04] rounded-lg p-4 space-y-1">
           <div className="flex justify-between text-sm text-slate-600">
-            <span>Labor ({crew} × {hours || 0} hrs × $65)</span><Money value={q.base} />
+            <span>Labor ({crew} × {hours || 0} hrs × {fmtMoney(rates.manHour)})</span><Money value={q.base} />
           </div>
           <div className="flex justify-between text-sm text-slate-600"><span>Travel fee</span><Money value={q.travelFee} /></div>
           {q.stairs > 0 && <div className="flex justify-between text-sm text-slate-600"><span>Stairs</span><Money value={q.stairs} /></div>}

@@ -25,6 +25,9 @@ Full-stack internal CRM PWA for Haul Yeah Moving (weekend moving company, North 
 - [x] Owner password auth (APP_PASSWORD + 30-day JWT, per-device persistence, brute-force lockout) — 17 pytest cases pass; UI flow verified in browser
 - [x] Log out button in header
 - [x] Three-role system (owner / sales / employee): role-matched login, role chip in header, role-filtered nav + routes, backend route & field enforcement, standalone mobile-first Quote Calculator page for sales (with home-size pre-fill + coaching line), Add-note + specialty items on lead cards, employee Projects without money — 25 pytest cases + testing-agent browser pass (iteration_1.json)
+- [x] Owner Settings page: editable calculator rates (man-hour, travel ×2, stairs, pianos) stored in MongoDB, GET /api/settings/rates (all roles) + PUT (owner only), "Save preferences" updates every account; QuoteModal/Calculator/Help all use dynamic rates (10% cushion + 25% deposit stay fixed) — verified via curl + browser (rate change propagated to sales calculator: $1,175–$1,293/$323)
+- [x] Crew account: Privacy toggle removed (and blur never applies to employee role)
+- [x] Sales "Script" page: 6-step call script with say-this boxes + objection handling, sales nav only
 
 ## Current status / blockers
 - AIRTABLE_API_KEY not yet added by user (secrets panel). All data routes return friendly 503 until then. Verify with GET /api/airtable/verify after key is added.
