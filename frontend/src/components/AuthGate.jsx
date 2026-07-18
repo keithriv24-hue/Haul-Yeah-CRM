@@ -1,11 +1,15 @@
-import React, { useEffect, useState } from "react";
+import React, { createContext, useContext, useEffect, useState } from "react";
 import { Lock, LogIn } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { loginApi, authMe, apiErrorMessage } from "@/lib/api";
 
+const AuthContext = createContext({ role: null });
+export const useAuth = () => useContext(AuthContext);
+
 export default function AuthGate({ children }) {
   const [authed, setAuthed] = useState(null);
+  const [role, setRole] = useState(() => localStorage.getItem("hy_role"));
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -17,7 +21,11 @@ export default function AuthGate({ children }) {
       return;
     }
     authMe()
-      .then(() => setAuthed(true))
+      .then((d) => {
+        setRole(d.role);
+        localStorage.setItem("hy_role", d.role);
+        setAuthed(true);
+      })
       .catch(() => setAuthed(false));
   }, []);
 
@@ -33,8 +41,10 @@ export default function AuthGate({ children }) {
     setBusy(true);
     setError("");
     try {
-      const { token } = await loginApi(password);
+      const { token, role: r } = await loginApi(password);
       localStorage.setItem("hy_token", token);
+      localStorage.setItem("hy_role", r);
+      setRole(r);
       setAuthed(true);
     } catch (err) {
       setError(apiErrorMessage(err));
@@ -58,7 +68,7 @@ export default function AuthGate({ children }) {
             HAUL <span className="text-[#E8743B]">YEAH</span>
           </div>
           <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400 mt-1 mb-6">Moving CRM</div>
-          <p className="text-sm text-slate-600 mb-4">Enter the owner password to open the app. This device stays logged in.</p>
+          <p className="text-sm text-slate-600 mb-4">Enter your password to open the app. Owner, sales, and crew each have their own. This device stays logged in.</p>
           <div className="relative mb-3">
             <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
             <Input
@@ -81,5 +91,5 @@ export default function AuthGate({ children }) {
     );
   }
 
-  return children;
+  return <AuthContext.Provider value={{ role }}>{children}</AuthContext.Provider>;
 }

@@ -1,6 +1,13 @@
-# Auth Testing Playbook — Haul Yeah CRM (single owner password)
+# Auth Testing Playbook — Haul Yeah CRM (three shared-password roles)
 
-This app uses ONE shared owner password (env `APP_PASSWORD`), not email/password accounts. No MongoDB users.
+This app uses THREE shared passwords (no user accounts, no MongoDB):
+- Owner: env `APP_PASSWORD` = HaulYeah2026! → full access
+- Sales: env `SALES_PASSWORD` = SellMoves2026! → /api/tables/leads only
+- Employee: env `EMPLOYEE_PASSWORD` = CrewDay2026! → /api/tables/projects + /api/tables/tasks only (projects responses strip Quote / Deposit Collected / Final Revenue field IDs)
+
+Login returns `{"token": <JWT with role claim>, "role": "owner|sales|employee"}`. `/api/auth/me` returns `{"ok": true, "role": ...}`.
+Owner project responses include computed `internal: {crew_cost, margin}` — crew rates live only in the backend.
+Cross-role table access returns 403 "Your role can't open this." `/api/airtable/verify` is owner-only.
 
 ## API tests
 

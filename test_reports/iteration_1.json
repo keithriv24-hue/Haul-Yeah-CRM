@@ -1,0 +1,44 @@
+{
+  "summary": "Backend pytest suite (25 tests) all PASS. Frontend UI tests uncovered ONE CRITICAL React crash: `ReferenceError: isOwner is not defined` inside pages/Projects.jsx (parent Projects component used `isOwner` inside InstructionBanner but only defined it inside child ProjectCard). This blank-screened both Owner /projects and Employee /projects (Employee lands on /projects, so employee login was fully broken). Testing agent applied the minimal fix (added const { role } = useAuth(); const isOwner = ... in Projects parent) and re-verified — Owner + Employee /projects now render cleanly, no console/page errors. All other role/route/redirect/calculator/nav assertions pass.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "pages/Projects.jsx (Projects parent component, line 148 before fix)",
+        "issue": "Uncaught ReferenceError: isOwner is not defined — blank-screened /projects for BOTH owner and employee. isOwner was defined only inside the ProjectCard sub-component but referenced in the parent Projects InstructionBanner ternary. Fix: add `const { role } = useAuth(); const isOwner = (role || 'owner') === 'owner';` in the Projects parent. FIXED by testing agent — verified: owner /projects renders margin-aware banner, employee /projects renders addresses/crew banner with no money leaks.",
+        "selector": "[data-testid='projects-page']",
+        "priority": "CRITICAL"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_auth.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Review testing-agent's fix to /app/frontend/src/pages/Projects.jsx (added useAuth hook + isOwner constant in the Projects parent component). Kept behavior identical to what the InstructionBanner already assumed."
+  ],
+  "critical_code_review_comments": [
+    "pages/Projects.jsx had scope leak: isOwner used in parent but defined in child — indicates a duplicate/refactor miss. The InstructionBanner ternary in the parent needs the same auth context the ProjectCard uses. Recommend hoisting isOwner (or the whole useAuth call) to a shared parent or using a small useIsOwner() hook to avoid this class of bug elsewhere.",
+    "Frontend bundle hygiene verified: no `driverHr`/`helperHr` in /app/frontend/src; only reference to `crew_cost` is inside an `{isOwner && internal && ...}` gated block (Projects.jsx line 113-128) that only renders for owner tokens and only when backend sends `internal` (owner-only field).",
+    "Existing test file /app/backend/tests/test_auth.py already covered auth+roles thoroughly (25 tests, all pass). No changes needed."
+  ],
+  "updated_files": [
+    "/app/frontend/src/pages/Projects.jsx (added const { role } = useAuth(); const isOwner = (role || 'owner') === 'owner'; in the default-exported Projects component to fix ReferenceError)"
+  ],
+  "success_rate": {
+    "backend": "100% (25/25 pytest)",
+    "frontend": "100% after applying the isOwner fix (was 0% for /projects before)"
+  },
+  "test_credentials": "Owner: HaulYeah2026!  Sales: SellMoves2026!  Employee: CrewDay2026!  (from /app/memory/test_credentials.md — verified all three login and produce correct role JWT)",
+  "seed_data_creation": "None — AIRTABLE_API_KEY intentionally empty; data routes return 503 as documented. No seed needed.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Full role coverage verified: (1) OWNER login → chip 'Owner', all 10 nav items (dashboard,leads,contacts,projects,to-do,blog,invoices,subscriptions,partner-view,help) present, no calculator nav; (2) SALES login → chip 'Sales', lands /leads, nav = [Leads, Quote Calculator], forbidden paths (/invoices,/partner,/,/projects,/subscriptions,/blog,/contacts,/tasks) all redirect to /leads, lead-deposit-btn and lead-book-btn confirmed absent (0 cards rendered — expected due to empty Airtable key); (3) EMPLOYEE login → chip 'Crew', lands /projects, nav = [Projects, To-Do], forbidden paths all redirect to /projects, /tasks reachable, no money field text leaks; (4) CALCULATOR default 3×5 truck = $1,100–$1,210 dep $303, recompute 2×3.5 truck = $580–$638 dep $160, recompute labor-only 2×3.5 = $530–$583, coaching line visible; (5) LOGOUT button works and returns to login screen — role switching via re-login confirmed; (6) MOBILE 390×844 sales bottom-tabs render [Leads, Quote Calculator]. Only fix applied: added useAuth hook to Projects parent to resolve `isOwner is not defined` runtime error.",
+  "rca_of_the_issue": "ROOT CAUSE: /app/frontend/src/pages/Projects.jsx defines two components — inner ProjectCard (line 30) which correctly calls useAuth() and computes `isOwner`, and outer Projects (line 135) which uses `{isOwner ? ... : ...}` inside InstructionBanner (line 148) without importing or computing `isOwner` in that scope. JavaScript hoisting cannot help since `isOwner` is a `const` local to ProjectCard. REPRODUCTION: log in as any role → navigate to /projects → page throws ReferenceError, React error overlay shown (dev build) → blank page in prod. MITIGATION APPLIED: added `const { role } = useAuth(); const isOwner = (role || 'owner') === 'owner';` at the top of the Projects component body. Verified via browser automation: no console/page errors, projects-page test-id renders, correct role-specific banner text ('margin' for owner vs 'addresses, crew, and truck' for employee)."
+}

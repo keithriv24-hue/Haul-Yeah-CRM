@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { InstructionBanner, PageTitle, Private, Money, EmptyState, LoadingRows } from "@/components/Bits";
 import { PF, f, PROJECT_STATUSES, TRUCKS, STATUS_PILL } from "@/lib/fields";
 import { fmtDate, fmtMoney, calendarTemplate } from "@/lib/format";
-import { crewCost } from "@/lib/pricing";
+import { useAuth } from "@/components/AuthGate";
 
 const NumField = ({ record, fieldId, label, testId }) => {
   const { updateRecord } = useApp();
@@ -29,14 +29,15 @@ const NumField = ({ record, fieldId, label, testId }) => {
 
 const ProjectCard = ({ project }) => {
   const { updateRecord } = useApp();
+  const { role } = useAuth();
+  const isOwner = (role || "owner") === "owner";
   const [open, setOpen] = useState(false);
   const status = f(project, PF.status) || "Pending Deposit";
   const crew = Number(f(project, PF.crewSize)) || 0;
   const hours = Number(f(project, PF.estHours)) || 0;
   const quote = Number(f(project, PF.quote)) || 0;
   const finalRev = Number(f(project, PF.finalRevenue)) || 0;
-  const cost = crewCost(crew, hours);
-  const margin = (finalRev || quote) - cost;
+  const internal = project.internal || null;
 
   return (
     <div data-testid="project-card" className="bg-white border border-slate-200 rounded-lg p-4">
@@ -48,12 +49,14 @@ const ProjectCard = ({ project }) => {
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <div className="text-right">
-            <div className="text-sm font-bold text-[#1B2A4A]">Quote: <Money value={quote || null} /></div>
-            <div className={`text-xs font-semibold ${f(project, PF.depositCollected) ? "text-emerald-600" : "text-amber-600"}`}>
-              {f(project, PF.depositCollected) ? "Deposit in" : "Deposit not in"}
+          {isOwner && (
+            <div className="text-right">
+              <div className="text-sm font-bold text-[#1B2A4A]">Quote: <Money value={quote || null} /></div>
+              <div className={`text-xs font-semibold ${f(project, PF.depositCollected) ? "text-emerald-600" : "text-amber-600"}`}>
+                {f(project, PF.depositCollected) ? "Deposit in" : "Deposit not in"}
+              </div>
             </div>
-          </div>
+          )}
           <Select value={status} onValueChange={(v) => updateRecord("projects", project.id, { [PF.status]: v }).catch(() => {})}>
             <SelectTrigger data-testid="project-status-select" className={`w-[150px] h-8 text-xs font-semibold border ${STATUS_PILL[status] || ""}`}>
               <SelectValue />
@@ -72,8 +75,8 @@ const ProjectCard = ({ project }) => {
             <div className="flex flex-wrap gap-3">
               <NumField record={project} fieldId={PF.crewSize} label="Crew size" testId="project-crew-input" />
               <NumField record={project} fieldId={PF.estHours} label="Est. hours" testId="project-hours-input" />
-              <NumField record={project} fieldId={PF.quote} label="Quote ($)" testId="project-quote-input" />
-              <NumField record={project} fieldId={PF.finalRevenue} label="Final revenue ($)" testId="project-revenue-input" />
+              {isOwner && <NumField record={project} fieldId={PF.quote} label="Quote ($)" testId="project-quote-input" />}
+              {isOwner && <NumField record={project} fieldId={PF.finalRevenue} label="Final revenue ($)" testId="project-revenue-input" />}
             </div>
             <label className="text-xs text-slate-500 flex flex-col gap-1 w-40">
               Truck
@@ -82,14 +85,16 @@ const ProjectCard = ({ project }) => {
                 <SelectContent>{TRUCKS.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
               </Select>
             </label>
-            <label className="flex items-center gap-2 text-sm">
-              <Checkbox
-                data-testid="project-deposit-checkbox"
-                checked={!!f(project, PF.depositCollected)}
-                onCheckedChange={(v) => updateRecord("projects", project.id, { [PF.depositCollected]: !!v }).catch(() => {})}
-              />
-              Deposit collected
-            </label>
+            {isOwner && (
+              <label className="flex items-center gap-2 text-sm">
+                <Checkbox
+                  data-testid="project-deposit-checkbox"
+                  checked={!!f(project, PF.depositCollected)}
+                  onCheckedChange={(v) => updateRecord("projects", project.id, { [PF.depositCollected]: !!v }).catch(() => {})}
+                />
+                Deposit collected
+              </label>
+            )}
             <div className="text-xs text-slate-600 space-y-1">
               <div>From: <Private>{f(project, PF.fromAddr) || "—"}</Private></div>
               <div>To: <Private>{f(project, PF.toAddr) || "—"}</Private></div>
@@ -105,20 +110,22 @@ const ProjectCard = ({ project }) => {
               </a>
             </Button>
           </div>
-          <div className="border border-slate-200 bg-slate-50 rounded-lg p-4 h-fit">
-            <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">
-              <ShieldAlert className="w-3.5 h-3.5 text-red-500" /> Internal margin math — never show customers
-            </div>
-            <Private block>
-              <div className="text-sm space-y-1 text-slate-700">
-                <div className="flex justify-between"><span>Crew cost ({crew} crew × {hours} hrs)</span><span>{fmtMoney(cost)}</span></div>
-                <div className="flex justify-between"><span>Revenue ({finalRev ? "final" : "quoted"})</span><span>{fmtMoney(finalRev || quote)}</span></div>
-                <div className={`flex justify-between font-bold pt-1 border-t border-slate-200 ${margin >= 0 ? "text-emerald-700" : "text-red-600"}`}>
-                  <span>Est. margin</span><span data-testid="project-margin">{fmtMoney(margin)}</span>
-                </div>
+          {isOwner && internal && (
+            <div className="border border-slate-200 bg-slate-50 rounded-lg p-4 h-fit">
+              <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">
+                <ShieldAlert className="w-3.5 h-3.5 text-red-500" /> Internal margin math — never show customers
               </div>
-            </Private>
-          </div>
+              <Private block>
+                <div className="text-sm space-y-1 text-slate-700">
+                  <div className="flex justify-between"><span>Crew cost ({crew} crew × {hours} hrs)</span><span>{fmtMoney(internal.crew_cost)}</span></div>
+                  <div className="flex justify-between"><span>Revenue ({finalRev ? "final" : "quoted"})</span><span>{fmtMoney(finalRev || quote)}</span></div>
+                  <div className={`flex justify-between font-bold pt-1 border-t border-slate-200 ${internal.margin >= 0 ? "text-emerald-700" : "text-red-600"}`}>
+                    <span>Est. margin</span><span data-testid="project-margin">{fmtMoney(internal.margin)}</span>
+                  </div>
+                </div>
+              </Private>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -127,6 +134,8 @@ const ProjectCard = ({ project }) => {
 
 export default function Projects() {
   const { loadTable, records, tableState } = useApp();
+  const { role } = useAuth();
+  const isOwner = (role || "owner") === "owner";
   useEffect(() => {
     loadTable("projects");
   }, [loadTable]);
@@ -137,7 +146,11 @@ export default function Projects() {
   return (
     <div data-testid="projects-page">
       <PageTitle title="Projects" subtitle="Your booked jobs, next date first." />
-      <InstructionBanner>Your booked jobs, next date first. Update the status as the day goes. Open Details for crew, truck, and margin.</InstructionBanner>
+      <InstructionBanner>
+        {isOwner
+          ? "Your booked jobs, next date first. Update the status as the day goes. Open Details for crew, truck, and margin."
+          : "Your jobs, next date first. Update the status as the day goes. Open Details for addresses, crew, and truck."}
+      </InstructionBanner>
       {loading && !projects.length ? (
         <LoadingRows />
       ) : error && !projects.length ? (

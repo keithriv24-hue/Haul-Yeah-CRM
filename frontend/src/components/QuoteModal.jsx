@@ -7,16 +7,18 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { computeQuote } from "@/lib/pricing";
-import { fmtMoney } from "@/lib/format";
 import { useApp } from "@/context/AppContext";
 import { LF, f } from "@/lib/fields";
+import { PREFILL_BY_SIZE, QUOTE_COACH_LINE, quoteSaveFields } from "@/lib/quote";
 import { Money } from "@/components/Bits";
 
 export default function QuoteModal({ lead, open, onOpenChange }) {
   const { updateRecord } = useApp();
-  const [crew, setCrew] = useState("3");
-  const [hours, setHours] = useState("5");
-  const [travel, setTravel] = useState("truck");
+  const size = f(lead, LF.homeSize);
+  const pre = PREFILL_BY_SIZE[size] || { crew: "3", hours: "5" };
+  const [crew, setCrew] = useState(pre.crew);
+  const [hours, setHours] = useState(pre.hours);
+  const [travel, setTravel] = useState(size === "Labor-only (no truck)" ? "labor" : "truck");
   const [flights, setFlights] = useState("0");
   const [piano, setPiano] = useState("none");
   const [saving, setSaving] = useState(false);
@@ -31,17 +33,8 @@ export default function QuoteModal({ lead, open, onOpenChange }) {
 
   const save = async () => {
     setSaving(true);
-    const oldNotes = f(lead, LF.notes) || "";
-    const parts = [`${crew} crew × ${hours} hrs = ${fmtMoney(q.base)}`, `travel ${fmtMoney(q.travelFee)}`];
-    if (q.stairs) parts.push(`stairs ${fmtMoney(q.stairs)}`);
-    if (q.pianoFee) parts.push(`piano ${fmtMoney(q.pianoFee)}`);
-    const line = `Quote ${new Date().toLocaleDateString("en-US")}: ${parts.join(" + ")} → range ${fmtMoney(q.low)}–${fmtMoney(q.high)}, deposit ${fmtMoney(q.deposit)}.`;
     try {
-      await updateRecord("leads", lead.id, {
-        [LF.quote]: q.high,
-        [LF.status]: "Quoted",
-        [LF.notes]: oldNotes ? `${oldNotes}\n${line}` : line,
-      });
+      await updateRecord("leads", lead.id, quoteSaveFields(lead, q, crew, hours));
       toast.success("Quote saved. Lead is now Quoted.");
       onOpenChange(false);
     } catch {}
@@ -111,7 +104,7 @@ export default function QuoteModal({ lead, open, onOpenChange }) {
           <div className="flex justify-between text-sm font-semibold text-[#E8743B]">
             <span>Deposit (25% of high)</span><span data-testid="quote-deposit-value"><Money value={q.deposit} /></span>
           </div>
-          <p className="text-xs text-slate-500 pt-1">Final price confirmed by phone.</p>
+          <p className="text-xs text-slate-500 pt-1">{QUOTE_COACH_LINE}</p>
         </div>
         <Button data-testid="quote-save-btn" onClick={save} disabled={saving || !Number(hours)} className="w-full gap-2 bg-[#E8743B] hover:bg-[#d4632e]">
           <Save className="w-4 h-4" /> {saving ? "Saving…" : "Save quote to lead"}

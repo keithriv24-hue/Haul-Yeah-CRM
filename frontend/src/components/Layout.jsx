@@ -2,23 +2,27 @@ import React from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import {
   LayoutDashboard, Users, BookUser, Truck, KanbanSquare, PenLine, Receipt,
-  CreditCard, Handshake, HelpCircle, Eye, EyeOff, RefreshCw, KeyRound, LogOut,
+  CreditCard, Handshake, HelpCircle, Eye, EyeOff, RefreshCw, KeyRound, LogOut, Calculator,
 } from "lucide-react";
 import { useApp } from "@/context/AppContext";
+import { useAuth } from "@/components/AuthGate";
 import { Button } from "@/components/ui/button";
 
 const NAV = [
-  { to: "/", label: "Dashboard", icon: LayoutDashboard },
-  { to: "/leads", label: "Leads", icon: Users },
-  { to: "/contacts", label: "Contacts", icon: BookUser },
-  { to: "/projects", label: "Projects", icon: Truck },
-  { to: "/tasks", label: "To-Do", icon: KanbanSquare },
-  { to: "/blog", label: "Blog", icon: PenLine },
-  { to: "/invoices", label: "Invoices", icon: Receipt },
-  { to: "/subscriptions", label: "Subscriptions", icon: CreditCard },
-  { to: "/partner", label: "Partner View", icon: Handshake },
-  { to: "/help", label: "Help", icon: HelpCircle },
+  { to: "/", label: "Dashboard", icon: LayoutDashboard, roles: ["owner"] },
+  { to: "/leads", label: "Leads", icon: Users, roles: ["owner", "sales"] },
+  { to: "/calculator", label: "Quote Calculator", icon: Calculator, roles: ["sales"] },
+  { to: "/contacts", label: "Contacts", icon: BookUser, roles: ["owner"] },
+  { to: "/projects", label: "Projects", icon: Truck, roles: ["owner", "employee"] },
+  { to: "/tasks", label: "To-Do", icon: KanbanSquare, roles: ["owner", "employee"] },
+  { to: "/blog", label: "Blog", icon: PenLine, roles: ["owner"] },
+  { to: "/invoices", label: "Invoices", icon: Receipt, roles: ["owner"] },
+  { to: "/subscriptions", label: "Subscriptions", icon: CreditCard, roles: ["owner"] },
+  { to: "/partner", label: "Partner View", icon: Handshake, roles: ["owner"] },
+  { to: "/help", label: "Help", icon: HelpCircle, roles: ["owner"] },
 ];
+
+const ROLE_LABEL = { owner: "Owner", sales: "Sales", employee: "Crew" };
 
 const LiveIndicator = () => {
   const { health } = useApp();
@@ -33,6 +37,8 @@ const LiveIndicator = () => {
 
 export default function Layout() {
   const { privacy, togglePrivacy, refreshAll, refreshing, health } = useApp();
+  const { role } = useAuth();
+  const navItems = NAV.filter((n) => n.roles.includes(role || "owner"));
 
   return (
     <div className="min-h-screen bg-[#F2F4F8]">
@@ -45,7 +51,7 @@ export default function Layout() {
           <div className="text-[11px] text-white/50 mt-2">Weekend moves, flat price, no surprises.</div>
         </div>
         <nav className="flex-1 overflow-y-auto py-4">
-          {NAV.map(({ to, label, icon: Icon }) => (
+          {navItems.map(({ to, label, icon: Icon }) => (
             <NavLink
               key={to}
               to={to}
@@ -72,6 +78,9 @@ export default function Layout() {
             </div>
             <div className="hidden md:block" />
             <div className="flex items-center gap-2">
+              <span data-testid="role-chip" className="inline-flex items-center text-xs font-bold uppercase tracking-wide bg-[#1B2A4A]/5 text-[#1B2A4A] border border-[#1B2A4A]/20 rounded-full px-2.5 py-1">
+                {ROLE_LABEL[role] || "Owner"}
+              </span>
               <LiveIndicator />
               <Button
                 data-testid="refresh-data-btn"
@@ -99,6 +108,7 @@ export default function Layout() {
                 size="sm"
                 onClick={() => {
                   localStorage.removeItem("hy_token");
+                  localStorage.removeItem("hy_role");
                   window.dispatchEvent(new Event("hy-logout"));
                 }}
                 className="gap-1.5"
@@ -126,7 +136,7 @@ export default function Layout() {
 
       <nav className="md:hidden fixed bottom-0 inset-x-0 z-50 bg-[#1B2A4A] border-t border-white/10">
         <div className="flex overflow-x-auto no-scrollbar px-1 pb-[env(safe-area-inset-bottom)]">
-          {NAV.map(({ to, label, icon: Icon }) => (
+          {navItems.map(({ to, label, icon: Icon }) => (
             <NavLink
               key={to}
               to={to}

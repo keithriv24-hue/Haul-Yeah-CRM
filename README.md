@@ -13,14 +13,19 @@ proxies every read/write through the Airtable REST API using **field IDs** (neve
 |---|---|
 | `AIRTABLE_API_KEY` | Airtable Personal Access Token. **Add via the secrets panel — never in code or chat.** |
 | `AIRTABLE_BASE_ID` | The Airtable base (`appFAHTRNrRckuxI8`). |
-| `APP_PASSWORD` | The single owner password required to open the app. |
+| `APP_PASSWORD` | Owner password — full access. |
+| `SALES_PASSWORD` | Sales rep password — Leads + Quote Calculator only. |
+| `EMPLOYEE_PASSWORD` | Crew password — Projects (no money fields) + To-Do only. |
 | `JWT_SECRET` | Random secret used to sign 30-day session tokens. |
 
-## Authentication
+## Authentication & roles
 
-One shared owner password. `POST /api/auth/login` (`{"password": "..."}`) returns a 30-day JWT;
-every other `/api` route requires `Authorization: Bearer <token>`. The frontend keeps the token in
-localStorage so each device stays logged in. Five wrong tries from one IP locks login for 15 minutes.
+One password per role. `POST /api/auth/login` (`{"password": "..."}`) matches the password to a role and
+returns a 30-day JWT with a role claim; every other `/api` route requires `Authorization: Bearer <token>`.
+Backend enforces role access: sales → leads only; employee → projects + tasks only, with Quote / Deposit
+Collected / Final Revenue stripped from project responses and writes. Crew cost rates ($28/$24) exist only
+in the backend; owner project responses include computed `internal: {crew_cost, margin}`. The frontend keeps
+the token in localStorage so each device stays logged in. Five wrong tries from one IP locks login for 15 minutes.
 
 ## Backend API routes (all prefixed `/api`)
 

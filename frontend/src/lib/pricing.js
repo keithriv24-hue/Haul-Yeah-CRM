@@ -5,8 +5,6 @@ export const RATES = {
   stairFlight: 85,
   pianoUpright: 500,
   pianoGrand: 800,
-  driverHr: 28,
-  helperHr: 24,
 };
 
 export function computeQuote({ crew, hours, travel, flights, piano }) {
@@ -21,8 +19,3 @@ export function computeQuote({ crew, hours, travel, flights, piano }) {
 }
 
 export const depositFromQuote = (quoteHigh) => Math.round((quoteHigh || 0) * 0.25);
-
-export const crewCost = (crew, hours) => {
-  if (!crew || !hours) return 0;
-  return (RATES.driverHr + Math.max(0, crew - 1) * RATES.helperHr) * hours;
-};

@@ -73,7 +73,7 @@ class TestMe:
         r = requests.get(f"{BASE_URL}/api/auth/me", headers={"Authorization": f"Bearer {token}"}, timeout=15)
         assert r.status_code == 200, r.text
         body = r.json()
-        assert body == {"ok": True, "user": "owner"}
+        assert body == {"ok": True, "role": "owner"}
 
     def test_me_without_auth_header_returns_401(self):
         r = requests.get(f"{BASE_URL}/api/auth/me", timeout=15)
@@ -184,3 +184,59 @@ class TestProtectedRoutes:
         detail = r.json().get("detail", {})
         assert isinstance(detail, dict)
         assert detail.get("error") == "unknown_table"
+
+
+# --- Roles ---
+SALES_PW = "SellMoves2026!"
+EMPLOYEE_PW = "CrewDay2026!"
+
+
+def _login(pw):
+    r = requests.post(f"{BASE_URL}/api/auth/login", json={"password": pw}, timeout=15)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+class TestRoles:
+    def test_sales_login_returns_sales_role(self):
+        data = _login(SALES_PW)
+        assert data["role"] == "sales"
+        claims = jwt.decode(data["token"], options={"verify_signature": False})
+        assert claims["role"] == "sales"
+
+    def test_employee_login_returns_employee_role(self):
+        data = _login(EMPLOYEE_PW)
+        assert data["role"] == "employee"
+
+    def test_owner_login_returns_owner_role(self):
+        data = _login(CORRECT_PW)
+        assert data["role"] == "owner"
+
+    def test_sales_blocked_from_money_tables(self):
+        tok = _login(SALES_PW)["token"]
+        for t in ("projects", "invoices", "subscriptions", "tasks", "blog", "contacts"):
+            r = requests.get(f"{BASE_URL}/api/tables/{t}", headers={"Authorization": f"Bearer {tok}"}, timeout=15)
+            assert r.status_code == 403, f"{t}: expected 403, got {r.status_code}"
+            assert r.json().get("detail") == "Your role can't open this."
+
+    def test_employee_blocked_from_other_tables(self):
+        tok = _login(EMPLOYEE_PW)["token"]
+        for t in ("leads", "invoices", "subscriptions", "blog", "contacts"):
+            r = requests.get(f"{BASE_URL}/api/tables/{t}", headers={"Authorization": f"Bearer {tok}"}, timeout=15)
+            assert r.status_code == 403, f"{t}: expected 403, got {r.status_code}"
+
+    def test_sales_can_reach_leads_route(self):
+        tok = _login(SALES_PW)["token"]
+        r = requests.get(f"{BASE_URL}/api/tables/leads", headers={"Authorization": f"Bearer {tok}"}, timeout=15)
+        assert r.status_code in (200, 503), f"got {r.status_code}"
+
+    def test_employee_can_reach_projects_and_tasks(self):
+        tok = _login(EMPLOYEE_PW)["token"]
+        for t in ("projects", "tasks"):
+            r = requests.get(f"{BASE_URL}/api/tables/{t}", headers={"Authorization": f"Bearer {tok}"}, timeout=15)
+            assert r.status_code in (200, 503), f"{t}: got {r.status_code}"
+
+    def test_airtable_verify_is_owner_only(self):
+        tok = _login(SALES_PW)["token"]
+        r = requests.get(f"{BASE_URL}/api/airtable/verify", headers={"Authorization": f"Bearer {tok}"}, timeout=15)
+        assert r.status_code == 403

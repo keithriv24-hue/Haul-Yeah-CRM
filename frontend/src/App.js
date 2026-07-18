@@ -1,9 +1,10 @@
 import React from "react";
 import "@/App.css";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Toaster } from "@/components/ui/sonner";
 import { AppProvider } from "@/context/AppContext";
-import AuthGate from "@/components/AuthGate";
+import AuthGate, { useAuth } from "@/components/AuthGate";
+import Calculator from "@/pages/Calculator";
 import Layout from "@/components/Layout";
 import Dashboard from "@/pages/Dashboard";
 import Leads from "@/pages/Leads";
@@ -16,25 +17,56 @@ import Subscriptions from "@/pages/Subscriptions";
 import Partner from "@/pages/Partner";
 import Help from "@/pages/Help";
 
+function RoleRoutes() {
+  const { role } = useAuth();
+  if (role === "sales") {
+    return (
+      <Routes>
+        <Route element={<Layout />}>
+          <Route path="/leads" element={<Leads />} />
+          <Route path="/calculator" element={<Calculator />} />
+          <Route path="*" element={<Navigate to="/leads" replace />} />
+        </Route>
+      </Routes>
+    );
+  }
+  if (role === "employee") {
+    return (
+      <Routes>
+        <Route element={<Layout />}>
+          <Route path="/projects" element={<Projects />} />
+          <Route path="/tasks" element={<Tasks />} />
+          <Route path="*" element={<Navigate to="/projects" replace />} />
+        </Route>
+      </Routes>
+    );
+  }
+  return (
+    <Routes>
+      <Route element={<Layout />}>
+        <Route path="/" element={<Dashboard />} />
+        <Route path="/leads" element={<Leads />} />
+        <Route path="/calculator" element={<Calculator />} />
+        <Route path="/contacts" element={<Contacts />} />
+        <Route path="/projects" element={<Projects />} />
+        <Route path="/tasks" element={<Tasks />} />
+        <Route path="/blog" element={<Blog />} />
+        <Route path="/invoices" element={<Invoices />} />
+        <Route path="/subscriptions" element={<Subscriptions />} />
+        <Route path="/partner" element={<Partner />} />
+        <Route path="/help" element={<Help />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Route>
+    </Routes>
+  );
+}
+
 function App() {
   return (
     <AuthGate>
       <AppProvider>
         <BrowserRouter>
-        <Routes>
-          <Route element={<Layout />}>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/leads" element={<Leads />} />
-            <Route path="/contacts" element={<Contacts />} />
-            <Route path="/projects" element={<Projects />} />
-            <Route path="/tasks" element={<Tasks />} />
-            <Route path="/blog" element={<Blog />} />
-            <Route path="/invoices" element={<Invoices />} />
-            <Route path="/subscriptions" element={<Subscriptions />} />
-            <Route path="/partner" element={<Partner />} />
-            <Route path="/help" element={<Help />} />
-          </Route>
-        </Routes>
+          <RoleRoutes />
         </BrowserRouter>
         <Toaster position="top-center" richColors />
       </AppProvider>
