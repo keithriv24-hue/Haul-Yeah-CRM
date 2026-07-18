@@ -1,0 +1,174 @@
+import React, { useEffect, useState } from "react";
+import { toast } from "sonner";
+import { Plus, PenLine } from "lucide-react";
+import { useApp } from "@/context/AppContext";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { InstructionBanner, PageTitle, EmptyState, LoadingRows } from "@/components/Bits";
+import { BF, f, BLOG_STATUSES } from "@/lib/fields";
+import { fmtDate } from "@/lib/format";
+
+const blank = { title: "", status: "Idea", category: "", publishDate: "", slug: "", body: "" };
+
+const PostForm = ({ open, onOpenChange, post }) => {
+  const { createRecord, updateRecord } = useApp();
+  const [form, setForm] = useState(blank);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setForm(
+        post
+          ? {
+              title: f(post, BF.title) || "",
+              status: f(post, BF.status) || "Idea",
+              category: f(post, BF.category) || "",
+              publishDate: (f(post, BF.publishDate) || "").slice(0, 10),
+              slug: f(post, BF.slug) || "",
+              body: f(post, BF.body) || "",
+            }
+          : blank
+      );
+    }
+  }, [open, post]);
+
+  const set = (k) => (e) => setForm((s) => ({ ...s, [k]: e.target.value }));
+
+  const save = async () => {
+    if (!form.title.trim()) {
+      toast.error("Give the post a title first.");
+      return;
+    }
+    setSaving(true);
+    const fields = {
+      [BF.title]: form.title.trim(),
+      [BF.status]: form.status,
+      [BF.category]: form.category,
+      [BF.publishDate]: form.publishDate,
+      [BF.slug]: form.slug || form.title.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""),
+      [BF.body]: form.body,
+    };
+    try {
+      if (post) await updateRecord("blog", post.id, fields);
+      else await createRecord("blog", fields);
+      toast.success(post ? "Post updated." : "Post saved.");
+      onOpenChange(false);
+    } catch {}
+    setSaving(false);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent data-testid="blog-modal" className="max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="font-display">{post ? "Edit post" : "New post"}</DialogTitle>
+          <DialogDescription>Write it plain and helpful. Slug fills itself if you leave it blank.</DialogDescription>
+        </DialogHeader>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="col-span-2">
+            <Label>Title *</Label>
+            <Input data-testid="blog-title-input" value={form.title} onChange={set("title")} />
+          </div>
+          <div>
+            <Label>Status</Label>
+            <Select value={form.status} onValueChange={(v) => setForm((s) => ({ ...s, status: v }))}>
+              <SelectTrigger data-testid="blog-status-select"><SelectValue /></SelectTrigger>
+              <SelectContent>{BLOG_STATUSES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label>Category</Label>
+            <Input value={form.category} onChange={set("category")} placeholder="Moving tips" />
+          </div>
+          <div>
+            <Label>Publish date</Label>
+            <Input type="date" value={form.publishDate} onChange={set("publishDate")} />
+          </div>
+          <div>
+            <Label>Slug</Label>
+            <Input value={form.slug} onChange={set("slug")} placeholder="auto-from-title" />
+          </div>
+          <div className="col-span-2">
+            <Label>Body</Label>
+            <Textarea data-testid="blog-body-input" value={form.body} onChange={set("body")} rows={8} />
+          </div>
+        </div>
+        <Button data-testid="blog-save-btn" onClick={save} disabled={saving} className="w-full gap-2 bg-[#E8743B] hover:bg-[#d4632e]">
+          <PenLine className="w-4 h-4" /> {saving ? "Saving…" : "Save post"}
+        </Button>
+      </DialogContent>
+    </Dialog>
+  );
+};
+
+export default function Blog() {
+  const { loadTable, records, tableState } = useApp();
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editing, setEditing] = useState(null);
+
+  useEffect(() => {
+    loadTable("blog");
+  }, [loadTable]);
+
+  const posts = records("blog");
+  const { loading, error } = tableState("blog");
+
+  return (
+    <div data-testid="blog-page">
+      <PageTitle
+        title="Blog"
+        subtitle="Your content pipeline."
+        action={
+          <Button data-testid="new-post-btn" onClick={() => { setEditing(null); setModalOpen(true); }} className="gap-1.5 bg-[#E8743B] hover:bg-[#d4632e]">
+            <Plus className="w-4 h-4" /> New post
+          </Button>
+        }
+      />
+      <InstructionBanner>Move posts left to right: Idea → Draft → In Review → Published. Tap a card to edit it.</InstructionBanner>
+
+      {loading && !posts.length ? (
+        <LoadingRows />
+      ) : error && !posts.length ? (
+        <EmptyState>{error}</EmptyState>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          {BLOG_STATUSES.map((status) => {
+            const col = posts.filter((p) => (f(p, BF.status) || "Idea") === status);
+            return (
+              <div key={status} data-testid={`blog-col-${status.toLowerCase().replace(/\s+/g, "-")}`} className="rounded-lg border border-slate-200 bg-slate-100/60 p-3">
+                <div className="flex items-center justify-between mb-3">
+                  <h2 className="font-display font-bold text-sm text-[#1B2A4A]">{status}</h2>
+                  <span className="text-xs font-bold text-slate-400">{col.length}</span>
+                </div>
+                <div className="space-y-2">
+                  {col.map((p) => (
+                    <button
+                      key={p.id}
+                      data-testid="blog-card"
+                      onClick={() => { setEditing(p); setModalOpen(true); }}
+                      className="w-full text-left bg-white border border-slate-200 rounded-lg p-3 hover:border-[#E8743B] transition-colors"
+                    >
+                      <div className="text-sm font-semibold text-[#1B2A4A] leading-snug">{f(p, BF.title) || "Untitled"}</div>
+                      <div className="text-xs text-slate-500 mt-1">
+                        {f(p, BF.category) && <span>{f(p, BF.category)} · </span>}
+                        {f(p, BF.publishDate) ? fmtDate(f(p, BF.publishDate)) : "No date"}
+                      </div>
+                      {f(p, BF.slug) && <div className="text-[10px] text-slate-400 mt-0.5 truncate">/{f(p, BF.slug)}</div>}
+                    </button>
+                  ))}
+                  {col.length === 0 && <div className="text-xs text-slate-400 text-center py-4">Nothing here</div>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <PostForm open={modalOpen} onOpenChange={setModalOpen} post={editing} />
+    </div>
+  );
+}

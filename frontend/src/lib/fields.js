@@ -1,0 +1,152 @@
+export const LF = {
+  name: "fldsBIJdaasQ9fh9a",
+  phone: "fldQMF5LKSd0yI8Bs",
+  email: "fldi6lWGr530XQ4YE",
+  moveDate: "fldWUAHyvTippkVGd",
+  from: "fldHysDcz9GAos0zD",
+  to: "fldIKwCb5ZqAP1fEh",
+  homeSize: "fldbcSKdb3iBeyUQO",
+  specialty: "fld5ey4eIbIqHQSxe",
+  contactMethod: "fldO6I8G31dI0eF5E",
+  notes: "fldSLeTIb2RHpRohW",
+  status: "fldplIOmtbERJFG6X",
+  quote: "fldI5HufBfW35A1fD",
+  depositPaid: "fld7BsZG5A6S1oh7Z",
+  source: "fldNQ7kAAIcVQbysk",
+  created: "fldKJdaOCpnECKpyU",
+};
+
+export const CF = {
+  name: "fldObstefaoowAs1W",
+  type: "flda7oRb5lSunnujV",
+  company: "fldQDeXAT8Y4bpw0R",
+  phone: "fldJluIWPpltVglRG",
+  email: "fldZnttwNCfnt7vV3",
+  town: "fldcJLjvjhLCImPST",
+  notes: "fldSQPnALXbqnmlse",
+};
+
+export const PF = {
+  jobName: "fldcuvCepinGbQbK8",
+  status: "fldMZV9A6p0SJyuM5",
+  jobDate: "fldVBgzlG9gUCq5OB",
+  crewSize: "fldkeeMYBMooCqi7p",
+  estHours: "fldhVlH3Cu66W5EYo",
+  truck: "fldhQpzJrqDE6tPAg",
+  quote: "fldkRQlJvhnUhWoR3",
+  depositCollected: "fldpqyinP1L9vZ2UP",
+  finalRevenue: "fldvOyVAK9ywo2DNA",
+  fromAddr: "fldDf4w5prPb89Q4y",
+  toAddr: "fldnFH0mMdyQ84hTV",
+  lead: "fldiN7fny2dKI2r2V",
+  notes: "fldtmYFaWLi5l6LpP",
+};
+
+export const TF = {
+  task: "fldm3n4ZdjUF00dBF",
+  status: "fldIpdRVz51aQaNZh",
+  priority: "fldiPws9HxQnALJ8Z",
+  category: "fld6X2EBphlGCrx1Q",
+  dueDate: "fldWW4F0P9mxL9iqT",
+  project: "fldZOyIIosMzoUq3u",
+  notes: "fld4QHQzukkteQjy0",
+};
+
+export const BF = {
+  title: "fldKzcIH5j4ZMZQrj",
+  status: "fldu92VQBEbkeGhtQ",
+  category: "fld8XYGs1ikbr8uAs",
+  publishDate: "fldiBTxU2Bvp3MmpY",
+  slug: "fldmwKkQyQYKhzXaK",
+  body: "fldab1yOqSyGmDe2R",
+};
+
+export const IF = {
+  number: "fldGmJw84bqKSSnAU",
+  customer: "fldVXyWVhz6387TuN",
+  amount: "fldTh5uHleHVWFBDV",
+  status: "fldWwAcWFcH79Yw7H",
+  issueDate: "flddqwJe0N3099J5V",
+  dueDate: "flducZBby35qCR9Uq",
+  payMethod: "fldYQ4Ivpi5Ux4dsA",
+  project: "fldwngVwfBc8I1yeA",
+  notes: "fldFdMDLKazZhL4uC",
+};
+
+export const SF = {
+  name: "flde8mD2kzYs0qKp5",
+  category: "fldPwzkia81IIksX2",
+  monthlyCost: "fldIVJAp07djwe4kS",
+  billingCycle: "fldmNLDvFBARMCf4b",
+  nextRenewal: "fldKgBLY0JTv9geJO",
+  status: "flduZOwx1cexVJ3LT",
+  notes: "fldfq3MwJ37cKf8gC",
+};
+
+export const f = (record, fieldId) => record?.fields?.[fieldId];
+
+export const LEAD_STATUSES = ["New", "Contacted", "Warm", "Hot", "Quoted", "Booked", "Lost", "Cold"];
+export const HOME_SIZES = ["Studio/1BR", "2BR", "3BR", "4BR+", "Labor-only (no truck)"];
+export const SPECIALTY_ITEMS = ["Piano", "Safe/vault", "Gym equipment", "Antiques/art", "Large sectional", "None"];
+export const CONTACT_METHODS = ["Text", "Call", "Email"];
+export const CONTACT_TYPES = ["Customer", "Realtor Partner", "Property Manager", "Storage Facility", "Vendor", "Crew"];
+export const PROJECT_STATUSES = ["Pending Deposit", "Scheduled", "In Progress", "Completed", "Cancelled"];
+export const TRUCKS = ["Truck 1", "Truck 2", "Truck 3", "Truck 4", "Truck 5", "Labor only"];
+export const TASK_STATUSES = ["Backlog", "To Do", "In Progress", "Done"];
+export const TASK_PRIORITIES = ["High", "Medium", "Low"];
+export const TASK_CATEGORIES = ["Sales", "Ops", "Compliance", "Marketing", "Finance"];
+export const BLOG_STATUSES = ["Idea", "Draft", "In Review", "Published"];
+export const INVOICE_STATUSES = ["Draft", "Sent", "Paid", "Overdue"];
+export const PAYMENT_METHODS = ["Square", "Cash", "Check", "Zelle"];
+export const SUB_CATEGORIES = ["Software", "Insurance", "Phone", "Marketing", "Fuel & Fleet", "Other"];
+export const SUB_STATUSES = ["Active", "Cancel Pending", "Cancelled"];
+
+export const LEAD_STATUS_COLORS = {
+  New: "#E8743B",
+  Contacted: "#5B8DBE",
+  Warm: "#E2B33C",
+  Hot: "#D64545",
+  Quoted: "#6C6FC4",
+  Booked: "#2F9E6E",
+  Lost: "#9AA3B2",
+  Cold: "#6B7A99",
+};
+
+export const STATUS_PILL = {
+  New: "bg-orange-100 text-orange-800 border-orange-300",
+  Contacted: "bg-sky-100 text-sky-800 border-sky-300",
+  Warm: "bg-amber-100 text-amber-800 border-amber-300",
+  Hot: "bg-red-100 text-red-700 border-red-300",
+  Quoted: "bg-indigo-100 text-indigo-800 border-indigo-300",
+  Booked: "bg-emerald-100 text-emerald-800 border-emerald-300",
+  Lost: "bg-slate-100 text-slate-500 border-slate-300",
+  Cold: "bg-slate-100 text-slate-500 border-slate-300",
+  "Pending Deposit": "bg-amber-100 text-amber-800 border-amber-300",
+  Scheduled: "bg-sky-100 text-sky-800 border-sky-300",
+  "In Progress": "bg-indigo-100 text-indigo-800 border-indigo-300",
+  Completed: "bg-emerald-100 text-emerald-800 border-emerald-300",
+  Cancelled: "bg-slate-100 text-slate-500 border-slate-300",
+  Draft: "bg-slate-100 text-slate-600 border-slate-300",
+  Sent: "bg-sky-100 text-sky-800 border-sky-300",
+  Paid: "bg-emerald-100 text-emerald-800 border-emerald-300",
+  Overdue: "bg-red-100 text-red-700 border-red-300",
+  Idea: "bg-slate-100 text-slate-600 border-slate-300",
+  "In Review": "bg-amber-100 text-amber-800 border-amber-300",
+  Published: "bg-emerald-100 text-emerald-800 border-emerald-300",
+  Active: "bg-emerald-100 text-emerald-800 border-emerald-300",
+  "Cancel Pending": "bg-amber-100 text-amber-800 border-amber-300",
+  High: "bg-red-100 text-red-700 border-red-300",
+  Medium: "bg-amber-100 text-amber-800 border-amber-300",
+  Low: "bg-slate-100 text-slate-600 border-slate-300",
+};
+
+export const nextStepHint = (lead) => {
+  const status = f(lead, LF.status);
+  const hasDeposit = !!f(lead, LF.depositPaid);
+  if (status === "New") return "Call or text now — the clock is running.";
+  if (["Contacted", "Warm", "Hot"].includes(status)) return "Use Quote to price the job.";
+  if (status === "Quoted" && !hasDeposit) return "Send the deposit link to lock the date.";
+  if (status === "Quoted" && hasDeposit) return "Book it as a job.";
+  if (status === "Booked") return "Manage it in Projects.";
+  return "No action needed.";
+};

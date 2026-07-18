@@ -1,0 +1,41 @@
+export const fmtMoney = (n) => {
+  const num = Number(n);
+  if (n === null || n === undefined || n === "" || Number.isNaN(num)) return "—";
+  return num.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+};
+
+export const fmtDate = (d) => {
+  if (!d) return "—";
+  const iso = d.length === 10 ? `${d}T12:00:00` : d;
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return d;
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+};
+
+export const todayISO = () => new Date().toISOString().slice(0, 10);
+
+export const isOverdue = (d) => !!d && d.slice(0, 10) < todayISO();
+
+export const daysUntil = (d) => {
+  if (!d) return null;
+  const target = new Date(`${d.slice(0, 10)}T12:00:00`);
+  return Math.round((target.getTime() - Date.now()) / 86400000);
+};
+
+export const minutesSince = (iso) => Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 60000));
+
+export const ageLabel = (mins) => {
+  if (mins < 60) return `${mins} min`;
+  if (mins < 1440) return `${Math.floor(mins / 60)} hr ${mins % 60} min`;
+  return `${Math.floor(mins / 1440)} days`;
+};
+
+export const gmailCompose = (to, subject = "", body = "") =>
+  `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(to || "")}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+
+export const gmailSearch = (query) => `https://mail.google.com/mail/#search/${encodeURIComponent(query || "")}`;
+
+export const calendarTemplate = (title, dateISO, details = "") => {
+  const d = (dateISO || todayISO()).replace(/-/g, "");
+  return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(title)}&dates=${d}/${d}&details=${encodeURIComponent(details)}`;
+};

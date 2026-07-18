@@ -1,0 +1,84 @@
+import React, { useEffect, useState } from "react";
+import { Info, Clock } from "lucide-react";
+import { useApp } from "@/context/AppContext";
+import { fmtMoney, minutesSince, ageLabel } from "@/lib/format";
+import { STATUS_PILL } from "@/lib/fields";
+
+export const InstructionBanner = ({ children, testId = "instruction-banner" }) => (
+  <div data-testid={testId} className="flex items-start gap-2 border border-[#1B2A4A]/15 bg-[#1B2A4A]/[0.04] text-[#1B2A4A] rounded-lg px-4 py-3 text-sm mb-6">
+    <Info className="w-4 h-4 mt-0.5 shrink-0 text-[#E8743B]" />
+    <span>{children}</span>
+  </div>
+);
+
+export const Private = ({ children, block = false, className = "" }) => {
+  const { privacy } = useApp();
+  const Tag = block ? "div" : "span";
+  return <Tag className={`${privacy ? "privacy-blur" : ""} ${className}`.trim()}>{children}</Tag>;
+};
+
+export const Money = ({ value, className = "" }) => (
+  <Private className={className}>{fmtMoney(value)}</Private>
+);
+
+export const Pill = ({ value, className = "" }) => (
+  <span className={`inline-flex items-center border rounded-full px-2.5 py-0.5 text-xs font-semibold ${STATUS_PILL[value] || "bg-slate-100 text-slate-600 border-slate-300"} ${className}`}>
+    {value}
+  </span>
+);
+
+export const AgeTimer = ({ createdTime }) => {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setTick((x) => x + 1), 15000);
+    return () => clearInterval(t);
+  }, []);
+  const mins = minutesSince(createdTime);
+  const late = mins > 5;
+  return (
+    <span
+      data-testid="lead-age-timer"
+      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-bold ${
+        late ? "bg-red-50 text-red-600 border-red-300 animate-pulse" : "bg-emerald-50 text-emerald-700 border-emerald-300"
+      }`}
+    >
+      <Clock className="w-3.5 h-3.5" />
+      waiting {ageLabel(mins)}
+    </span>
+  );
+};
+
+export const PageTitle = ({ title, subtitle, action }) => (
+  <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+    <div>
+      <h1 className="font-display text-3xl sm:text-4xl font-extrabold tracking-tight text-[#1B2A4A]">{title}</h1>
+      {subtitle && <p className="text-sm text-slate-500 mt-1">{subtitle}</p>}
+    </div>
+    {action}
+  </div>
+);
+
+export const KpiCard = ({ label, value, sub, isPrivate = true, alert = false, testId }) => (
+  <div
+    data-testid={testId}
+    className={`bg-white border rounded-lg p-4 flex flex-col gap-1 ${alert ? "border-red-400 ring-1 ring-red-300" : "border-slate-200"}`}
+  >
+    <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</span>
+    <span className={`font-display text-2xl font-extrabold ${alert ? "text-red-600" : "text-[#1B2A4A]"}`}>
+      {isPrivate ? <Private>{value}</Private> : value}
+    </span>
+    {sub && <span className={`text-xs ${alert ? "text-red-500 font-semibold" : "text-slate-500"}`}>{sub}</span>}
+  </div>
+);
+
+export const EmptyState = ({ children }) => (
+  <div className="border border-dashed border-slate-300 rounded-lg p-8 text-center text-sm text-slate-500">{children}</div>
+);
+
+export const LoadingRows = () => (
+  <div className="space-y-3" data-testid="loading-rows">
+    {[1, 2, 3].map((i) => (
+      <div key={i} className="h-24 bg-slate-100 rounded-lg animate-pulse" />
+    ))}
+  </div>
+);
