@@ -1,0 +1,101 @@
+{
+  "theme": "Light mode primary with Dark mode toggle. High-contrast utility.",
+  "typography": {
+    "headings": "Cabinet Grotesk",
+    "body": "IBM Plex Sans",
+    "rules": [
+      "No Inter for headings. No Space Grotesk.",
+      "Tight letter spacing (tracking-tight) for large headers.",
+      "6th-grade reading level plain language across all copy."
+    ]
+  },
+  "colors": {
+    "brand_primary": "#1B2A4A",
+    "brand_accent": "#E8743B",
+    "archetype": "The Performance Pro / Swiss Brutalist hybrid.",
+    "forbidden_colors": ["#1B93A4", "#7351B7"],
+    "rules": [
+      "Never use pure black or gray, tint neutral greys with blue (cool).",
+      "Use #1B2A4A as primary anchor and #E8743B as the kinetic trigger for actions."
+    ]
+  },
+  "visual_enhancers": {
+    "surface_strategies": [
+      "Sharp edges, cardless or max 8px border-radius.",
+      "CRITICAL: DO NOT use complete transparent background in header, overlays, or Dropdowns."
+    ],
+    "shadows_and_depth": [
+      "Use 1px solid strokes or 2px inner glow highlights instead of soft shadows.",
+      "Glassmorphism (12-24px blur) with backdrop-saturate for sticky headers."
+    ]
+  },
+  "component_instructions": {
+    "buttons": "EVERY button MUST have a text label (icon + word, NEVER icon alone).",
+    "instruction_banners": "EVERY screen MUST have a one-line instruction banner telling the user what to do.",
+    "header": "MUST include 'Data: live from Airtable' indicator with manual refresh button AND a Global Privacy Mode toggle.",
+    "privacy_mode": "When toggled, blurs/masks every customer name, phone, email, address, and dollar figure across ALL views (persisted in localStorage).",
+    "leads_timer": "Live 'age' timer for New leads. Turns RED if > 5 minutes.",
+    "navigation": "Persistent left sidebar on desktop. Bottom tab bar on mobile."
+  },
+  "views_required": {
+    "Dashboard": "KPI cards (uncontacted New leads with oldest wait time turning RED if >5 min, open leads, pipeline value, booked revenue, collected, outstanding, monthly burn). Doughnut chart (leads by status). Bar chart (money overview). Upcoming jobs list. High-priority tasks list.",
+    "Leads": "Card grid ONLY (NOT a table). Live 'age' timer for New leads turning red past 5 mins. Action buttons (Call, Email, Quote, Deposit, Book as job). Status dropdown. Filter chips. '+ New lead' modal. 'Quote calculator' modal showing price RANGES.",
+    "Contacts": "Card grid grouped by Type.",
+    "Projects": "Job list sorted by date, editable.",
+    "To-Do Board": "4-column drag-and-drop kanban (Backlog, To Do, In Progress, Done) with priority + category pills, red overdue dates.",
+    "Blog": "Content pipeline by status.",
+    "Invoices": "KPI row + table with status dropdown and one-click Mark paid.",
+    "Subscriptions": "Monthly burn + annualized totals, table.",
+    "Partner View": "Read-only financial summary, NO customer names.",
+    "Help": "Page explaining lead-to-cash flow."
+  },
+  "grids": {
+    "mobile": "Mobile-first PWA. 1-column grid scaling up.",
+    "dashboard": "High Density Grid (grid-cols-1 md:grid-cols-3 lg:grid-cols-4) with tight gaps (gap-4 or gap-6)."
+  },
+  "layouts": {
+    "app_shell": "Desktop: Left Sidebar (w-64) + Main Content. Mobile: Main Content + Bottom Tab Bar.",
+    "spacing": "Generous Spacing Philosophy. Tailwind Scale p-4, p-6, p-8. Containers with borders must have internal padding."
+  },
+  "motion": {
+    "interactions": "Hover states on all interactive elements. Explicitly set text color.",
+    "transitions": "Specific properties only (e.g. transition-colors, transition-transform). No 'transition-all'."
+  },
+  "accessibility": {
+    "contrast": "APCA standard. High contrast text.",
+    "testing": "All interactive and key informational elements MUST include data-testid attribute."
+  },
+  "media": {
+    "icons": "Use lucide-react (default). Never use AI assistant Emoji characters.",
+    "charts": "Use Recharts or Shadcn chart components. Doughnut and Bar charts required."
+  },
+  "3d_libraries": {
+    "usage": "Not required for this high-density CRM utility app. Stick to clean 2D data visualization."
+  },
+  "image_urls": {
+    "avatars": {
+      "url": "https://images.pexels.com/photos/34299170/pexels-photo-34299170.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "category": "User Profile / Partner",
+      "description": "Confident man in grey suit"
+    },
+    "backgrounds": {
+      "url": "https://images.pexels.com/photos/15084344/pexels-photo-15084344.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "category": "Empty States / Login",
+      "description": "Moving truck parked"
+    }
+  },
+  "UNIVERSAL_GUIDELINES_FOR_MAIN_AGENT": [
+    "Share the guideline for .js files not for .tsx files.",
+    "Do not converge toward generic 'AI slop' aesthetics. Make creative, distinctive frontends.",
+    "Create depth through layered design elements with z-index hierarchy.",
+    "Use glass-morphism effects with backdrop filters (12-24px blur).",
+    "CRITICAL: DO NOT use complete transparent background in header, overlays, any surface that has content under it.",
+    "You MUST NOT apply universal transition (transition: all).",
+    "You MUST NOT center align the app container (.App { text-align: center; }).",
+    "NEVER use AI assistant Emoji characters (\ud83e\udd16\ud83e\udde0\ud83d\udcad\ud83d\udca1\ud83d\udd2e\ud83c\udfaf) for icons.",
+    "Every interaction needs micro-animations - hover states, transitions.",
+    "Use 2-3x more spacing than feels comfortable. Cramped designs look cheap.",
+    "Use sonner for toasts. Sonner component are located in /app/src/components/ui/sonner.js",
+    "Ensure the app is styled as a PWA (mobile-responsive, installable)."
+  ]
+}
