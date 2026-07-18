@@ -6,7 +6,7 @@ Full-stack internal CRM PWA for Haul Yeah Moving (weekend moving company, North 
 ## Architecture
 - Backend: FastAPI proxy at `/api` → Airtable REST (httpx, 5 req/sec rate limiter, `returnFieldsByFieldId=true`, typecast on writes, friendly error normalization). No Mongo shadow copies — Airtable is the single source of truth.
 - Frontend: React (CRA + craco), shadcn/ui, Recharts, sonner toasts, native HTML5 drag-and-drop kanban. Basic PWA (manifest + icons, installable).
-- Auth: single owner password (`APP_PASSWORD` env) → 30-day JWT (`JWT_SECRET`) stored in localStorage; all `/api` routes except `/api/auth/login` require Bearer token; 5 wrong tries/IP = 15-min lockout.
+- Auth: three shared-password roles — owner (`APP_PASSWORD`, full access), sales (`SALES_PASSWORD`, Leads + Quote Calculator only), employee (`EMPLOYEE_PASSWORD`, Projects without money fields + To-Do only). 30-day JWT with role claim in localStorage; backend enforces role route access and strips Quote/Deposit/Final Revenue from employee project reads+writes; crew cost rates ($28/$24) backend-only, owner project responses carry computed `internal: {crew_cost, margin}`. 5 wrong tries/IP = 15-min lockout.
 - Brand: navy #1B2A4A, orange #E8743B, Cabinet Grotesk + IBM Plex Sans.
 
 ## User personas
@@ -23,6 +23,8 @@ Full-stack internal CRM PWA for Haul Yeah Moving (weekend moving company, North 
 - [x] Privacy Mode (blur, localStorage), live-from-Airtable indicator + Refresh, key-missing banner
 - [x] PWA manifest + icons, mobile bottom tab bar, desktop sidebar
 - [x] Owner password auth (APP_PASSWORD + 30-day JWT, per-device persistence, brute-force lockout) — 17 pytest cases pass; UI flow verified in browser
+- [x] Log out button in header
+- [x] Three-role system (owner / sales / employee): role-matched login, role chip in header, role-filtered nav + routes, backend route & field enforcement, standalone mobile-first Quote Calculator page for sales (with home-size pre-fill + coaching line), Add-note + specialty items on lead cards, employee Projects without money — 25 pytest cases + testing-agent browser pass (iteration_1.json)
 
 ## Current status / blockers
 - AIRTABLE_API_KEY not yet added by user (secrets panel). All data routes return friendly 503 until then. Verify with GET /api/airtable/verify after key is added.
