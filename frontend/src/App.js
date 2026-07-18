@@ -3,6 +3,7 @@ import "@/App.css";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { Toaster } from "@/components/ui/sonner";
 import { AppProvider } from "@/context/AppContext";
+import AuthGate from "@/components/AuthGate";
 import Layout from "@/components/Layout";
 import Dashboard from "@/pages/Dashboard";
 import Leads from "@/pages/Leads";
@@ -17,8 +18,9 @@ import Help from "@/pages/Help";
 
 function App() {
   return (
-    <AppProvider>
-      <BrowserRouter>
+    <AuthGate>
+      <AppProvider>
+        <BrowserRouter>
         <Routes>
           <Route element={<Layout />}>
             <Route path="/" element={<Dashboard />} />
@@ -33,9 +35,10 @@ function App() {
             <Route path="/help" element={<Help />} />
           </Route>
         </Routes>
-      </BrowserRouter>
-      <Toaster position="top-center" richColors />
-    </AppProvider>
+        </BrowserRouter>
+        <Toaster position="top-center" richColors />
+      </AppProvider>
+    </AuthGate>
   );
 }
 

@@ -1,14 +1,17 @@
 import asyncio
+import hmac
 import logging
 import os
 import time
 from collections import deque
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 import httpx
+import jwt
 from dotenv import load_dotenv
-from fastapi import APIRouter, Body, FastAPI, HTTPException
+from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Request
 from pydantic import BaseModel
 from starlette.middleware.cors import CORSMiddleware
 
@@ -37,6 +40,25 @@ def get_api_key() -> str:
 
 def get_base_id() -> str:
     return os.environ.get("AIRTABLE_BASE_ID", "").strip()
+
+
+JWT_ALGORITHM = "HS256"
+_login_attempts: Dict[str, Dict[str, float]] = {}
+
+
+def require_auth(request: Request):
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header[7:] if auth_header.startswith("Bearer ") else None
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        payload = jwt.decode(token, os.environ["JWT_SECRET"], algorithms=[JWT_ALGORITHM])
+        if payload.get("type") != "access":
+            raise HTTPException(status_code=401, detail="Invalid token type")
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Session expired. Log in again.")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid session. Log in again.")
 
 
 class RateLimiter:
@@ -118,7 +140,43 @@ class RecordPayload(BaseModel):
 
 
 app = FastAPI(title="Haul Yeah Moving CRM Proxy")
-api_router = APIRouter(prefix="/api")
+api_router = APIRouter(prefix="/api", dependencies=[Depends(require_auth)])
+auth_router = APIRouter(prefix="/api/auth")
+
+
+class LoginPayload(BaseModel):
+    password: str
+
+
+@auth_router.post("/login")
+async def login(payload: LoginPayload, request: Request):
+    ip = request.client.host if request.client else "unknown"
+    now = time.time()
+    rec = _login_attempts.get(ip, {})
+    if rec.get("locked_until", 0) > now:
+        raise HTTPException(status_code=429, detail="Too many tries. Wait 15 minutes and try again.")
+    expected = os.environ.get("APP_PASSWORD", "")
+    if not expected:
+        raise HTTPException(status_code=503, detail="APP_PASSWORD is not set on the server.")
+    if not hmac.compare_digest(payload.password, expected):
+        rec = _login_attempts.setdefault(ip, {"count": 0})
+        rec["count"] = rec.get("count", 0) + 1
+        if rec["count"] >= 5:
+            rec["locked_until"] = now + 900
+            rec["count"] = 0
+        raise HTTPException(status_code=401, detail="Wrong password. Try again.")
+    _login_attempts.pop(ip, None)
+    token = jwt.encode(
+        {"sub": "owner", "type": "access", "exp": datetime.now(timezone.utc) + timedelta(days=30)},
+        os.environ["JWT_SECRET"],
+        algorithm=JWT_ALGORITHM,
+    )
+    return {"token": token}
+
+
+@auth_router.get("/me")
+async def me(_: None = Depends(require_auth)):
+    return {"ok": True, "user": "owner"}
 
 
 @api_router.get("/")
@@ -170,6 +228,7 @@ async def update_record(table_key: str, record_id: str, payload: RecordPayload =
     return data["records"][0]
 
 
+app.include_router(auth_router)
 app.include_router(api_router)
 
 app.add_middleware(

@@ -13,6 +13,14 @@ proxies every read/write through the Airtable REST API using **field IDs** (neve
 |---|---|
 | `AIRTABLE_API_KEY` | Airtable Personal Access Token. **Add via the secrets panel — never in code or chat.** |
 | `AIRTABLE_BASE_ID` | The Airtable base (`appFAHTRNrRckuxI8`). |
+| `APP_PASSWORD` | The single owner password required to open the app. |
+| `JWT_SECRET` | Random secret used to sign 30-day session tokens. |
+
+## Authentication
+
+One shared owner password. `POST /api/auth/login` (`{"password": "..."}`) returns a 30-day JWT;
+every other `/api` route requires `Authorization: Bearer <token>`. The frontend keeps the token in
+localStorage so each device stays logged in. Five wrong tries from one IP locks login for 15 minutes.
 
 ## Backend API routes (all prefixed `/api`)
 
