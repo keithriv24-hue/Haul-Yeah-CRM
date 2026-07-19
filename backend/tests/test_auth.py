@@ -271,6 +271,28 @@ class TestRoles:
         assert r.json()["reviewLink"] == "https://g.page/r/test/review"
         requests.put(f"{BASE_URL}/api/settings/business", json={"reviewLink": ""}, headers=h, timeout=15)
 
+    def test_square_invoice_is_owner_only(self):
+        for pw in (SALES_PW, EMPLOYEE_PW):
+            tok = _login(pw)["token"]
+            r = requests.post(f"{BASE_URL}/api/square/invoice", json={"name": "T", "email": "t@t.com", "amount": 100},
+                              headers={"Authorization": f"Bearer {tok}"}, timeout=15)
+            assert r.status_code == 403
+
+    def test_square_invoice_validation(self):
+        tok = _login(CORRECT_PW)["token"]
+        h = {"Authorization": f"Bearer {tok}"}
+        r = requests.post(f"{BASE_URL}/api/square/invoice", json={"name": "T", "email": "t@t.com", "amount": 0}, headers=h, timeout=15)
+        assert r.status_code == 422
+        r = requests.post(f"{BASE_URL}/api/square/invoice", json={"name": "T", "email": "no-at-sign", "amount": 50}, headers=h, timeout=15)
+        assert r.status_code == 422
+
+    def test_square_status_reports_config(self):
+        tok = _login(CORRECT_PW)["token"]
+        r = requests.get(f"{BASE_URL}/api/square/status", headers={"Authorization": f"Bearer {tok}"}, timeout=15)
+        assert r.status_code == 200
+        body = r.json()
+        assert "configured" in body and "environment" in body
+
 
 class TestRoleSwitch:
     def test_owner_can_switch_to_sales_and_back(self):

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
-import { Phone, Mail, Calculator, CreditCard, Truck, Plus, MapPin, CalendarDays, CalendarPlus, Home, Lightbulb, Package, StickyNote, Search, MessageSquare, ChevronRight } from "lucide-react";
+import { Phone, Mail, Calculator, CreditCard, Truck, Plus, MapPin, CalendarDays, CalendarPlus, Home, Lightbulb, Package, StickyNote, Search, MessageSquare, ChevronRight, FileText } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { useAuth } from "@/components/AuthGate";
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,7 @@ import { InstructionBanner, PageTitle, Private, Money, AgeTimer, EmptyState, Loa
 import QuoteModal from "@/components/QuoteModal";
 import DepositModal from "@/components/DepositModal";
 import LeadModal from "@/components/LeadModal";
+import SquareInvoiceModal from "@/components/SquareInvoiceModal";
 import { LF, f, LEAD_STATUSES, STATUS_PILL, nextStepHint, KNOWN_LEAD_FIELD_IDS, formatExtraValue, needsFollowUp, quietDays } from "@/lib/fields";
 import { fmtDate, gmailCompose, gmailSearch, calendarTemplate, smsLink } from "@/lib/format";
 import { quoteSmsBody } from "@/lib/quote";
@@ -57,7 +58,7 @@ export const AddNoteDialog = ({ lead, open, onOpenChange }) => {
   );
 };
 
-const LeadCard = ({ lead, onQuote, onDeposit, onNote }) => {
+const LeadCard = ({ lead, onQuote, onDeposit, onNote, onInvoice }) => {
   const { updateRecord, createRecord, deleteRecord, schemas } = useApp();
   const { role } = useAuth();
   const isSales = role === "sales";
@@ -214,6 +215,9 @@ const LeadCard = ({ lead, onQuote, onDeposit, onNote }) => {
             <Button data-testid="lead-deposit-btn" variant="outline" size="sm" className="gap-1 text-xs" onClick={() => onDeposit(lead)} disabled={!quote}>
               <CreditCard className="w-3.5 h-3.5" /> Deposit
             </Button>
+            <Button data-testid="lead-square-invoice-btn" variant="outline" size="sm" className="gap-1 text-xs" onClick={() => onInvoice(lead)}>
+              <FileText className="w-3.5 h-3.5" /> Invoice
+            </Button>
             <Button
               data-testid="lead-book-btn"
               size="sm"
@@ -245,6 +249,7 @@ export default function Leads() {
   const [quoteLead, setQuoteLead] = useState(null);
   const [depositLead, setDepositLead] = useState(null);
   const [noteLead, setNoteLead] = useState(null);
+  const [invoiceLead, setInvoiceLead] = useState(null);
   const [newOpen, setNewOpen] = useState(false);
 
   useEffect(() => {
@@ -300,7 +305,7 @@ export default function Leads() {
       ) : (
         <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
           {leads.map((l) => (
-            <LeadCard key={l.id} lead={l} onQuote={setQuoteLead} onDeposit={setDepositLead} onNote={setNoteLead} />
+            <LeadCard key={l.id} lead={l} onQuote={setQuoteLead} onDeposit={setDepositLead} onNote={setNoteLead} onInvoice={setInvoiceLead} />
           ))}
         </div>
       )}
@@ -308,6 +313,7 @@ export default function Leads() {
       {quoteLead && <QuoteModal key={quoteLead.id} lead={quoteLead} open={!!quoteLead} onOpenChange={(o) => !o && setQuoteLead(null)} />}
       {depositLead && <DepositModal lead={depositLead} open={!!depositLead} onOpenChange={(o) => !o && setDepositLead(null)} />}
       {noteLead && <AddNoteDialog lead={noteLead} open={!!noteLead} onOpenChange={(o) => !o && setNoteLead(null)} />}
+      {invoiceLead && <SquareInvoiceModal lead={invoiceLead} open={!!invoiceLead} onOpenChange={(o) => !o && setInvoiceLead(null)} />}
       <LeadModal open={newOpen} onOpenChange={setNewOpen} />
     </div>
   );

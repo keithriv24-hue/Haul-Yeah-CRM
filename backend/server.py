@@ -2,11 +2,13 @@ import asyncio
 import hmac
 import logging
 import os
+import re
 import time
 from collections import deque
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
+from uuid import uuid4
 
 import httpx
 import jwt
@@ -335,6 +337,137 @@ async def save_business(payload: BusinessPayload, role: str = Depends(require_au
     link = payload.reviewLink.strip()
     await mongo_db.settings.update_one({"_id": "business"}, {"$set": {"reviewLink": link}}, upsert=True)
     return {"reviewLink": link}
+
+
+SQUARE_VERSION = "2024-08-21"
+
+
+def square_configured() -> bool:
+    return bool(os.environ.get("SQUARE_ACCESS_TOKEN", "").strip() and os.environ.get("SQUARE_LOCATION_ID", "").strip())
+
+
+def square_base_url() -> str:
+    env = os.environ.get("SQUARE_ENVIRONMENT", "sandbox").strip().lower()
+    return "https://connect.squareup.com" if env == "production" else "https://connect.squareupsandbox.com"
+
+
+async def square_request(method: str, path: str, json_body: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    if not square_configured():
+        raise HTTPException(status_code=503, detail={
+            "error": "square_missing",
+            "message": "Square is not connected. Add SQUARE_ACCESS_TOKEN and SQUARE_LOCATION_ID in the secrets panel."})
+    headers = {
+        "Authorization": f"Bearer {os.environ['SQUARE_ACCESS_TOKEN'].strip()}",
+        "Content-Type": "application/json",
+        "Square-Version": SQUARE_VERSION,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.request(method, f"{square_base_url()}{path}", headers=headers, json=json_body)
+    except httpx.HTTPError as exc:
+        logger.error("Square network error: %s", exc)
+        raise HTTPException(status_code=502, detail={"error": "network", "message": "Could not reach Square. Try again."})
+    try:
+        data = resp.json() if resp.content else {}
+    except ValueError:
+        raise HTTPException(status_code=502, detail={"error": "bad_response", "message": "Square sent an unexpected reply."})
+    if 200 <= resp.status_code < 300:
+        return data
+    errs = data.get("errors", [])
+    msg = errs[0].get("detail") or errs[0].get("code", "Square returned an error.") if errs and isinstance(errs[0], dict) else "Square returned an error."
+    if resp.status_code == 401:
+        msg = "The Square token was rejected. Check SQUARE_ACCESS_TOKEN in the secrets panel."
+    logger.error("Square %s %s -> %s %s", method, path, resp.status_code, msg)
+    raise HTTPException(status_code=resp.status_code, detail={"error": "square_error", "message": msg})
+
+
+def normalize_phone(phone: Optional[str]) -> Optional[str]:
+    digits = re.sub(r"\D", "", phone or "")
+    if len(digits) == 10:
+        return f"+1{digits}"
+    if len(digits) == 11 and digits.startswith("1"):
+        return f"+{digits}"
+    return None
+
+
+class SquareInvoicePayload(BaseModel):
+    name: str
+    email: str
+    phone: Optional[str] = None
+    amount: float
+    description: str = "Moving services"
+
+
+@api_router.get("/square/status")
+async def square_status(role: str = Depends(require_auth)):
+    return {"configured": square_configured(), "environment": os.environ.get("SQUARE_ENVIRONMENT", "sandbox").strip().lower()}
+
+
+@api_router.post("/square/invoice")
+async def send_square_invoice(payload: SquareInvoicePayload, role: str = Depends(require_auth)):
+    if role != "owner":
+        raise HTTPException(status_code=403, detail="Only the owner can send invoices.")
+    if payload.amount <= 0:
+        raise HTTPException(status_code=422, detail="The invoice amount must be more than $0.")
+    if "@" not in payload.email:
+        raise HTTPException(status_code=422, detail="This lead needs a valid email before you can send an invoice.")
+    location_id = os.environ.get("SQUARE_LOCATION_ID", "").strip()
+
+    name_parts = payload.name.strip().split(None, 1)
+    cust_body: Dict[str, Any] = {
+        "idempotency_key": str(uuid4()),
+        "given_name": name_parts[0] if name_parts else "Customer",
+        "email_address": payload.email.strip(),
+    }
+    if len(name_parts) > 1:
+        cust_body["family_name"] = name_parts[1]
+    phone = normalize_phone(payload.phone)
+    if phone:
+        cust_body["phone_number"] = phone
+    cust = await square_request("POST", "/v2/customers", cust_body)
+    customer_id = cust["customer"]["id"]
+
+    order_body = {
+        "idempotency_key": str(uuid4()),
+        "order": {
+            "location_id": location_id,
+            "customer_id": customer_id,
+            "line_items": [{
+                "name": payload.description.strip()[:255] or "Moving services",
+                "quantity": "1",
+                "base_price_money": {"amount": int(round(payload.amount * 100)), "currency": "USD"},
+            }],
+        },
+    }
+    order = await square_request("POST", "/v2/orders", order_body)
+    order_id = order["order"]["id"]
+
+    due_date = (datetime.now(timezone.utc) + timedelta(days=7)).date().isoformat()
+    inv_body = {
+        "idempotency_key": str(uuid4()),
+        "invoice": {
+            "location_id": location_id,
+            "order_id": order_id,
+            "primary_recipient": {"customer_id": customer_id},
+            "payment_requests": [{"request_type": "BALANCE", "due_date": due_date}],
+            "delivery_method": "EMAIL",
+            "accepted_payment_methods": {"card": True},
+            "title": "Haul Yeah Moving",
+        },
+    }
+    inv = await square_request("POST", "/v2/invoices", inv_body)
+    invoice = inv["invoice"]
+
+    pub = await square_request("POST", f"/v2/invoices/{invoice['id']}/publish",
+                               {"version": invoice["version"], "idempotency_key": str(uuid4())})
+    published = pub["invoice"]
+    return {
+        "invoice_id": published["id"],
+        "invoice_number": published.get("invoice_number"),
+        "status": published.get("status"),
+        "public_url": published.get("public_url"),
+        "amount": payload.amount,
+    }
 
 
 @api_router.get("/airtable/verify")

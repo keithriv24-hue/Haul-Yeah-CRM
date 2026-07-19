@@ -3,7 +3,7 @@ import { useParams, useNavigate, Link } from "react-router-dom";
 import { toast } from "sonner";
 import {
   Phone, Mail, Calculator, CreditCard, Truck, MapPin, CalendarDays, CalendarPlus, Home, Lightbulb,
-  Package, StickyNote, Search, MessageSquare, ArrowLeft, History, Pencil, Save, X,
+  Package, StickyNote, Search, MessageSquare, ArrowLeft, History, Pencil, Save, X, FileText,
 } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { useAuth } from "@/components/AuthGate";
@@ -14,6 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { InstructionBanner, Private, Money, AgeTimer, EmptyState, LoadingRows, ConfirmDeleteButton, FollowUpBadge } from "@/components/Bits";
 import QuoteModal from "@/components/QuoteModal";
 import DepositModal from "@/components/DepositModal";
+import SquareInvoiceModal from "@/components/SquareInvoiceModal";
 import { AddNoteDialog } from "@/pages/Leads";
 import { LF, f, LEAD_STATUSES, STATUS_PILL, nextStepHint, KNOWN_LEAD_FIELD_IDS, formatExtraValue, needsFollowUp, quietDays, HOME_SIZES } from "@/lib/fields";
 import { fmtDate, gmailCompose, gmailSearch, calendarTemplate, smsLink } from "@/lib/format";
@@ -39,6 +40,7 @@ export default function LeadDetail() {
   const [quoteOpen, setQuoteOpen] = useState(false);
   const [depositOpen, setDepositOpen] = useState(false);
   const [noteOpen, setNoteOpen] = useState(false);
+  const [invoiceOpen, setInvoiceOpen] = useState(false);
   const [booking, setBooking] = useState(false);
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({});
@@ -285,6 +287,9 @@ export default function LeadDetail() {
                   <Button data-testid="lead-detail-deposit-btn" variant="outline" size="sm" className="gap-1 text-xs" onClick={() => setDepositOpen(true)} disabled={!quote}>
                     <CreditCard className="w-3.5 h-3.5" /> Deposit
                   </Button>
+                  <Button data-testid="lead-detail-square-invoice-btn" variant="outline" size="sm" className="gap-1 text-xs" onClick={() => setInvoiceOpen(true)}>
+                    <FileText className="w-3.5 h-3.5" /> Invoice
+                  </Button>
                   <Button
                     data-testid="lead-detail-book-btn"
                     size="sm"
@@ -333,6 +338,7 @@ export default function LeadDetail() {
       {quoteOpen && <QuoteModal key={lead.id} lead={lead} open={quoteOpen} onOpenChange={setQuoteOpen} />}
       {depositOpen && <DepositModal lead={lead} open={depositOpen} onOpenChange={setDepositOpen} />}
       {noteOpen && <AddNoteDialog lead={lead} open={noteOpen} onOpenChange={setNoteOpen} />}
+      {invoiceOpen && <SquareInvoiceModal lead={lead} open={invoiceOpen} onOpenChange={setInvoiceOpen} />}
     </div>
   );
 }
