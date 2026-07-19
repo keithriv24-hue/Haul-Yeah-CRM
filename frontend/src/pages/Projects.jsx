@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { InstructionBanner, PageTitle, Private, Money, EmptyState, LoadingRows } from "@/components/Bits";
+import { InstructionBanner, PageTitle, Private, Money, EmptyState, LoadingRows, SearchBar, searchMatch } from "@/components/Bits";
 import { PF, LF, f, PROJECT_STATUSES, TRUCKS, STATUS_PILL } from "@/lib/fields";
 import { fmtDate, fmtMoney, calendarTemplate, smsLink, reviewSmsBody, mapsLink } from "@/lib/format";
 import { useAuth } from "@/components/AuthGate";
@@ -196,12 +196,15 @@ export default function Projects() {
   const { loadTable, records, tableState } = useApp();
   const { role } = useAuth();
   const isOwner = (role || "owner") === "owner";
+  const [query, setQuery] = useState("");
   useEffect(() => {
     loadTable("projects");
     if (isOwner) loadTable("leads");
   }, [loadTable, isOwner]);
 
-  const projects = [...records("projects")].sort((a, b) => (f(a, PF.jobDate) || "9999").localeCompare(f(b, PF.jobDate) || "9999"));
+  const projects = [...records("projects")]
+    .filter((p) => searchMatch(query, f(p, PF.jobName), f(p, PF.fromAddr), f(p, PF.toAddr), f(p, PF.status), f(p, PF.truck), f(p, PF.notes)))
+    .sort((a, b) => (f(a, PF.jobDate) || "9999").localeCompare(f(b, PF.jobDate) || "9999"));
   const { loading, error } = tableState("projects");
 
   return (
@@ -221,7 +224,10 @@ export default function Projects() {
           : "Your jobs, next date first. Update the status as the day goes. Open Details for addresses, crew, and truck."}
       </InstructionBanner>
       <JobsCalendar projects={records("projects")} />
-      <h2 className="font-display font-bold text-lg text-[#1B2A4A] mb-3">All jobs</h2>
+      <div className="flex flex-wrap items-center gap-3 mb-3">
+        <h2 className="font-display font-bold text-lg text-[#1B2A4A]">All jobs</h2>
+        <SearchBar value={query} onChange={setQuery} placeholder="Search job, address, or truck…" testId="projects-search-input" className="sm:ml-auto sm:max-w-xs" />
+      </div>
       {loading && !projects.length ? (
         <LoadingRows />
       ) : error && !projects.length ? (
@@ -229,7 +235,7 @@ export default function Projects() {
       ) : projects.length === 0 ? (
         <EmptyState>
           <Truck className="w-6 h-6 mx-auto mb-2 text-slate-400" />
-          No jobs yet. Book a lead from the Leads page to create one.
+          {query ? "No jobs match that search." : "No jobs yet. Book a lead from the Leads page to create one."}
         </EmptyState>
       ) : (
         <div className="space-y-3">{projects.map((p) => <ProjectCard key={p.id} project={p} />)}</div>

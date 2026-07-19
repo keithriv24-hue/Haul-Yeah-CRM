@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from "react";
-import { Info, Clock, Trash2, PhoneCall, ReceiptText } from "lucide-react";
+import { Info, Clock, Trash2, PhoneCall, ReceiptText, Search, X } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { useAuth } from "@/components/AuthGate";
 import { fmtMoney, minutesSince, ageLabel } from "@/lib/format";
 import { STATUS_PILL } from "@/lib/fields";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
@@ -144,6 +145,35 @@ export const KpiCard = ({ label, value, sub, isPrivate = true, alert = false, te
 
 export const EmptyState = ({ children }) => (
   <div className="border border-dashed border-slate-300 rounded-lg p-8 text-center text-sm text-slate-500">{children}</div>
+);
+
+export const searchMatch = (q, ...vals) => {
+  const needle = (q || "").trim().toLowerCase();
+  if (!needle) return true;
+  return vals.some((v) => String(v ?? "").toLowerCase().includes(needle));
+};
+
+export const SearchBar = ({ value, onChange, placeholder = "Search…", testId = "search-input", className = "" }) => (
+  <div className={`relative w-full max-w-md ${className}`}>
+    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+    <Input
+      data-testid={testId}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder={placeholder}
+      className="pl-9 pr-8 h-9 bg-white"
+    />
+    {value && (
+      <button
+        data-testid={`${testId}-clear`}
+        onClick={() => onChange("")}
+        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+        aria-label="Clear search"
+      >
+        <X className="w-4 h-4" />
+      </button>
+    )}
+  </div>
 );
 
 export const LoadingRows = () => (

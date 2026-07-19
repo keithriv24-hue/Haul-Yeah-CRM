@@ -10,6 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAuth } from "@/components/AuthGate";
 import { useApp } from "@/context/AppContext";
+import { SearchBar, searchMatch } from "@/components/Bits";
 import { fmtMoney, fmtDate } from "@/lib/format";
 import {
   marketingOverviewApi, listAdSpendApi, addAdSpendApi, deleteAdSpendApi,
@@ -114,9 +115,11 @@ const SourcesTable = ({ sources, blur }) => (
   </div>
 );
 
-const OverviewTab = ({ overview, blur }) => {
+const OverviewTab = ({ overview, blur, query }) => {
   if (!overview) return <div className="py-10 text-center text-slate-400"><Loader2 className="w-5 h-5 animate-spin inline" /></div>;
   const t = overview.totals;
+  const sources = overview.sources.filter((s) => searchMatch(query, s.key));
+  const campaigns = overview.campaigns.filter((c) => searchMatch(query, c.key));
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
@@ -143,7 +146,7 @@ const OverviewTab = ({ overview, blur }) => {
               </tr>
             </thead>
             <tbody>
-              {overview.campaigns.map((c) => (
+              {campaigns.map((c) => (
                 <tr key={c.key} data-testid="campaign-row" className="border-b border-slate-50">
                   <td className="py-2 pr-3 font-medium text-[#1B2A4A]">{c.key}</td>
                   <td className="py-2 px-2 text-right">{c.leads}</td>
@@ -151,7 +154,7 @@ const OverviewTab = ({ overview, blur }) => {
                   <td className={`py-2 pl-2 text-right text-emerald-700 font-semibold ${blur ? "blur-sm select-none" : ""}`}>{fmtMoney(c.revenue)}</td>
                 </tr>
               ))}
-              {overview.campaigns.length === 0 && (
+              {campaigns.length === 0 && (
                 <tr><td colSpan={4} className="py-6 text-center text-slate-400 text-sm">No UTM campaigns captured yet. They show up automatically from your Tally form.</td></tr>
               )}
             </tbody>
@@ -160,7 +163,7 @@ const OverviewTab = ({ overview, blur }) => {
       </div>
       <div className="bg-white rounded-lg border border-slate-200 p-4">
         <h2 className="font-bold text-[#1B2A4A] mb-3">By source</h2>
-        <SourcesTable sources={overview.sources} blur={blur} />
+        <SourcesTable sources={sources} blur={blur} />
       </div>
     </div>
   );
@@ -168,7 +171,7 @@ const OverviewTab = ({ overview, blur }) => {
 
 const PLATFORMS = ["Meta", "Google", "Other"];
 
-const AdSpendTab = ({ overview, range, isOwner, blur }) => {
+const AdSpendTab = ({ overview, range, isOwner, blur, query }) => {
   const [entries, setEntries] = useState(null);
   const [thresholds, setThresholds] = useState(null);
   const [tDraft, setTDraft] = useState(null);
@@ -237,8 +240,8 @@ const AdSpendTab = ({ overview, range, isOwner, blur }) => {
         bookingRate: s.leads ? (s.booked / s.leads) * 100 : null,
         roas: v.spend ? s.revenue / v.spend : null,
       };
-    }).sort((a, b) => b.spend - a.spend);
-  }, [entries, overview, range]);
+    }).filter((r) => searchMatch(query, r.campaign)).sort((a, b) => b.spend - a.spend);
+  }, [entries, overview, range, query]);
 
   const totals = useMemo(() => {
     const t = perf.reduce((acc, r) => ({
@@ -254,6 +257,7 @@ const AdSpendTab = ({ overview, range, isOwner, blur }) => {
   }, [perf]);
 
   const th = thresholds || { cplGreen: 20, cplRed: 25, bookingGreen: 20, bookingRed: 15 };
+  const entriesShown = (entries || []).filter((e) => searchMatch(query, e.campaign, e.platform));
 
   return (
     <div className="space-y-4">
@@ -350,7 +354,7 @@ const AdSpendTab = ({ overview, range, isOwner, blur }) => {
         <div className="bg-white rounded-lg border border-slate-200 p-4">
           <h2 className="font-bold text-[#1B2A4A] mb-3">Spend log</h2>
           <div className="space-y-1.5">
-            {(entries || []).map((e) => (
+            {entriesShown.map((e) => (
               <div key={e.id} data-testid="adspend-entry-row" className="flex items-center gap-2 text-sm border-b border-slate-50 pb-1.5">
                 <Badge variant="outline" className="text-[10px]">{e.platform}</Badge>
                 <span className="flex-1 font-medium text-[#1B2A4A] truncate">{e.campaign}</span>
@@ -361,7 +365,7 @@ const AdSpendTab = ({ overview, range, isOwner, blur }) => {
                 </Button>
               </div>
             ))}
-            {entries && entries.length === 0 && <p className="text-sm text-slate-400 py-4 text-center">Nothing logged yet.</p>}
+            {entries && entriesShown.length === 0 && <p className="text-sm text-slate-400 py-4 text-center">{query ? "No spend entries match that search." : "Nothing logged yet."}</p>}
           </div>
         </div>
 
@@ -397,11 +401,13 @@ const AdSpendTab = ({ overview, range, isOwner, blur }) => {
   );
 };
 
-const ReviewsTab = () => {
+const ReviewsTab = ({ query }) => {
   const [requests, setRequests] = useState(null);
   useEffect(() => {
     listReviewRequestsApi().then(setRequests).catch((e) => toast.error(apiErrorMessage(e)));
   }, []);
+
+  const shown = (requests || []).filter((r) => searchMatch(query, r.crew_name, r.customer?.name, r.channel, r.invoice_number));
 
   const patch = async (id, payload) => {
     try {
@@ -438,7 +444,7 @@ const ReviewsTab = () => {
             </tr>
           </thead>
           <tbody>
-            {(requests || []).map((r) => (
+            {shown.map((r) => (
               <tr key={r.id} data-testid="review-row" className="border-b border-slate-50">
                 <td className="py-2.5 pr-3 text-slate-600 whitespace-nowrap">{fmtDate(r.sent_at)}</td>
                 <td className="py-2.5 px-2 font-medium text-[#1B2A4A]">{r.crew_name}</td>
@@ -459,8 +465,8 @@ const ReviewsTab = () => {
                 </td>
               </tr>
             ))}
-            {requests && requests.length === 0 && (
-              <tr><td colSpan={7} className="py-6 text-center text-slate-400 text-sm">No review requests yet. Crew send them right after they finish a job.</td></tr>
+            {requests && shown.length === 0 && (
+              <tr><td colSpan={7} className="py-6 text-center text-slate-400 text-sm">{query ? "No review requests match that search." : "No review requests yet. Crew send them right after they finish a job."}</td></tr>
             )}
           </tbody>
         </table>
@@ -469,7 +475,7 @@ const ReviewsTab = () => {
   );
 };
 
-const MarginTab = ({ range, blur }) => {
+const MarginTab = ({ range, blur, query }) => {
   const [data, setData] = useState(null);
   useEffect(() => {
     setData(null);
@@ -477,7 +483,8 @@ const MarginTab = ({ range, blur }) => {
   }, [range]);
 
   if (!data) return <div className="py-10 text-center text-slate-400"><Loader2 className="w-5 h-5 animate-spin inline" /></div>;
-  const totals = data.sources.reduce((a, s) => ({ revenue: a.revenue + s.revenue, labor_cost: a.labor_cost + s.labor_cost, margin: a.margin + s.margin }), { revenue: 0, labor_cost: 0, margin: 0 });
+  const shown = data.sources.filter((s) => searchMatch(query, s.source));
+  const totals = shown.reduce((a, s) => ({ revenue: a.revenue + s.revenue, labor_cost: a.labor_cost + s.labor_cost, margin: a.margin + s.margin }), { revenue: 0, labor_cost: 0, margin: 0 });
 
   return (
     <div className="bg-white rounded-lg border border-slate-200 p-4">
@@ -498,7 +505,7 @@ const MarginTab = ({ range, blur }) => {
             </tr>
           </thead>
           <tbody>
-            {data.sources.map((s) => (
+            {shown.map((s) => (
               <tr key={s.source} data-testid="margin-row" className="border-b border-slate-50">
                 <td className="py-2.5 pr-3 font-semibold text-[#1B2A4A]">{s.source}</td>
                 <td className={`py-2.5 px-2 text-right ${blur ? "blur-sm select-none" : ""}`}>{fmtMoney(s.revenue)}</td>
@@ -507,7 +514,7 @@ const MarginTab = ({ range, blur }) => {
                 <td className="py-2.5 pl-2 text-right">{s.margin_pct == null ? "—" : `${s.margin_pct}%`}</td>
               </tr>
             ))}
-            {data.sources.length > 0 && (
+            {shown.length > 0 && (
               <tr data-testid="margin-total-row" className="border-t-2 border-slate-200 font-bold">
                 <td className="py-2.5 pr-3 text-[#1B2A4A]">Everything</td>
                 <td className={`py-2.5 px-2 text-right ${blur ? "blur-sm select-none" : ""}`}>{fmtMoney(totals.revenue)}</td>
@@ -516,8 +523,8 @@ const MarginTab = ({ range, blur }) => {
                 <td className="py-2.5 pl-2 text-right">{totals.revenue ? `${Math.round((totals.margin / totals.revenue) * 100)}%` : "—"}</td>
               </tr>
             )}
-            {data.sources.length === 0 && (
-              <tr><td colSpan={5} className="py-6 text-center text-slate-400 text-sm">No paid revenue or labor in this range yet.</td></tr>
+            {shown.length === 0 && (
+              <tr><td colSpan={5} className="py-6 text-center text-slate-400 text-sm">{query ? "No sources match that search." : "No paid revenue or labor in this range yet."}</td></tr>
             )}
           </tbody>
         </table>
@@ -532,6 +539,7 @@ export default function MarketingDashboard() {
   const isOwner = role === "owner";
   const [range, setRange] = useState({ start: daysAgo(29), end: iso(new Date()) });
   const [overview, setOverview] = useState(null);
+  const [query, setQuery] = useState("");
 
   useEffect(() => {
     if (!range.start || !range.end || range.start > range.end) return;
@@ -564,6 +572,8 @@ export default function MarketingDashboard() {
         </div>
       </div>
 
+      <SearchBar value={query} onChange={setQuery} placeholder="Search source, campaign, crew, or customer…" testId="marketing-search-input" />
+
       {overview && overview.airtable_available === false && role === "marketing" && (
         <div data-testid="mkt-airtable-banner" className="rounded-md bg-amber-50 border border-amber-200 text-amber-800 text-sm px-4 py-2.5">
           Lead numbers need the Airtable connection. Add the AIRTABLE_API_KEY and refresh — spend logging still works meanwhile.
@@ -577,10 +587,10 @@ export default function MarketingDashboard() {
           <TabsTrigger data-testid="mkt-tab-reviews" value="reviews">Reviews</TabsTrigger>
           {isOwner && <TabsTrigger data-testid="mkt-tab-margin" value="margin">True Margin</TabsTrigger>}
         </TabsList>
-        <TabsContent value="overview" className="mt-4"><OverviewTab overview={overview} blur={privacy} /></TabsContent>
-        <TabsContent value="adspend" className="mt-4"><AdSpendTab overview={overview} range={range} isOwner={isOwner} blur={privacy} /></TabsContent>
-        <TabsContent value="reviews" className="mt-4"><ReviewsTab /></TabsContent>
-        {isOwner && <TabsContent value="margin" className="mt-4"><MarginTab range={range} blur={privacy} /></TabsContent>}
+        <TabsContent value="overview" className="mt-4"><OverviewTab overview={overview} blur={privacy} query={query} /></TabsContent>
+        <TabsContent value="adspend" className="mt-4"><AdSpendTab overview={overview} range={range} isOwner={isOwner} blur={privacy} query={query} /></TabsContent>
+        <TabsContent value="reviews" className="mt-4"><ReviewsTab query={query} /></TabsContent>
+        {isOwner && <TabsContent value="margin" className="mt-4"><MarginTab range={range} blur={privacy} query={query} /></TabsContent>}
       </Tabs>
     </div>
   );

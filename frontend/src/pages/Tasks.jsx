@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { InstructionBanner, PageTitle, Pill, EmptyState, LoadingRows } from "@/components/Bits";
+import { InstructionBanner, PageTitle, Pill, EmptyState, LoadingRows, SearchBar, searchMatch } from "@/components/Bits";
 import { TF, f, TASK_STATUSES, TASK_PRIORITIES, TASK_CATEGORIES } from "@/lib/fields";
 import { fmtDate, isOverdue } from "@/lib/format";
 
@@ -57,12 +57,13 @@ export default function Tasks() {
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState(blank);
   const [saving, setSaving] = useState(false);
+  const [query, setQuery] = useState("");
 
   useEffect(() => {
     loadTable("tasks");
   }, [loadTable]);
 
-  const tasks = records("tasks");
+  const tasks = records("tasks").filter((t) => searchMatch(query, f(t, TF.task), f(t, TF.category), f(t, TF.priority), f(t, TF.notes)));
   const { loading, error } = tableState("tasks");
 
   const onDrop = (e, status) => {
@@ -106,6 +107,10 @@ export default function Tasks() {
         }
       />
       <InstructionBanner>Drag cards between columns as work moves along. On a phone, use the dropdown on each card.</InstructionBanner>
+
+      <div className="mb-4">
+        <SearchBar value={query} onChange={setQuery} placeholder="Search tasks…" testId="tasks-search-input" />
+      </div>
 
       {loading && !tasks.length ? (
         <LoadingRows />

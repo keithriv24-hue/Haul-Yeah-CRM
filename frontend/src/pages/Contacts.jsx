@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { InstructionBanner, PageTitle, Private, EmptyState, LoadingRows, ConfirmDeleteButton } from "@/components/Bits";
+import { InstructionBanner, PageTitle, Private, EmptyState, LoadingRows, ConfirmDeleteButton, SearchBar, searchMatch } from "@/components/Bits";
 import { CF, f, CONTACT_TYPES } from "@/lib/fields";
 import { gmailCompose, gmailSearch } from "@/lib/format";
 
@@ -116,13 +116,15 @@ export default function Contacts() {
   const [filter, setFilter] = useState("All");
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [query, setQuery] = useState("");
 
   useEffect(() => {
     loadTable("contacts");
   }, [loadTable]);
 
   const all = records("contacts");
-  const contacts = filter === "All" ? all : all.filter((c) => f(c, CF.type) === filter);
+  const byType = filter === "All" ? all : all.filter((c) => f(c, CF.type) === filter);
+  const contacts = byType.filter((c) => searchMatch(query, f(c, CF.name), f(c, CF.phone), f(c, CF.email), f(c, CF.company), f(c, CF.town), f(c, CF.notes)));
   const { loading, error } = tableState("contacts");
 
   return (
@@ -137,6 +139,10 @@ export default function Contacts() {
         }
       />
       <InstructionBanner>Everyone you work with, in one place. Tap a card to call or email.</InstructionBanner>
+
+      <div className="mb-4">
+        <SearchBar value={query} onChange={setQuery} placeholder="Search name, phone, email, or company…" testId="contacts-search-input" />
+      </div>
 
       <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1 mb-5">
         {["All", ...CONTACT_TYPES].map((t) => (

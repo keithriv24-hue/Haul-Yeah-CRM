@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { InstructionBanner, PageTitle, Private, Money, AgeTimer, EmptyState, LoadingRows, ConfirmDeleteButton, FollowUpBadge, InvoiceBadge } from "@/components/Bits";
+import { InstructionBanner, PageTitle, Private, Money, AgeTimer, EmptyState, LoadingRows, ConfirmDeleteButton, FollowUpBadge, InvoiceBadge, SearchBar, searchMatch } from "@/components/Bits";
 import QuoteModal from "@/components/QuoteModal";
 import QuotePdfModal from "@/components/QuotePdfModal";
 import DepositModal from "@/components/DepositModal";
@@ -287,6 +287,7 @@ export default function Leads() {
   const [noteLead, setNoteLead] = useState(null);
   const [invoiceLead, setInvoiceLead] = useState(null);
   const [newOpen, setNewOpen] = useState(false);
+  const [query, setQuery] = useState("");
 
   useEffect(() => {
     loadTable("leads");
@@ -296,7 +297,8 @@ export default function Leads() {
 
   const all = [...records("leads")].sort((a, b) => (b.createdTime || "").localeCompare(a.createdTime || ""));
   const callbackCount = all.filter(needsFollowUp).length;
-  const leads = filter === "All" ? all : filter === "Call back" ? all.filter(needsFollowUp) : all.filter((l) => f(l, LF.status) === filter);
+  const byFilter = filter === "All" ? all : filter === "Call back" ? all.filter(needsFollowUp) : all.filter((l) => f(l, LF.status) === filter);
+  const leads = byFilter.filter((l) => searchMatch(query, f(l, LF.name), f(l, LF.phone), f(l, LF.email), f(l, LF.from), f(l, LF.to), f(l, LF.notes)));
   const { loading, error } = tableState("leads");
 
   return (
@@ -311,6 +313,10 @@ export default function Leads() {
         }
       />
       <InstructionBanner>Call New leads fast — under 5 minutes wins the job. Use the buttons on each card to call, quote, and book.</InstructionBanner>
+
+      <div className="mb-4">
+        <SearchBar value={query} onChange={setQuery} placeholder="Search name, phone, email, or address…" testId="leads-search-input" />
+      </div>
 
       <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1 mb-5">
         {["All", "Call back", ...LEAD_STATUSES].map((s) => (
@@ -338,7 +344,7 @@ export default function Leads() {
       ) : error && !all.length ? (
         <EmptyState>{error}</EmptyState>
       ) : leads.length === 0 ? (
-        <EmptyState>No leads here. Press "+ New lead" to add one.</EmptyState>
+        <EmptyState>{query ? "No leads match that search." : 'No leads here. Press "+ New lead" to add one.'}</EmptyState>
       ) : (
         <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
           {leads.map((l) => (

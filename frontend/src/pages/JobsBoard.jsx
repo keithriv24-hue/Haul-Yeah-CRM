@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { InstructionBanner, PageTitle, Private } from "@/components/Bits";
+import { InstructionBanner, PageTitle, Private, SearchBar, searchMatch } from "@/components/Bits";
 import { fmtMoney } from "@/lib/format";
 import { mapsUrl, fmtTime12 } from "@/lib/maps";
 import {
@@ -190,6 +190,7 @@ export default function JobsBoard() {
   const [trucks, setTrucks] = useState([]);
   const [reviews, setReviews] = useState([]);
   const [editJob, setEditJob] = useState(null);
+  const [query, setQuery] = useState("");
 
   const load = useCallback(() => {
     listJobsApi().then(setJobs).catch(() => setJobs([]));
@@ -204,7 +205,14 @@ export default function JobsBoard() {
     return () => clearInterval(id);
   }, [load]);
 
-  const upcoming = useMemo(() => jobs || [], [jobs]);
+  const upcoming = useMemo(
+    () =>
+      (jobs || []).filter((j) =>
+        searchMatch(query, j.invoice_number, j.customer?.name, j.customer?.phone, j.truck_name, j.pickup_address, j.dropoff_address, ...(j.crew || []).map((c) => c.name))
+      ),
+    [jobs, query]
+  );
+  const reviewsShown = reviews.filter((r) => searchMatch(query, r.crew_name, r.customer?.name, r.customer?.phone, r.customer?.email, r.invoice_number));
 
   return (
     <div data-testid="jobs-board-page" className="space-y-5">
@@ -223,12 +231,14 @@ export default function JobsBoard() {
         A job shows up here the moment its Square deposit is confirmed paid — never before. Tap Assign to pick the crew, truck, and addresses.
       </InstructionBanner>
 
+      <SearchBar value={query} onChange={setQuery} placeholder="Search job #, customer, crew, truck, or address…" testId="jobs-search-input" />
+
       {jobs === null ? (
         <p className="text-sm text-slate-400">Loading…</p>
       ) : upcoming.length === 0 ? (
         <div data-testid="jobs-empty" className="bg-white border border-slate-200 rounded-lg p-8 text-center">
           <Briefcase className="w-10 h-10 text-slate-300 mx-auto" />
-          <p className="text-sm text-slate-500 mt-2">No deposit-paid jobs yet. When a customer pays a Square deposit, the job pops up here on its own.</p>
+          <p className="text-sm text-slate-500 mt-2">{query ? "No jobs match that search." : "No deposit-paid jobs yet. When a customer pays a Square deposit, the job pops up here on its own."}</p>
         </div>
       ) : (
         <div className="space-y-4">
@@ -288,7 +298,7 @@ export default function JobsBoard() {
               </tr>
             </thead>
             <tbody>
-              {reviews.map((r) => (
+              {reviewsShown.map((r) => (
                 <tr key={r.id} data-testid="review-log-row" className="border-b border-slate-50">
                   <td className="px-3 py-2 whitespace-nowrap">{fmtPaidAt(r.sent_at)}</td>
                   <td className="px-3 py-2">{r.crew_name}</td>
@@ -299,8 +309,8 @@ export default function JobsBoard() {
                   <td className="px-3 py-2">#{r.invoice_number}</td>
                 </tr>
               ))}
-              {reviews.length === 0 && (
-                <tr><td colSpan="7" className="px-3 py-5 text-center text-slate-400">No review requests yet.</td></tr>
+              {reviewsShown.length === 0 && (
+                <tr><td colSpan="7" className="px-3 py-5 text-center text-slate-400">{query ? "No review requests match that search." : "No review requests yet."}</td></tr>
               )}
             </tbody>
           </table>

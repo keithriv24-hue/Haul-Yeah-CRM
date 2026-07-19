@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { InstructionBanner, PageTitle, Private, Money, KpiCard, EmptyState, LoadingRows } from "@/components/Bits";
+import { InstructionBanner, PageTitle, Private, Money, KpiCard, EmptyState, LoadingRows, SearchBar, searchMatch } from "@/components/Bits";
 import { IF, CF, LF, f, INVOICE_STATUSES, PAYMENT_METHODS, STATUS_PILL } from "@/lib/fields";
 import { fmtDate, fmtMoney, todayISO, smsLink, payNudgeSmsBody } from "@/lib/format";
 
@@ -20,6 +20,7 @@ export default function Invoices() {
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState(blank);
   const [saving, setSaving] = useState(false);
+  const [query, setQuery] = useState("");
 
   useEffect(() => {
     loadTable("invoices");
@@ -37,12 +38,13 @@ export default function Invoices() {
     return (l && f(l, LF.phone)) || null;
   };
 
-  const invoices = [...records("invoices")].sort((a, b) => (f(b, IF.issueDate) || "").localeCompare(f(a, IF.issueDate) || ""));
+  const allInvoices = [...records("invoices")].sort((a, b) => (f(b, IF.issueDate) || "").localeCompare(f(a, IF.issueDate) || ""));
+  const invoices = allInvoices.filter((i) => searchMatch(query, f(i, IF.number), f(i, IF.customer), f(i, IF.status), f(i, IF.payMethod)));
   const { loading, error } = tableState("invoices");
 
-  const paid = invoices.filter((i) => f(i, IF.status) === "Paid").reduce((s, i) => s + num(f(i, IF.amount)), 0);
-  const sent = invoices.filter((i) => f(i, IF.status) === "Sent").reduce((s, i) => s + num(f(i, IF.amount)), 0);
-  const overdue = invoices.filter((i) => f(i, IF.status) === "Overdue").reduce((s, i) => s + num(f(i, IF.amount)), 0);
+  const paid = allInvoices.filter((i) => f(i, IF.status) === "Paid").reduce((s, i) => s + num(f(i, IF.amount)), 0);
+  const sent = allInvoices.filter((i) => f(i, IF.status) === "Sent").reduce((s, i) => s + num(f(i, IF.amount)), 0);
+  const overdue = allInvoices.filter((i) => f(i, IF.status) === "Overdue").reduce((s, i) => s + num(f(i, IF.amount)), 0);
 
   const markPaid = (inv) => {
     updateRecord("invoices", inv.id, { [IF.status]: "Paid" })
@@ -95,12 +97,16 @@ export default function Invoices() {
         <KpiCard testId="kpi-invoices-overdue" label="Overdue" value={fmtMoney(overdue)} alert={overdue > 0} />
       </div>
 
-      {loading && !invoices.length ? (
+      <div className="mb-4">
+        <SearchBar value={query} onChange={setQuery} placeholder="Search invoice #, customer…" testId="invoices-search-input" />
+      </div>
+
+      {loading && !allInvoices.length ? (
         <LoadingRows />
-      ) : error && !invoices.length ? (
+      ) : error && !allInvoices.length ? (
         <EmptyState>{error}</EmptyState>
       ) : invoices.length === 0 ? (
-        <EmptyState>No invoices yet. Press "+ New invoice".</EmptyState>
+        <EmptyState>{query ? "No invoices match that search." : 'No invoices yet. Press "+ New invoice".'}</EmptyState>
       ) : (
         <div className="bg-white border border-slate-200 rounded-lg overflow-x-auto">
           <Table>

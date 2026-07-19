@@ -13,6 +13,7 @@ import {
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { EmployeeFileDialog } from "@/components/crew/EmployeeFileDialog";
+import { SearchBar, searchMatch } from "@/components/Bits";
 import {
   listUsersApi, createUserApi, patchUserApi, deleteUserApi, listTrucksApi, createTruckApi, patchTruckApi, deleteTruckApi,
   getCrewRatesApi, saveCrewRatesApi, apiErrorMessage,
@@ -209,6 +210,7 @@ export const TeamTab = () => {
   const [editTruck, setEditTruck] = useState(null);
   const [newTruck, setNewTruck] = useState("");
   const [newPlate, setNewPlate] = useState("");
+  const [query, setQuery] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -275,6 +277,8 @@ export const TeamTab = () => {
     }
   };
 
+  const shownUsers = users.filter((u) => searchMatch(query, u.name, u.email, ...(u.roles || [u.role])));
+
   return (
     <div className="grid lg:grid-cols-3 gap-4 mt-4">
       <div className="lg:col-span-2 bg-white rounded-lg border border-slate-200">
@@ -284,8 +288,11 @@ export const TeamTab = () => {
             <UserPlus className="w-4 h-4" /> Add person
           </Button>
         </div>
+        <div className="px-4 py-2.5 border-b border-slate-100">
+          <SearchBar value={query} onChange={setQuery} placeholder="Search name, email, or role…" testId="team-search-input" />
+        </div>
         <div className="divide-y divide-slate-100">
-          {users.map((u) => (
+          {shownUsers.map((u) => (
             <div key={u.id} data-testid="user-row" className={`flex flex-wrap items-center gap-2 px-4 py-3 ${u.active ? "" : "opacity-50"}`}>
               <div className="flex-1 min-w-[160px]">
                 <p className="font-semibold text-[#1B2A4A] text-sm">{u.name}</p>
@@ -331,6 +338,7 @@ export const TeamTab = () => {
             </div>
           ))}
           {users.length === 0 && <p className="text-sm text-slate-400 px-4 py-6 text-center">Loading team…</p>}
+          {users.length > 0 && shownUsers.length === 0 && <p className="text-sm text-slate-400 px-4 py-6 text-center">No one matches that search.</p>}
         </div>
       </div>
 

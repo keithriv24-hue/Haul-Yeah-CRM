@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { InstructionBanner, PageTitle, EmptyState, LoadingRows } from "@/components/Bits";
+import { InstructionBanner, PageTitle, EmptyState, LoadingRows, SearchBar, searchMatch } from "@/components/Bits";
 import { BF, f, BLOG_STATUSES } from "@/lib/fields";
 import { fmtDate } from "@/lib/format";
 
@@ -109,12 +109,13 @@ export default function Blog() {
   const { loadTable, records, tableState } = useApp();
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [query, setQuery] = useState("");
 
   useEffect(() => {
     loadTable("blog");
   }, [loadTable]);
 
-  const posts = records("blog");
+  const posts = records("blog").filter((p) => searchMatch(query, f(p, BF.title), f(p, BF.category), f(p, BF.slug), f(p, BF.body)));
   const { loading, error } = tableState("blog");
 
   return (
@@ -129,6 +130,10 @@ export default function Blog() {
         }
       />
       <InstructionBanner>Move posts left to right: Idea → Draft → In Review → Published. Tap a card to edit it.</InstructionBanner>
+
+      <div className="mb-4">
+        <SearchBar value={query} onChange={setQuery} placeholder="Search posts…" testId="blog-search-input" />
+      </div>
 
       {loading && !posts.length ? (
         <LoadingRows />

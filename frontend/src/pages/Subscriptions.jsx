@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { InstructionBanner, PageTitle, Money, KpiCard, EmptyState, LoadingRows } from "@/components/Bits";
+import { InstructionBanner, PageTitle, Money, KpiCard, EmptyState, LoadingRows, SearchBar, searchMatch } from "@/components/Bits";
 import { SF, f, SUB_CATEGORIES, SUB_STATUSES, STATUS_PILL } from "@/lib/fields";
 import { fmtDate, fmtMoney, daysUntil } from "@/lib/format";
 
@@ -20,14 +20,16 @@ export default function Subscriptions() {
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState(blank);
   const [saving, setSaving] = useState(false);
+  const [query, setQuery] = useState("");
 
   useEffect(() => {
     loadTable("subscriptions");
   }, [loadTable]);
 
-  const subs = [...records("subscriptions")].sort((a, b) => (f(a, SF.nextRenewal) || "9999").localeCompare(f(b, SF.nextRenewal) || "9999"));
+  const allSubs = [...records("subscriptions")].sort((a, b) => (f(a, SF.nextRenewal) || "9999").localeCompare(f(b, SF.nextRenewal) || "9999"));
+  const subs = allSubs.filter((s) => searchMatch(query, f(s, SF.name), f(s, SF.category), f(s, SF.status), f(s, SF.billingCycle)));
   const { loading, error } = tableState("subscriptions");
-  const burn = subs.filter((s) => f(s, SF.status) === "Active").reduce((sum, s) => sum + num(f(s, SF.monthlyCost)), 0);
+  const burn = allSubs.filter((s) => f(s, SF.status) === "Active").reduce((sum, s) => sum + num(f(s, SF.monthlyCost)), 0);
 
   const set = (k) => (e) => setForm((s) => ({ ...s, [k]: e.target.value }));
 
@@ -71,12 +73,16 @@ export default function Subscriptions() {
         <KpiCard testId="kpi-annual-burn" label="Per year" value={fmtMoney(burn * 12)} sub="Monthly burn × 12" />
       </div>
 
-      {loading && !subs.length ? (
+      <div className="mb-4">
+        <SearchBar value={query} onChange={setQuery} placeholder="Search subscriptions…" testId="subs-search-input" />
+      </div>
+
+      {loading && !allSubs.length ? (
         <LoadingRows />
-      ) : error && !subs.length ? (
+      ) : error && !allSubs.length ? (
         <EmptyState>{error}</EmptyState>
       ) : subs.length === 0 ? (
-        <EmptyState>No subscriptions tracked yet.</EmptyState>
+        <EmptyState>{query ? "No subscriptions match that search." : "No subscriptions tracked yet."}</EmptyState>
       ) : (
         <div className="bg-white border border-slate-200 rounded-lg overflow-x-auto">
           <Table>

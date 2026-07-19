@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
-import { InstructionBanner } from "@/components/Bits";
+import { InstructionBanner, SearchBar, searchMatch } from "@/components/Bits";
 import { myJobsApi, setJobStatusApi, uploadJobPhotoApi, listJobPhotosApi, photoUrl, apiErrorMessage } from "@/lib/api";
 import { fmtDate, todayISO, mapsLink } from "@/lib/format";
 
@@ -181,6 +181,7 @@ const JobCard = ({ job, onChanged }) => {
 
 export default function CrewJobs() {
   const [jobs, setJobs] = useState(null);
+  const [query, setQuery] = useState("");
 
   const load = useCallback(() => myJobsApi().then(setJobs).catch(() => setJobs([])), []);
   useEffect(() => {
@@ -188,7 +189,7 @@ export default function CrewJobs() {
   }, [load]);
 
   const today = todayISO();
-  const list = jobs || [];
+  const list = (jobs || []).filter((j) => searchMatch(query, j.job_name, j.start_address, j.truck_name, j.exec_status, j.my_position));
   const todays = list.filter((j) => j.job_date === today);
   const upcoming = list.filter((j) => j.job_date > today);
   const past = list.filter((j) => j.job_date < today).reverse();
@@ -213,6 +214,7 @@ export default function CrewJobs() {
       <InstructionBanner testId="crew-jobs-banner">
         Tap the big button as your day moves along: on the way → arrived → start → finish. Snap photos before and after.
       </InstructionBanner>
+      <SearchBar value={query} onChange={setQuery} placeholder="Search your jobs…" testId="crew-jobs-search-input" />
       {jobs === null ? (
         <p className="text-sm text-slate-400">Loading your jobs…</p>
       ) : (
