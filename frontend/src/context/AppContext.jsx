@@ -3,6 +3,8 @@ import { toast } from "sonner";
 import { apiErrorMessage, createRecordApi, deleteRecordApi, getBusinessApi, getHealth, getRates, getSchemaApi, listRecords, listSquareInvoicesApi, saveBusinessApi, saveRatesApi, updateRecordApi } from "@/lib/api";
 import { DEFAULT_RATES } from "@/lib/pricing";
 import { LF } from "@/lib/fields";
+import { fmtMoney } from "@/lib/format";
+import { playChaChing } from "@/lib/sound";
 import { useAuth } from "@/components/AuthGate";
 
 const AppContext = createContext(null);
@@ -18,6 +20,7 @@ export const AppProvider = ({ children }) => {
   const [rates, setRates] = useState(DEFAULT_RATES);
   const [business, setBusiness] = useState({ reviewLink: "" });
   const [squareInvoices, setSquareInvoices] = useState([]);
+  const [recentPaid, setRecentPaid] = useState([]);
   const [schemas, setSchemas] = useState({});
   const schemaRequested = useRef(new Set());
   const dataRef = useRef(data);
@@ -70,10 +73,37 @@ export const AppProvider = ({ children }) => {
     return saved;
   }, []);
 
+  const celebrateNewPaid = useCallback((list) => {
+    const KEY = "hy_paid_seen";
+    const paidNow = list.filter((i) => i.status === "PAID");
+    const stored = localStorage.getItem(KEY);
+    if (stored === null) {
+      localStorage.setItem(KEY, JSON.stringify(paidNow.map((i) => i.invoice_id)));
+      return;
+    }
+    let seen;
+    try {
+      seen = new Set(JSON.parse(stored));
+    } catch {
+      seen = new Set();
+    }
+    const fresh = paidNow.filter((i) => !seen.has(i.invoice_id));
+    if (!fresh.length) return;
+    playChaChing();
+    fresh.forEach((i) =>
+      toast.success(`Cha-ching! Invoice ${i.invoice_number ? `#${i.invoice_number}` : ""} — ${fmtMoney(i.amount)} just got paid.`)
+    );
+    setRecentPaid((prev) => [...fresh, ...prev]);
+    localStorage.setItem(KEY, JSON.stringify([...seen, ...fresh.map((i) => i.invoice_id)]));
+  }, []);
+
+  const dismissRecentPaid = useCallback(() => setRecentPaid([]), []);
+
   const loadSquareInvoices = useCallback(async () => {
     try {
       const list = await listSquareInvoicesApi();
       setSquareInvoices(list);
+      celebrateNewPaid(list);
       const paidLeadIds = new Set(list.filter((i) => i.status === "PAID" && i.lead_id && i.deposit_synced).map((i) => i.lead_id));
       if (paidLeadIds.size) {
         setData((d) => {
@@ -100,6 +130,13 @@ export const AppProvider = ({ children }) => {
     (leadId) => squareInvoices.filter((i) => i.lead_id === leadId),
     [squareInvoices]
   );
+
+  useEffect(() => {
+    if (role !== "owner") return;
+    loadSquareInvoices();
+    const id = setInterval(loadSquareInvoices, 60000);
+    return () => clearInterval(id);
+  }, [role, loadSquareInvoices]);
 
   const loadSchema = useCallback(async (table) => {
     if (schemaRequested.current.has(table)) return;
@@ -196,7 +233,7 @@ export const AppProvider = ({ children }) => {
 
   return (
     <AppContext.Provider
-      value={{ privacy, togglePrivacy, health, checkHealth, loadTable, refreshAll, refreshing, updateRecord, createRecord, deleteRecord, records, tableState, rates, saveRates, business, saveBusiness, schemas, loadSchema, squareInvoices, loadSquareInvoices, invoicesForLead }}
+      value={{ privacy, togglePrivacy, health, checkHealth, loadTable, refreshAll, refreshing, updateRecord, createRecord, deleteRecord, records, tableState, rates, saveRates, business, saveBusiness, schemas, loadSchema, squareInvoices, loadSquareInvoices, invoicesForLead, recentPaid, dismissRecentPaid }}
     >
       {children}
     </AppContext.Provider>

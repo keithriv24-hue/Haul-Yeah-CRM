@@ -54,6 +54,7 @@ Full-stack internal CRM PWA for Haul Yeah Moving (weekend moving company, North 
 - NOTE: user's supplied Square key confirmed SANDBOX-ONLY (401 on production host, location "Default Test Account"). Awaiting real production token+location to flip SQUARE_ENVIRONMENT=production
 - [x] Square LIVE (production): user supplied production token + location L15944ZHWTJ8R ("Haul Yeah Moving", ACTIVE — verified via /v2/locations); SQUARE_ENVIRONMENT=production; sandbox invoice docs cleared from Mongo. Real invoices now send to real customers
 - [x] Paid auto-update: when status refresh finds an invoice newly PAID, backend PATCHes the lead's Deposit Paid checkbox (fld7BsZG5A6S1oh7Z) in Airtable (once per invoice via deposit_synced flag; 404s throttle checked_at); frontend loadSquareInvoices also flips depositPaid locally for synced PAID leads — 39 pytest passing
+- [x] Money-landed banner + cha-ching: AppContext polls /api/square/invoices every 60s (owner only); newly-PAID invoices (tracked in localStorage hy_paid_seen, baseline-inits silently on first run) trigger playChaChing (/chaching.wav — synthesized coin+bell), a toast, and a dismissible emerald "Money landed!" banner on Dashboard — browser-verified via seeded Mongo doc (then cleaned)
 
 ## Current status / blockers
 - AIRTABLE_API_KEY not yet added by user (secrets panel). All data routes return friendly 503 until then. Verify with GET /api/airtable/verify after key is added.

@@ -1,7 +1,7 @@
 import React, { useEffect } from "react";
 import { Link } from "react-router-dom";
 import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } from "recharts";
-import { Truck, AlertTriangle, Mail } from "lucide-react";
+import { Truck, AlertTriangle, Mail, PartyPopper, X } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { Button } from "@/components/ui/button";
 import { InstructionBanner, KpiCard, PageTitle, Private, Money, Pill, EmptyState, Pill as StatusPill } from "@/components/Bits";
@@ -22,7 +22,7 @@ const lastWeekendISO = () => {
 };
 
 export default function Dashboard() {
-  const { loadTable, records } = useApp();
+  const { loadTable, records, recentPaid, dismissRecentPaid } = useApp();
   useEffect(() => {
     ["leads", "projects", "tasks", "invoices", "subscriptions"].forEach((t) => loadTable(t));
   }, [loadTable]);
@@ -112,6 +112,23 @@ export default function Dashboard() {
           </Button>
         }
       />
+
+      {recentPaid.length > 0 && (
+        <div data-testid="money-landed-banner" className="flex items-start gap-3 border border-emerald-300 bg-emerald-50 rounded-lg px-4 py-3 mb-4">
+          <PartyPopper className="w-5 h-5 text-emerald-600 mt-0.5 shrink-0" />
+          <div className="flex-1 text-sm text-emerald-800">
+            <div className="font-display font-bold text-emerald-700">Money landed!</div>
+            {recentPaid.map((i) => (
+              <div key={i.invoice_id} data-testid="money-landed-item">
+                Invoice {i.invoice_number ? `#${i.invoice_number}` : ""} — <strong>{fmtMoney(i.amount)}</strong> just got paid.
+              </div>
+            ))}
+          </div>
+          <button data-testid="money-landed-dismiss" onClick={dismissRecentPaid} aria-label="Dismiss" className="text-emerald-600 hover:text-emerald-800 transition-colors">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
       <InstructionBanner>Here's today at a glance. Call any New lead before the timer turns red.</InstructionBanner>
 
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 mb-8">
