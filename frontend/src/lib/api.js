@@ -25,6 +25,8 @@ export const authMe = () => axios.get(`${API}/auth/me`).then((r) => r.data);
 export const switchRoleApi = (role) => axios.post(`${API}/auth/switch-role`, { role }).then((r) => r.data);
 export const getRates = () => axios.get(`${API}/settings/rates`).then((r) => r.data);
 export const saveRatesApi = (rates) => axios.put(`${API}/settings/rates`, rates).then((r) => r.data);
+export const listCalcItemsApi = () => axios.get(`${API}/settings/items`).then((r) => r.data.items);
+export const saveCalcItemsApi = (payload) => axios.put(`${API}/settings/items`, payload).then((r) => r.data.items);
 export const getBusinessApi = () => axios.get(`${API}/settings/business`).then((r) => r.data);
 export const saveBusinessApi = (b) => axios.put(`${API}/settings/business`, b).then((r) => r.data);
 export const getSquareStatusApi = () => axios.get(`${API}/square/status`).then((r) => r.data);

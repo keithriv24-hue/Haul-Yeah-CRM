@@ -295,21 +295,29 @@ mongo_db = mongo_client[os.environ["DB_NAME"]]
 
 DEFAULT_RATES = {
     "manHour": 65,
+    "cushionPercent": 10,
     "travelTruck": 125,
     "travelLabor": 75,
+    "mileageAllowance": 20,
+    "overageRate": 0.85,
     "stairFlight": 85,
-    "pianoUpright": 500,
-    "pianoGrand": 800,
+    "packingRate": 65,
+    "depositPercent": 25,
+    "roundingIncrement": 50,
 }
 
 
 class RatesPayload(BaseModel):
     manHour: float
+    cushionPercent: float
     travelTruck: float
     travelLabor: float
+    mileageAllowance: float
+    overageRate: float
     stairFlight: float
-    pianoUpright: float
-    pianoGrand: float
+    packingRate: float
+    depositPercent: float
+    roundingIncrement: float
 
 
 app = FastAPI(title="Haul Yeah Moving CRM Proxy")

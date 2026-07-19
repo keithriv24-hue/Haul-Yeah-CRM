@@ -4,6 +4,12 @@ export const fmtMoney = (n) => {
   return num.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 };
 
+export const fmtMoneyCents = (n) => {
+  const num = Number(n);
+  if (n === null || n === undefined || n === "" || Number.isNaN(num)) return "—";
+  return num.toLocaleString("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 });
+};
+
 export const fmtDate = (d) => {
   if (!d) return "—";
   const iso = d.length === 10 ? `${d}T12:00:00` : d;

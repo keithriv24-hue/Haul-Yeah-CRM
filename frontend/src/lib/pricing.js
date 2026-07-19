@@ -1,24 +1,41 @@
 export const DEFAULT_RATES = {
   manHour: 65,
+  cushionPercent: 10,
   travelTruck: 125,
   travelLabor: 75,
+  mileageAllowance: 20,
+  overageRate: 0.85,
   stairFlight: 85,
-  pianoUpright: 500,
-  pianoGrand: 800,
+  packingRate: 65,
+  depositPercent: 25,
+  roundingIncrement: 50,
 };
 
-export function computeQuote({ crew, hours, travel, flights, piano }, rates = DEFAULT_RATES) {
-  const base = (crew || 0) * (hours || 0) * rates.manHour;
+export function computeQuote(inputs, rates = DEFAULT_RATES, items = []) {
+  const {
+    crew = 0, hours = 0, travel = "truck", miles = 0,
+    flights = 0, packingHours = 0, itemQty = {},
+  } = inputs;
+  const crewCharge = crew * hours * rates.manHour;
   const travelFee = travel === "labor" ? rates.travelLabor : rates.travelTruck;
-  const stairs = (flights || 0) * rates.stairFlight;
-  const pianoFee = piano === "upright" ? rates.pianoUpright : piano === "grand" ? rates.pianoGrand : 0;
-  const round50 = (n) => Math.round(n / 50) * 50;
-  const low = round50(base + travelFee + stairs + pianoFee);
-  const high = round50((base + travelFee + stairs + pianoFee) * 1.1);
-  const deposit = Math.round(high * 0.25);
-  return { base, travelFee, stairs, pianoFee, low, high, deposit };
+  const overMiles = Math.max(0, miles - rates.mileageAllowance);
+  const mileageOverage = overMiles * rates.overageRate;
+  const stairs = flights * rates.stairFlight;
+  const packing = packingHours * rates.packingRate;
+  const itemLines = items
+    .filter((it) => it.active !== false && (itemQty[it.id] || 0) > 0)
+    .map((it) => ({ id: it.id, name: it.name, qty: itemQty[it.id], amount: itemQty[it.id] * it.price }));
+  const itemsCharge = itemLines.reduce((s, l) => s + l.amount, 0);
+  const subtotal = crewCharge + travelFee + mileageOverage + stairs + packing + itemsCharge;
+  const cushion = subtotal * (rates.cushionPercent / 100);
+  const inc = rates.roundingIncrement > 0 ? rates.roundingIncrement : 50;
+  const finalQuote = Math.ceil((subtotal + cushion) / inc - 1e-9) * inc;
+  const deposit = Math.round(finalQuote * rates.depositPercent) / 100;
+  const balance = finalQuote - deposit;
+  return {
+    crewCharge, travelFee, overMiles, mileageOverage, stairs, packing,
+    itemLines, itemsCharge, subtotal, cushion, finalQuote, deposit, balance,
+  };
 }
 
-export const depositFromQuote = (quoteHigh) => Math.round((quoteHigh || 0) * 0.25);
-
-export const lowFromHigh = (high) => Math.round((high || 0) / 1.1 / 50) * 50;
+export const depositFromQuote = (quote, pct = 25) => Math.round((quote || 0) * pct) / 100;
