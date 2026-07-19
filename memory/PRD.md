@@ -72,3 +72,18 @@ Full-stack internal CRM PWA for Haul Yeah Moving (weekend moving company, North 
 
 ## Credentials
 See /app/memory/test_credentials.md (owner password, endpoints).
+
+## Session: July 19, 2026 — Airtable Job Time Log + Work Calendar + Trucks (COMPLETE)
+- Crew module FRONTEND completed & tested (iteration_2: 100% UI pass): new email/username login (owner = HaulYeahOwner, legacy shared passwords as backup), forced first-login password change, crew mobile view (My Jobs status workflow + photos, GPS Time Clock w/ consent, Days Off), owner Crew page (Team/Schedule/Time/Map/Report), notifications bell.
+- Airtable "Job Time Log" auto-mirror (tbl6mv59JAOwUyI4Y, all field IDs per user spec, typecast:true, ET timestamps, Entry "Job – M/D/YY"): first clock-in creates ONE record (dedupe via stored record id + {Entry} formula search), later events PATCH (Clock In never overwritten), last clock-out/Complete writes Clock Out + Delay Factors + Notes, Projects link via project_id or name+date match. Never deletes Airtable records. Reliability: at-least-once queue (assignment.timelog_sync.status=pending → background sync → 90s retry loop); owner sync badge on Dashboard; GET /api/timelog/status.
+- Owner Dashboard "Work calendar" (owner-only): month grid w/ dots, tap day → job cards (crew DRIVER/HELPER labels, job size, crew size, truck name+plate, delay chips, notes, actual hours first-in→last-out). GET /api/calendar/jobs?month=YYYY-MM.
+- Trucks: name + license plate + hard remove w/ confirm (history preserved via truck_name snapshot on assignments); seeded Truck 1-5; assignment dropdown = active/existing trucks only.
+- Assignment modal: Job Size dropdown (6 options) auto-prefilled from linked lead home size; crew Finish dialog: delay-factor checkboxes ("None" exclusive).
+- Fixes: crew-view 403 console noise (role-guarded AppContext fetches), Days Off red contrast, labor report field-ID param, pending_jobs now include assignment_id, loadTable short-circuits when Airtable key known-missing.
+- Testing: iteration_3 backend 13/13 new-feature tests + regression pass; delay-factor UI bug found by tester → fixed → self-verified E2E (checkboxes render, factors stored, calendar shows chips).
+- Deployment: deployment_agent scan PASS. AIRTABLE_API_KEY still EMPTY in preview (user asleep, will provide). Production deploy requires user to click Deploy in Emergent UI — agent cannot deploy.
+
+### Pending for user (morning)
+1. Click Deploy in Emergent UI to push live (build checks passed).
+2. Add Airtable personal access token as AIRTABLE_API_KEY (preview secrets panel AND ensure production has a token with read/write scope to base appFAHTRNrRckuxI8 incl. Job Time Log table). Queued punches auto-flush once key works.
+3. Note: owner login username is now HaulYeahOwner (old password-only login still works as backup).
