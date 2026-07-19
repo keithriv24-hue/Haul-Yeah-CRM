@@ -1678,8 +1678,10 @@ async def audit_log(limit: int = 200, p: Dict[str, Any] = Depends(require_owner)
 async def seed_on_startup():
     try:
         await mongo_db.users.create_index("email", unique=True)
-        owner_email = os.environ.get("OWNER_EMAIL", "keithriv24@gmail.com").strip().lower()
+        owner_email = os.environ.get("OWNER_EMAIL", "haulyeahowner").strip().lower()
         owner_pw = os.environ.get("APP_PASSWORD", "")
+        if owner_email != "keithriv24@gmail.com":
+            await mongo_db.users.update_one({"email": "keithriv24@gmail.com"}, {"$set": {"email": owner_email}})
         seeds = [
             {"name": "Keith (Owner)", "email": owner_email, "role": "owner", "password": owner_pw},
             {"name": "Javante Brown", "email": "javante@haulyeahmoves.com", "role": "crew", "password": "HaulCrew2026!"},

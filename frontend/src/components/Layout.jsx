@@ -4,9 +4,12 @@ import { toast } from "sonner";
 import {
   LayoutDashboard, Users, BookUser, Truck, KanbanSquare, PenLine, Receipt,
   CreditCard, Handshake, HelpCircle, Eye, EyeOff, RefreshCw, KeyRound, LogOut, Calculator, SlidersHorizontal, MessageSquareText, Video, UserRound,
+  HardHat, ClipboardList, AlarmClock, CalendarDays,
 } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { useAuth } from "@/components/AuthGate";
+import { NotificationsBell } from "@/components/NotificationsBell";
+import useGpsPing from "@/lib/useGpsPing";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
@@ -17,6 +20,10 @@ const NAV = [
   { to: "/script", label: "Script", icon: MessageSquareText, roles: ["sales"] },
   { to: "/contacts", label: "Contacts", icon: BookUser, roles: ["owner"] },
   { to: "/projects", label: "Projects", icon: Truck, roles: ["owner", "employee"] },
+  { to: "/crew", label: "Crew", icon: HardHat, roles: ["owner"] },
+  { to: "/jobs", label: "My Jobs", icon: ClipboardList, roles: ["crew"] },
+  { to: "/clock", label: "Time Clock", icon: AlarmClock, roles: ["crew"] },
+  { to: "/days-off", label: "Days Off", icon: CalendarDays, roles: ["crew"] },
   { to: "/tasks", label: "To-Do", icon: KanbanSquare, roles: ["owner", "employee"] },
   { to: "/blog", label: "Blog", icon: PenLine, roles: ["owner"] },
   { to: "/invoices", label: "Invoices", icon: Receipt, roles: ["owner"] },
@@ -26,7 +33,7 @@ const NAV = [
   { to: "/help", label: "Help", icon: HelpCircle, roles: ["owner"] },
 ];
 
-const ROLE_LABEL = { owner: "Owner", sales: "Sales", employee: "Crew" };
+const ROLE_LABEL = { owner: "Owner", sales: "Sales", employee: "Crew", crew: "Crew" };
 
 const LiveIndicator = () => {
   const { health } = useApp();
@@ -43,6 +50,7 @@ export default function Layout() {
   const { privacy, togglePrivacy, refreshAll, refreshing, health } = useApp();
   const { role, canSwitch, switchRole } = useAuth();
   const navItems = NAV.filter((n) => n.roles.includes(role || "owner"));
+  useGpsPing(role);
 
   const handleSwitch = (r) => {
     switchRole(r)
@@ -99,7 +107,7 @@ export default function Layout() {
               {ROLE_LABEL[role] || "Owner"} account
             </span>
           )}
-          {role !== "employee" && (
+          {role !== "employee" && role !== "crew" && (
             <Button
               data-testid="privacy-toggle-btn"
               size="sm"
@@ -110,18 +118,20 @@ export default function Layout() {
               {privacy ? "Privacy on" : "Privacy off"}
             </Button>
           )}
-          <div className="grid grid-cols-2 gap-2">
-            <Button
-              data-testid="refresh-data-btn"
-              variant="outline"
-              size="sm"
-              onClick={refreshAll}
-              disabled={refreshing}
-              className="gap-1.5 bg-transparent border-white/20 text-white hover:bg-white/10 hover:text-white"
-            >
-              <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
-              Refresh
-            </Button>
+          <div className={`grid gap-2 ${role === "crew" ? "grid-cols-1" : "grid-cols-2"}`}>
+            {role !== "crew" && (
+              <Button
+                data-testid="refresh-data-btn"
+                variant="outline"
+                size="sm"
+                onClick={refreshAll}
+                disabled={refreshing}
+                className="gap-1.5 bg-transparent border-white/20 text-white hover:bg-white/10 hover:text-white"
+              >
+                <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
+                Refresh
+              </Button>
+            )}
             <Button
               data-testid="logout-btn"
               variant="outline"
@@ -144,16 +154,19 @@ export default function Layout() {
             </div>
             <div className="hidden md:block" />
             <div className="flex items-center gap-2">
-              <LiveIndicator />
-              <Button data-testid="new-meet-btn" asChild variant="outline" size="sm" className="gap-1.5">
-                <a href="https://meet.google.com/new" target="_blank" rel="noreferrer">
-                  <Video className="w-4 h-4" />
-                  <span className="hidden sm:inline">New Meet</span>
-                </a>
-              </Button>
+              {(role === "owner" || role === "crew") && <NotificationsBell />}
+              {role !== "crew" && <LiveIndicator />}
+              {role !== "crew" && (
+                <Button data-testid="new-meet-btn" asChild variant="outline" size="sm" className="gap-1.5">
+                  <a href="https://meet.google.com/new" target="_blank" rel="noreferrer">
+                    <Video className="w-4 h-4" />
+                    <span className="hidden sm:inline">New Meet</span>
+                  </a>
+                </Button>
+              )}
             </div>
           </div>
-          {health.airtable_configured === false && (
+          {health.airtable_configured === false && role !== "crew" && (
             <div data-testid="key-missing-banner" className="flex items-center gap-2 bg-amber-50 border-t border-amber-200 text-amber-800 text-sm px-4 md:px-8 py-2.5">
               <KeyRound className="w-4 h-4 shrink-0" />
               <span>
@@ -203,16 +216,18 @@ export default function Layout() {
               </SelectContent>
             </Select>
           )}
-          <button
-            data-testid="tab-refresh-btn"
-            onClick={refreshAll}
-            disabled={refreshing}
-            className="flex flex-col items-center gap-0.5 min-w-[72px] px-2 py-2 text-[10px] font-semibold text-white/60"
-          >
-            <RefreshCw className={`w-5 h-5 ${refreshing ? "animate-spin" : ""}`} />
-            Refresh
-          </button>
-          {role !== "employee" && (
+          {role !== "crew" && (
+            <button
+              data-testid="tab-refresh-btn"
+              onClick={refreshAll}
+              disabled={refreshing}
+              className="flex flex-col items-center gap-0.5 min-w-[72px] px-2 py-2 text-[10px] font-semibold text-white/60"
+            >
+              <RefreshCw className={`w-5 h-5 ${refreshing ? "animate-spin" : ""}`} />
+              Refresh
+            </button>
+          )}
+          {role !== "employee" && role !== "crew" && (
             <button
               data-testid="tab-privacy-btn"
               onClick={togglePrivacy}

@@ -101,3 +101,94 @@
 #====================================================================================================
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
+user_problem_statement: Employee/Crew module frontend — individual email/username+password logins (owner username HaulYeahOwner, legacy shared passwords as backup), forced first-login password change, crew mobile view (My Jobs with En Route→Arrived→In Progress→Complete workflow + photo upload, GPS time clock with consent, Days Off availability calendar), owner Crew page (Team user/truck/rate management, Schedule job assignment with conflict warnings, Time clock review/approve/edit + payroll CSV, live OSM/Leaflet GPS map, labor Report), notifications bell for owner+crew.
+
+backend:
+  - task: "Owner username migration (HaulYeahOwner) + login modes"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Seed renames keithriv24@gmail.com user to haulyeahowner; OWNER_EMAIL env updated. Curl-verified: username login, legacy password-only login, crew email login all pass."
+
+frontend:
+  - task: "New login + forced password change (AuthGate)"
+    implemented: true
+    working: true
+    file: "frontend/src/components/AuthGate.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Browser-verified: javante login → change-password screen → crew view. NOTE: Javante's password is now JavCrew2026!"
+  - task: "Crew view: My Jobs (status workflow + photos)"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/pages/CrewJobs.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Page renders; needs job-assignment E2E test (owner assigns → crew sees → advances status → owner notified on Complete)."
+  - task: "Crew view: Time Clock (GPS consent, clock in/out)"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/pages/TimeClock.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Renders with clock-in button. Needs test: consent dialog → clock in (geolocation may be denied in test browser — punch should still succeed with no-GPS warning) → clock out → entry listed."
+  - task: "Crew view: Days Off availability calendar"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/pages/DaysOff.jsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Toggle day → persists via /api/crew/availability; owner assignment on that day should return conflict warning."
+  - task: "Owner Crew page: Team / Schedule / Time / Map / Report tabs + notifications bell"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/pages/Crew.jsx, frontend/src/components/crew/*.jsx, frontend/src/components/NotificationsBell.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "All five tabs built. Needs full E2E."
+
+metadata:
+  created_by: "main_agent"
+  version: "1.1"
+  test_sequence: 2
+  run_ui: true
+
+test_plan:
+  current_focus:
+    - "Crew view: My Jobs (status workflow + photos)"
+    - "Crew view: Time Clock (GPS consent, clock in/out)"
+    - "Owner Crew page: Team / Schedule / Time / Map / Report tabs + notifications bell"
+    - "Crew view: Days Off availability calendar"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+  - agent: "main"
+    message: "Crew module frontend complete. Credentials in /app/memory/test_credentials.md. CAUTION: Square is LIVE — do not create real invoices. Airtable is live production data — avoid deleting/patching real leads/projects; creating a Mongo assignment (not Airtable) is safe and deletable."

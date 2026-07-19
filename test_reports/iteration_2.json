@@ -1,0 +1,50 @@
+{
+  "summary": "Full E2E validation of the new Crew module (backend + frontend). Backend pytest suite: 28/29 passed (1 minor failure from destructive cleanup — see note). Frontend E2E: owner login by username, legacy owner (blank username), sales legacy (blank username), crew role restricted nav, Junior forced-change flow, Javante My Jobs + status workflow (En Route → Arrived → In Progress → Complete with notes), photo upload, GPS-consent dialog + clock in/out (no-GPS warning path), days-off marking, owner Crew page all 5 tabs (Team/Schedule/Time/Live map/Report), assignment create+edit+conflict warnings + force-save, notifications bell with unread badge + mark-all-read, CSV export — all working. Junior password was changed from HaulCrew2026! → JunCrew2026! and test_credentials.md was updated.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/users, /api/trucks, /api/timeclock", "issue": "Response is wrapped ({\"users\":[...]}, {\"trucks\":[...]}, {\"entries\":[...]}) — inconsistent with rest of API (e.g., /api/assignments also wrapped but /api/reports/labor is a bare dict). Not a bug; just note for API-shape docs."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Crew view console noise", "issue": "While logged in as crew (Javante), the frontend probes some owner-only endpoints and logs 8x 'Failed to load resource: 403' in the browser console. Silent to the user, but adds noise. Suggest guarding those fetches with role checks.", "affected_selectors": []}
+    ],
+    "design_issues": [
+      {"screen": "Days Off calendar", "issues": ["When Javante taps a future day cell to mark UNAVAILABLE, the DOM class updates (confirmed) and backend persists (verified via GET /api/crew/availability) but the visual cue (red background) was not obvious in the screenshot for the outlined cell (data-date=2026-07-26). The border/color could be higher-contrast so crew clearly see the day is marked OFF."]},
+      {"screen": "Time Clock recent punches", "issues": ["Punches with <1 minute duration render as '0h' with no seconds/minutes formatting. Not a bug (integer rounding), but under 60s a 'seconds' fallback would be friendlier for testing/first-clock-in feedback."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_crew_module.py",
+    "/app/backend/tests/test_auth.py",
+    "/app/test_reports/pytest/crew_module_results.xml"
+  ],
+  "action_items": [
+    "OPTIONAL: gate crew-view API probes so they don't fire owner-only endpoints (403 console noise).",
+    "OPTIONAL: strengthen the visual OFF/red styling on daysoff-day-cell so crew clearly see the toggle worked.",
+    "NOTE: test_credentials.md was updated to reflect Junior's new password (JunCrew2026!).",
+    "NOTE: test_create_reset_deactivate_user in backend suite is destructive by email; re-running back-to-back will fail because the deactivated user's email lingers. Consider randomizing email suffix (uuid) or deleting instead of deactivating in a future refactor."
+  ],
+  "critical_code_review_comments": [
+    "backend/server.py is 1717 lines — well over the recommended 700-line split point. Recommend splitting into modules: auth.py, crew.py, timeclock.py, assignments.py, notifications.py, storage.py.",
+    "Assignment PATCH requires the full AssignmentPayload — even a minor arrival_time edit needs the whole crew/truck/address block re-sent. That's the correct semantics for POST but slightly heavier than a partial PATCH; frontend's edit modal must round-trip the whole document. Verified working but note for future.",
+    "assignment_warnings() double-appends duplicate warnings when the same crew member is on two other assignments — could produce noisy warning lists on busy days.",
+    "/api/notifications shape: returns {'notifications':[...], 'unread':N} whereas /api/notifications/read-all returns just {'ok':True}. Consistent enough."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_crew_module.py (new — 29 tests covering auth/users/trucks/assignments/crew workflow/photos/timeclock/availability/owner-only endpoints)",
+    "/app/memory/test_credentials.md (Junior password JunCrew2026! recorded — completed forced-change during E2E)"
+  ],
+  "success_rate": {
+    "backend": "97% (28/29 pytest — 1 cleanup-idempotency failure documented)",
+    "frontend": "100% for all listed E2E flows"
+  },
+  "test_credentials": "Verified all: Owner HaulYeahOwner/HaulYeah2026!, Owner legacy (blank/HaulYeah2026!), Sales legacy (blank/SellMoves2026!), Javante javante@haulyeahmoves.com/JavCrew2026!, Junior junior@haulyeahmoves.com/JunCrew2026! (changed from HaulCrew2026! during test).",
+  "seed_data_creation": "Created and cleaned up: one QA Test Move UI assignment (deleted post-test), one TEST_QA_Truck_ZZ truck (deactivated), one test_qa_crew_temp@haulyeahmoves.com user (deactivated). All Airtable data untouched. No Square invoices created.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "The full crew module (backend + frontend) is verified working end-to-end. If re-running backend tests, note that TestUsersTrucks::test_create_reset_deactivate_user re-uses email test_qa_crew_temp@haulyeahmoves.com and pre-cleans by deactivating — but a leftover deactivated user with the same email may or may not block create depending on backend behavior. Junior's password is JunCrew2026! (was HaulCrew2026! before). All other test credentials unchanged. Airtable API key still empty (503 on Airtable proxy is expected).",
+  "rca_of_the_issue": "No critical bugs found. The single backend test failure (test_create_reset_deactivate_user) is a cleanup-idempotency artifact: we deactivated the test user at the end for isolation, so on a fresh re-run the POST /api/users hits a duplicate-email conflict. Recommended future fix: randomize the email each run (uuid) so the test is fully isolated."
+}

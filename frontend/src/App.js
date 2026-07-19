@@ -20,6 +20,10 @@ import Invoices from "@/pages/Invoices";
 import Subscriptions from "@/pages/Subscriptions";
 import Partner from "@/pages/Partner";
 import Help from "@/pages/Help";
+import Crew from "@/pages/Crew";
+import CrewJobs from "@/pages/CrewJobs";
+import TimeClock from "@/pages/TimeClock";
+import DaysOff from "@/pages/DaysOff";
 
 function RoleRoutes() {
   const { role } = useAuth();
@@ -32,6 +36,18 @@ function RoleRoutes() {
           <Route path="/calculator" element={<Calculator />} />
           <Route path="/script" element={<Script />} />
           <Route path="*" element={<Navigate to="/leads" replace />} />
+        </Route>
+      </Routes>
+    );
+  }
+  if (role === "crew") {
+    return (
+      <Routes>
+        <Route element={<Layout />}>
+          <Route path="/jobs" element={<CrewJobs />} />
+          <Route path="/clock" element={<TimeClock />} />
+          <Route path="/days-off" element={<DaysOff />} />
+          <Route path="*" element={<Navigate to="/jobs" replace />} />
         </Route>
       </Routes>
     );
@@ -57,6 +73,7 @@ function RoleRoutes() {
         <Route path="/calculator" element={<Calculator />} />
         <Route path="/contacts" element={<Contacts />} />
         <Route path="/projects" element={<Projects />} />
+        <Route path="/crew" element={<Crew />} />
         <Route path="/day-sheet" element={<DaySheet />} />
         <Route path="/tasks" element={<Tasks />} />
         <Route path="/blog" element={<Blog />} />

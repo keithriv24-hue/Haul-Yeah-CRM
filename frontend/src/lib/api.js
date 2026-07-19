@@ -9,14 +9,18 @@ axios.interceptors.request.use((config) => {
 });
 
 axios.interceptors.response.use(null, (error) => {
-  if (error?.response?.status === 401 && !error.config?.url?.includes("/auth/login")) {
+  const url = error.config?.url || "";
+  if (error?.response?.status === 401 && !url.includes("/auth/login") && !url.includes("/auth/change-password")) {
     localStorage.removeItem("hy_token");
     window.dispatchEvent(new Event("hy-logout"));
   }
   return Promise.reject(error);
 });
 
-export const loginApi = (password) => axios.post(`${API}/auth/login`, { password }).then((r) => r.data);
+export const loginApi = (payload) => axios.post(`${API}/auth/login`, payload).then((r) => r.data);
+export const changePasswordApi = (current_password, new_password) =>
+  axios.post(`${API}/auth/change-password`, { current_password, new_password }).then((r) => r.data);
+export const gpsConsentApi = () => axios.post(`${API}/auth/consent`).then((r) => r.data);
 export const authMe = () => axios.get(`${API}/auth/me`).then((r) => r.data);
 export const switchRoleApi = (role) => axios.post(`${API}/auth/switch-role`, { role }).then((r) => r.data);
 export const getRates = () => axios.get(`${API}/settings/rates`).then((r) => r.data);
@@ -35,6 +39,44 @@ export const createRecordApi = (table, fields) => axios.post(`${API}/tables/${ta
 export const updateRecordApi = (table, id, fields) =>
   axios.patch(`${API}/tables/${table}/${id}`, { fields }).then((r) => r.data);
 export const deleteRecordApi = (table, id) => axios.delete(`${API}/tables/${table}/${id}`).then((r) => r.data);
+
+export const listUsersApi = () => axios.get(`${API}/users`).then((r) => r.data.users);
+export const createUserApi = (u) => axios.post(`${API}/users`, u).then((r) => r.data);
+export const patchUserApi = (id, u) => axios.patch(`${API}/users/${id}`, u).then((r) => r.data);
+export const listTrucksApi = () => axios.get(`${API}/trucks`).then((r) => r.data.trucks);
+export const createTruckApi = (name) => axios.post(`${API}/trucks`, { name }).then((r) => r.data);
+export const patchTruckApi = (id, t) => axios.patch(`${API}/trucks/${id}`, t).then((r) => r.data);
+export const listAssignmentsApi = (params = {}) => axios.get(`${API}/assignments`, { params }).then((r) => r.data.assignments);
+export const createAssignmentApi = (a) => axios.post(`${API}/assignments`, a).then((r) => r.data);
+export const updateAssignmentApi = (id, a) => axios.patch(`${API}/assignments/${id}`, a).then((r) => r.data);
+export const deleteAssignmentApi = (id) => axios.delete(`${API}/assignments/${id}`).then((r) => r.data);
+export const myJobsApi = () => axios.get(`${API}/crew/my-jobs`).then((r) => r.data.jobs);
+export const setJobStatusApi = (id, status, notes) =>
+  axios.post(`${API}/crew/jobs/${id}/status`, { status, notes }).then((r) => r.data);
+export const uploadJobPhotoApi = (id, file) => {
+  const fd = new FormData();
+  fd.append("file", file);
+  return axios.post(`${API}/crew/jobs/${id}/photos`, fd).then((r) => r.data);
+};
+export const listJobPhotosApi = (id) => axios.get(`${API}/jobs/${id}/photos`).then((r) => r.data.photos);
+export const photoUrl = (id) => `${API}/photos/${id}?auth=${localStorage.getItem("hy_token")}`;
+export const clockInApi = (coords) => axios.post(`${API}/crew/clock-in`, coords || {}).then((r) => r.data);
+export const clockOutApi = (coords) => axios.post(`${API}/crew/clock-out`, coords || {}).then((r) => r.data);
+export const gpsPingApi = (coords) => axios.post(`${API}/crew/ping`, coords).then((r) => r.data);
+export const myTimeApi = () => axios.get(`${API}/crew/my-time`).then((r) => r.data);
+export const myAvailabilityApi = () => axios.get(`${API}/crew/availability`).then((r) => r.data.availability);
+export const setAvailabilityApi = (date, available) =>
+  axios.post(`${API}/crew/availability`, { date, available }).then((r) => r.data);
+export const listTimeclockApi = (params = {}) => axios.get(`${API}/timeclock`, { params }).then((r) => r.data.entries);
+export const patchTimeEntryApi = (id, p) => axios.patch(`${API}/timeclock/${id}`, p).then((r) => r.data);
+export const timesheetCsvUrl = (start, end) =>
+  `${API}/timeclock/export?start=${start}&end=${end}&auth=${localStorage.getItem("hy_token")}`;
+export const gpsLiveApi = () => axios.get(`${API}/gps/live`).then((r) => r.data.crew);
+export const listNotificationsApi = () => axios.get(`${API}/notifications`).then((r) => r.data);
+export const readAllNotificationsApi = () => axios.post(`${API}/notifications/read-all`).then((r) => r.data);
+export const getCrewRatesApi = () => axios.get(`${API}/settings/crew-rates`).then((r) => r.data);
+export const saveCrewRatesApi = (rates) => axios.put(`${API}/settings/crew-rates`, rates).then((r) => r.data);
+export const laborReportApi = (params = {}) => axios.get(`${API}/reports/labor`, { params }).then((r) => r.data);
 
 export const apiErrorMessage = (e) => {
   const detail = e?.response?.data?.detail;
