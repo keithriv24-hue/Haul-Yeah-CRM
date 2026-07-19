@@ -2401,6 +2401,18 @@ class TruckPatchPayload(BaseModel):
     plate: Optional[str] = None
 
 
+@api_router.delete("/users/{user_id}")
+async def delete_user(user_id: str, p: Dict[str, Any] = Depends(require_owner)):
+    user = await mongo_db.users.find_one({"_id": user_id})
+    if not user:
+        raise HTTPException(status_code=404, detail="No such user.")
+    if user.get("active", True):
+        raise HTTPException(status_code=422, detail="Deactivate them first, then you can delete the account.")
+    await mongo_db.users.delete_one({"_id": user_id})
+    await audit(p, "deleted user account", f"{user.get('name', '')} ({user.get('email', '')})")
+    return {"deleted": True}
+
+
 @api_router.get("/trucks")
 async def list_trucks(p: Dict[str, Any] = Depends(require_owner)):
     docs = await mongo_db.trucks.find({}).sort("name", 1).to_list(100)

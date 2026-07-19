@@ -45,6 +45,7 @@ export const deleteRecordApi = (table, id) => axios.delete(`${API}/tables/${tabl
 export const listUsersApi = () => axios.get(`${API}/users`).then((r) => r.data.users);
 export const createUserApi = (u) => axios.post(`${API}/users`, u).then((r) => r.data);
 export const patchUserApi = (id, u) => axios.patch(`${API}/users/${id}`, u).then((r) => r.data);
+export const deleteUserApi = (id) => axios.delete(`${API}/users/${id}`).then((r) => r.data);
 export const listTrucksApi = () => axios.get(`${API}/trucks`).then((r) => r.data.trucks);
 export const createTruckApi = (t) => axios.post(`${API}/trucks`, t).then((r) => r.data);
 export const patchTruckApi = (id, t) => axios.patch(`${API}/trucks/${id}`, t).then((r) => r.data);

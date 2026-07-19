@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { EmployeeFileDialog } from "@/components/crew/EmployeeFileDialog";
 import {
-  listUsersApi, createUserApi, patchUserApi, listTrucksApi, createTruckApi, patchTruckApi, deleteTruckApi,
+  listUsersApi, createUserApi, patchUserApi, deleteUserApi, listTrucksApi, createTruckApi, patchTruckApi, deleteTruckApi,
   getCrewRatesApi, saveCrewRatesApi, apiErrorMessage,
 } from "@/lib/api";
 
@@ -234,6 +234,16 @@ export const TeamTab = () => {
     }
   };
 
+  const removeUser = async (u) => {
+    try {
+      await deleteUserApi(u.id);
+      toast.success(`${u.name}'s account is deleted. Their past hours and jobs keep their name.`);
+      load();
+    } catch (e) {
+      toast.error(apiErrorMessage(e));
+    }
+  };
+
   const addTruck = async () => {
     if (!newTruck.trim()) return;
     try {
@@ -299,6 +309,25 @@ export const TeamTab = () => {
                 {u.active ? <UserX className="w-3.5 h-3.5" /> : <UserCheck className="w-3.5 h-3.5" />}
                 {u.active ? "Deactivate" : "Reactivate"}
               </Button>
+              {!u.active && (
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button data-testid="delete-user-btn" variant="outline" size="sm" className="gap-1 text-xs text-red-600 border-red-200 hover:bg-red-50">
+                      <Trash2 className="w-3.5 h-3.5" /> Delete
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle className="font-display">Delete {u.name} for good?</AlertDialogTitle>
+                      <AlertDialogDescription>This removes their account forever — it can't be undone. Their past time entries and job history keep their name.</AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Keep them</AlertDialogCancel>
+                      <AlertDialogAction data-testid="confirm-delete-user" onClick={() => removeUser(u)} className="bg-red-600 hover:bg-red-700">Yes, delete</AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              )}
             </div>
           ))}
           {users.length === 0 && <p className="text-sm text-slate-400 px-4 py-6 text-center">Loading team…</p>}
