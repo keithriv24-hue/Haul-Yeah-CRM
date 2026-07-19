@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { InstructionBanner, Private, Money, AgeTimer, EmptyState, LoadingRows, ConfirmDeleteButton, FollowUpBadge } from "@/components/Bits";
+import { InstructionBanner, Private, Money, AgeTimer, EmptyState, LoadingRows, ConfirmDeleteButton, FollowUpBadge, InvoiceBadge } from "@/components/Bits";
 import QuoteModal from "@/components/QuoteModal";
 import DepositModal from "@/components/DepositModal";
 import SquareInvoiceModal from "@/components/SquareInvoiceModal";
@@ -33,7 +33,7 @@ const InfoRow = ({ icon: Icon, label, children, isPrivate = true }) => (
 export default function LeadDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { loadTable, loadSchema, records, tableState, updateRecord, createRecord, deleteRecord, schemas } = useApp();
+  const { loadTable, loadSchema, records, tableState, updateRecord, createRecord, deleteRecord, schemas, invoicesForLead, loadSquareInvoices } = useApp();
   const { role } = useAuth();
   const isSales = role === "sales";
   const isOwner = role === "owner";
@@ -49,7 +49,8 @@ export default function LeadDetail() {
   useEffect(() => {
     loadTable("leads");
     loadSchema("leads");
-  }, [loadTable, loadSchema]);
+    if (isOwner) loadSquareInvoices();
+  }, [loadTable, loadSchema, loadSquareInvoices, isOwner]);
 
   const lead = records("leads").find((r) => r.id === id);
   const { loading } = tableState("leads");
@@ -242,6 +243,13 @@ export default function LeadDetail() {
               </div>
             ) : (
               <span className="text-sm text-slate-400">No quote yet. Press Quote below to price this move.</span>
+            )}
+            {isOwner && invoicesForLead(lead.id).length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mt-3" data-testid="lead-detail-invoices">
+                {invoicesForLead(lead.id).map((inv) => (
+                  <InvoiceBadge key={inv.invoice_id} inv={inv} />
+                ))}
+              </div>
             )}
           </div>
 

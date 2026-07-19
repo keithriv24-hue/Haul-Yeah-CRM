@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { InstructionBanner, PageTitle, Private, Money, AgeTimer, EmptyState, LoadingRows, ConfirmDeleteButton, FollowUpBadge } from "@/components/Bits";
+import { InstructionBanner, PageTitle, Private, Money, AgeTimer, EmptyState, LoadingRows, ConfirmDeleteButton, FollowUpBadge, InvoiceBadge } from "@/components/Bits";
 import QuoteModal from "@/components/QuoteModal";
 import DepositModal from "@/components/DepositModal";
 import LeadModal from "@/components/LeadModal";
@@ -59,11 +59,12 @@ export const AddNoteDialog = ({ lead, open, onOpenChange }) => {
 };
 
 const LeadCard = ({ lead, onQuote, onDeposit, onNote, onInvoice }) => {
-  const { updateRecord, createRecord, deleteRecord, schemas } = useApp();
+  const { updateRecord, createRecord, deleteRecord, schemas, invoicesForLead } = useApp();
   const { role } = useAuth();
   const isSales = role === "sales";
   const isOwner = role === "owner";
   const [booking, setBooking] = useState(false);
+  const latestInvoice = isOwner ? invoicesForLead(lead.id)[0] : null;
 
   const extras = (schemas.leads || [])
     .filter((fd) => !KNOWN_LEAD_FIELD_IDS.has(fd.id))
@@ -106,6 +107,7 @@ const LeadCard = ({ lead, onQuote, onDeposit, onNote, onInvoice }) => {
         </div>
         {status === "New" && <AgeTimer createdTime={lead.createdTime} />}
         {needsFollowUp(lead) && <FollowUpBadge days={quietDays(lead)} />}
+        {latestInvoice && <InvoiceBadge inv={latestInvoice} />}
       </div>
 
       <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-slate-600">
@@ -242,7 +244,8 @@ const LeadCard = ({ lead, onQuote, onDeposit, onNote, onInvoice }) => {
 };
 
 export default function Leads() {
-  const { loadTable, loadSchema, records, tableState } = useApp();
+  const { loadTable, loadSchema, records, tableState, loadSquareInvoices } = useApp();
+  const { role } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const filter = searchParams.get("filter") || "All";
   const setFilter = (v) => setSearchParams(v === "All" ? {} : { filter: v });
@@ -255,7 +258,8 @@ export default function Leads() {
   useEffect(() => {
     loadTable("leads");
     loadSchema("leads");
-  }, [loadTable, loadSchema]);
+    if (role === "owner") loadSquareInvoices();
+  }, [loadTable, loadSchema, loadSquareInvoices, role]);
 
   const all = [...records("leads")].sort((a, b) => (b.createdTime || "").localeCompare(a.createdTime || ""));
   const callbackCount = all.filter(needsFollowUp).length;

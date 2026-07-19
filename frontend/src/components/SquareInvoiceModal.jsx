@@ -17,7 +17,7 @@ import { depositFromQuote } from "@/lib/pricing";
 import { getSquareStatusApi, sendSquareInvoiceApi, apiErrorMessage } from "@/lib/api";
 
 export default function SquareInvoiceModal({ lead, open, onOpenChange }) {
-  const { updateRecord } = useApp();
+  const { updateRecord, loadSquareInvoices } = useApp();
   const quote = f(lead, LF.quote);
   const name = f(lead, LF.name) || "Customer";
   const email = f(lead, LF.email) || "";
@@ -54,8 +54,10 @@ export default function SquareInvoiceModal({ lead, open, onOpenChange }) {
         phone,
         amount,
         description: `Haul Yeah Moving — ${label} for ${name}'s move`,
+        lead_id: lead.id,
       });
       setResult(res);
+      loadSquareInvoices();
       toast.success(`Invoice ${res.invoice_number || ""} sent to ${email}.`);
       const oldNotes = f(lead, LF.notes) || "";
       const line = `Square invoice sent ${new Date().toLocaleDateString("en-US")}: ${fmtMoney(amount)} (${label})${res.invoice_number ? ` — #${res.invoice_number}` : ""}.`;

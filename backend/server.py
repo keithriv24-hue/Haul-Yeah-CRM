@@ -396,6 +396,7 @@ class SquareInvoicePayload(BaseModel):
     phone: Optional[str] = None
     amount: float
     description: str = "Moving services"
+    lead_id: Optional[str] = None
 
 
 @api_router.get("/square/status")
@@ -461,6 +462,16 @@ async def send_square_invoice(payload: SquareInvoicePayload, role: str = Depends
     pub = await square_request("POST", f"/v2/invoices/{invoice['id']}/publish",
                                {"version": invoice["version"], "idempotency_key": str(uuid4())})
     published = pub["invoice"]
+    await mongo_db.square_invoices.insert_one({
+        "lead_id": payload.lead_id,
+        "invoice_id": published["id"],
+        "invoice_number": published.get("invoice_number"),
+        "amount": payload.amount,
+        "status": published.get("status"),
+        "public_url": published.get("public_url"),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "checked_at": time.time(),
+    })
     return {
         "invoice_id": published["id"],
         "invoice_number": published.get("invoice_number"),
@@ -468,6 +479,31 @@ async def send_square_invoice(payload: SquareInvoicePayload, role: str = Depends
         "public_url": published.get("public_url"),
         "amount": payload.amount,
     }
+
+
+SQUARE_TERMINAL_STATUSES = {"PAID", "REFUNDED", "CANCELED", "FAILED"}
+
+
+@api_router.get("/square/invoices")
+async def list_square_invoices(role: str = Depends(require_auth)):
+    if role != "owner":
+        raise HTTPException(status_code=403, detail="Only the owner can see invoices.")
+    docs = await mongo_db.square_invoices.find({}, {"_id": 0}).to_list(500)
+    now = time.time()
+    if square_configured():
+        for d in docs:
+            if d.get("status") in SQUARE_TERMINAL_STATUSES or now - d.get("checked_at", 0) < 60:
+                continue
+            try:
+                data = await square_request("GET", f"/v2/invoices/{d['invoice_id']}")
+                new_status = data.get("invoice", {}).get("status", d.get("status"))
+                d["status"] = new_status
+                await mongo_db.square_invoices.update_one(
+                    {"invoice_id": d["invoice_id"]}, {"$set": {"status": new_status, "checked_at": now}})
+            except HTTPException:
+                continue
+    docs.sort(key=lambda d: d.get("created_at") or "", reverse=True)
+    return {"invoices": docs}
 
 
 @api_router.get("/airtable/verify")

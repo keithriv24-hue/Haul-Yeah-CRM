@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Info, Clock, Trash2, PhoneCall } from "lucide-react";
+import { Info, Clock, Trash2, PhoneCall, ReceiptText } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { useAuth } from "@/components/AuthGate";
 import { fmtMoney, minutesSince, ageLabel } from "@/lib/format";
@@ -86,6 +86,37 @@ export const FollowUpBadge = ({ days }) => (
     <PhoneCall className="w-3.5 h-3.5" />
     quiet {days} days — call them back
   </span>
+);
+
+export const SQUARE_STATUS_LABEL = {
+  PAID: "Paid",
+  UNPAID: "Waiting on payment",
+  SCHEDULED: "Scheduled",
+  PARTIALLY_PAID: "Partly paid",
+  PARTIALLY_REFUNDED: "Partly refunded",
+  REFUNDED: "Refunded",
+  CANCELED: "Canceled",
+  FAILED: "Failed",
+  DRAFT: "Draft",
+};
+
+const invoiceBadgeStyle = (status) => {
+  if (status === "PAID") return "bg-emerald-50 text-emerald-700 border-emerald-300";
+  if (["CANCELED", "FAILED", "REFUNDED", "PARTIALLY_REFUNDED"].includes(status)) return "bg-slate-100 text-slate-500 border-slate-300";
+  return "bg-amber-50 text-amber-700 border-amber-300";
+};
+
+export const InvoiceBadge = ({ inv }) => (
+  <a
+    data-testid="invoice-status-badge"
+    href={inv.public_url || undefined}
+    target="_blank"
+    rel="noreferrer"
+    className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-bold ${invoiceBadgeStyle(inv.status)}`}
+  >
+    <ReceiptText className="w-3.5 h-3.5" />
+    Invoice {inv.invoice_number ? `#${inv.invoice_number}` : ""} · {fmtMoney(inv.amount)} · {SQUARE_STATUS_LABEL[inv.status] || inv.status}
+  </a>
 );
 
 export const PageTitle = ({ title, subtitle, action }) => (

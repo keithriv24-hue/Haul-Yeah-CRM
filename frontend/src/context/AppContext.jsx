@@ -1,6 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { apiErrorMessage, createRecordApi, deleteRecordApi, getBusinessApi, getHealth, getRates, getSchemaApi, listRecords, saveBusinessApi, saveRatesApi, updateRecordApi } from "@/lib/api";
+import { apiErrorMessage, createRecordApi, deleteRecordApi, getBusinessApi, getHealth, getRates, getSchemaApi, listRecords, listSquareInvoicesApi, saveBusinessApi, saveRatesApi, updateRecordApi } from "@/lib/api";
 import { DEFAULT_RATES } from "@/lib/pricing";
 import { useAuth } from "@/components/AuthGate";
 
@@ -16,6 +16,7 @@ export const AppProvider = ({ children }) => {
   const [refreshing, setRefreshing] = useState(false);
   const [rates, setRates] = useState(DEFAULT_RATES);
   const [business, setBusiness] = useState({ reviewLink: "" });
+  const [squareInvoices, setSquareInvoices] = useState([]);
   const [schemas, setSchemas] = useState({});
   const schemaRequested = useRef(new Set());
   const dataRef = useRef(data);
@@ -67,6 +68,21 @@ export const AppProvider = ({ children }) => {
     setBusiness(saved);
     return saved;
   }, []);
+
+  const loadSquareInvoices = useCallback(async () => {
+    try {
+      const list = await listSquareInvoicesApi();
+      setSquareInvoices(list);
+      return list;
+    } catch {
+      return [];
+    }
+  }, []);
+
+  const invoicesForLead = useCallback(
+    (leadId) => squareInvoices.filter((i) => i.lead_id === leadId),
+    [squareInvoices]
+  );
 
   const loadSchema = useCallback(async (table) => {
     if (schemaRequested.current.has(table)) return;
@@ -163,7 +179,7 @@ export const AppProvider = ({ children }) => {
 
   return (
     <AppContext.Provider
-      value={{ privacy, togglePrivacy, health, checkHealth, loadTable, refreshAll, refreshing, updateRecord, createRecord, deleteRecord, records, tableState, rates, saveRates, business, saveBusiness, schemas, loadSchema }}
+      value={{ privacy, togglePrivacy, health, checkHealth, loadTable, refreshAll, refreshing, updateRecord, createRecord, deleteRecord, records, tableState, rates, saveRates, business, saveBusiness, schemas, loadSchema, squareInvoices, loadSquareInvoices, invoicesForLead }}
     >
       {children}
     </AppContext.Provider>
