@@ -1,5 +1,5 @@
-import React from "react";
-import { NavLink, Outlet } from "react-router-dom";
+import React, { useEffect, useState } from "react";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { toast } from "sonner";
 import {
   LayoutDashboard, Users, BookUser, Truck, KanbanSquare, PenLine, Receipt,
@@ -11,6 +11,7 @@ import { useAuth } from "@/components/AuthGate";
 import { NotificationsBell } from "@/components/NotificationsBell";
 import { CrewContactsBubble } from "@/components/CrewContactsBubble";
 import useGpsPing from "@/lib/useGpsPing";
+import { teamNotificationsApi } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
@@ -71,6 +72,38 @@ export default function Layout() {
     window.dispatchEvent(new Event("hy-logout"));
   };
 
+  const location = useLocation();
+  const isTeamRole = ["sales", "marketing", "crew", "employee"].includes(role);
+  const [notifItems, setNotifItems] = useState([]);
+  const [seenMarks, setSeenMarks] = useState({ task: "", blog: "" });
+
+  useEffect(() => {
+    if (!isTeamRole) return;
+    setSeenMarks({
+      task: localStorage.getItem(`hy_seen_task_${role}`) || "",
+      blog: localStorage.getItem(`hy_seen_blog_${role}`) || "",
+    });
+    const load = () => teamNotificationsApi().then(setNotifItems).catch(() => {});
+    load();
+    const t = setInterval(load, 60000);
+    return () => clearInterval(t);
+  }, [role, isTeamRole]);
+
+  useEffect(() => {
+    if (!isTeamRole) return;
+    const type = location.pathname.startsWith("/tasks") ? "task" : location.pathname.startsWith("/blog") ? "blog" : null;
+    if (!type) return;
+    const now = new Date().toISOString();
+    localStorage.setItem(`hy_seen_${type}_${role}`, now);
+    setSeenMarks((s) => ({ ...s, [type]: now }));
+  }, [location.pathname, role, isTeamRole]);
+
+  const badgeCounts = {};
+  if (isTeamRole) {
+    badgeCounts["/tasks"] = notifItems.filter((n) => n.type === "task" && n.created_at > seenMarks.task).length;
+    badgeCounts["/blog"] = notifItems.filter((n) => n.type === "blog" && n.created_at > seenMarks.blog).length;
+  }
+
   return (
     <div className="min-h-screen bg-[#F2F4F8]">
       <aside className="hidden md:flex print:hidden fixed inset-y-0 left-0 w-60 flex-col bg-[#1B2A4A] text-white z-50">
@@ -93,6 +126,11 @@ export default function Layout() {
             >
               <Icon className="w-4 h-4" />
               {label}
+              {badgeCounts[to] > 0 && (
+                <span data-testid={`nav-badge${to.replace("/", "-")}`} className="ml-auto min-w-[20px] h-5 px-1.5 inline-flex items-center justify-center rounded-full bg-[#E8743B] text-white text-[10px] font-bold">
+                  {badgeCounts[to] > 9 ? "9+" : badgeCounts[to]}
+                </span>
+              )}
             </NavLink>
           ))}
         </nav>
@@ -201,7 +239,14 @@ export default function Layout() {
                 }`
               }
             >
-              <Icon className="w-5 h-5" />
+              <span className="relative">
+                <Icon className="w-5 h-5" />
+                {badgeCounts[to] > 0 && (
+                  <span data-testid={`tab-badge${to.replace("/", "-")}`} className="absolute -top-1.5 -right-2 min-w-[16px] h-4 px-1 inline-flex items-center justify-center rounded-full bg-[#E8743B] text-white text-[9px] font-bold">
+                    {badgeCounts[to] > 9 ? "9+" : badgeCounts[to]}
+                  </span>
+                )}
+              </span>
               {label}
             </NavLink>
           ))}

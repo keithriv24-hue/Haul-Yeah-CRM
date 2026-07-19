@@ -120,7 +120,7 @@ export default function Tasks() {
     const cur = task.audience || [];
     const next = cur.includes(group) ? cur.filter((g) => g !== group) : [...cur, group];
     try {
-      await setTaskAudienceApi(task.id, next);
+      await setTaskAudienceApi(task.id, next, f(task, TF.task) || "");
       await loadTable("tasks", true);
       toast.success(next.length ? `Shared with: ${next.join(", ")}.` : "Back to owner-only.");
     } catch (e) {
@@ -144,7 +144,7 @@ export default function Tasks() {
         [TF.notes]: form.notes,
       });
       if (audience.length) {
-        await setTaskAudienceApi(rec.id, audience);
+        await setTaskAudienceApi(rec.id, audience, form.task.trim());
         await loadTable("tasks", true);
       }
       toast.success(

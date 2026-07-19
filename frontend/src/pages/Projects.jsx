@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
-import { ChevronDown, ChevronUp, Truck, ShieldAlert, CalendarPlus, Star, Check, ClipboardList, Plus } from "lucide-react";
+import { ChevronDown, ChevronUp, Truck, ShieldAlert, CalendarPlus, Star, Check, ClipboardList, Plus, AlertTriangle } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,6 +14,7 @@ import { InstructionBanner, PageTitle, Private, Money, EmptyState, LoadingRows, 
 import { PF, LF, f, PROJECT_STATUSES, TRUCKS, STATUS_PILL } from "@/lib/fields";
 import { fmtDate, fmtMoney, calendarTemplate, smsLink, reviewSmsBody, mapsLink } from "@/lib/format";
 import { useAuth } from "@/components/AuthGate";
+import { listUsersApi, listTrucksApi, createAssignmentApi, apiErrorMessage } from "@/lib/api";
 import JobsCalendar from "@/components/JobsCalendar";
 
 const NumField = ({ record, fieldId, label, testId }) => {
@@ -208,32 +209,92 @@ const NewProjectDialog = ({ open, onOpenChange }) => {
   const { createRecord } = useApp();
   const [form, setForm] = useState(blankProject);
   const [saving, setSaving] = useState(false);
+  const [users, setUsers] = useState([]);
+  const [trucks, setTrucks] = useState([]);
+  const [crewSel, setCrewSel] = useState({});
+  const [warnings, setWarnings] = useState([]);
+  const [createdId, setCreatedId] = useState(null);
   const set = (k) => (e) => setForm((s) => ({ ...s, [k]: e.target.value }));
 
   useEffect(() => {
-    if (open) setForm(blankProject);
+    if (open) {
+      setForm(blankProject);
+      setCrewSel({});
+      setWarnings([]);
+      setCreatedId(null);
+      listUsersApi().then(setUsers).catch(() => {});
+      listTrucksApi().then(setTrucks).catch(() => {});
+    }
   }, [open]);
 
-  const save = async () => {
+  const crewUsers = users.filter((u) => (u.roles || [u.role]).includes("crew") && u.active);
+  const toggleCrew = (uid) =>
+    setCrewSel((s) => {
+      const next = { ...s };
+      if (next[uid]) delete next[uid];
+      else next[uid] = "Helper";
+      return next;
+    });
+
+  const save = async (ignoreWarnings = false) => {
     if (!form.jobName.trim()) {
       toast.error("Give the project a job name first.");
       return;
     }
+    const crew = Object.entries(crewSel).map(([user_id, position]) => ({ user_id, position }));
+    if (crew.length && !form.jobDate) {
+      toast.error("Pick a job date so it can go on the crew's schedule.");
+      return;
+    }
     setSaving(true);
     try {
-      await createRecord("projects", {
-        [PF.jobName]: form.jobName.trim(),
-        [PF.status]: "Pending Deposit",
-        [PF.jobDate]: form.jobDate,
-        [PF.fromAddr]: form.fromAddr,
-        [PF.toAddr]: form.toAddr,
-        [PF.crewSize]: form.crewSize === "" ? null : Number(form.crewSize),
-        [PF.estHours]: form.estHours === "" ? null : Number(form.estHours),
-        [PF.quote]: form.quote === "" ? null : Number(form.quote),
-        [PF.truck]: form.truck,
-        [PF.notes]: form.notes,
-      });
-      toast.success("Project added.");
+      let projId = createdId;
+      if (!projId) {
+        const rec = await createRecord("projects", {
+          [PF.jobName]: form.jobName.trim(),
+          [PF.status]: "Pending Deposit",
+          [PF.jobDate]: form.jobDate,
+          [PF.fromAddr]: form.fromAddr,
+          [PF.toAddr]: form.toAddr,
+          [PF.crewSize]: form.crewSize === "" ? null : Number(form.crewSize),
+          [PF.estHours]: form.estHours === "" ? null : Number(form.estHours),
+          [PF.quote]: form.quote === "" ? null : Number(form.quote),
+          [PF.truck]: form.truck,
+          [PF.notes]: form.notes,
+        });
+        projId = rec.id;
+        setCreatedId(projId);
+      }
+      if (crew.length) {
+        const truck = trucks.find((t) => t.name === form.truck);
+        try {
+          await createAssignmentApi({
+            project_id: projId,
+            job_name: form.jobName.trim(),
+            job_date: form.jobDate,
+            arrival_time: "",
+            start_address: form.fromAddr,
+            end_address: form.toAddr,
+            truck_id: truck ? truck.id : null,
+            job_size: "",
+            crew,
+            ignore_warnings: ignoreWarnings,
+          });
+        } catch (e) {
+          const det = e?.response?.data?.detail;
+          if (e?.response?.status === 409 && det?.warnings) {
+            setWarnings(det.warnings);
+            setSaving(false);
+            return;
+          }
+          toast.error(`Project saved, but scheduling failed. ${apiErrorMessage(e)}`);
+          setSaving(false);
+          return;
+        }
+        toast.success("Project added — the crew's been notified and it's on their schedule.");
+      } else {
+        toast.success("Project added.");
+      }
       onOpenChange(false);
     } catch {}
     setSaving(false);
@@ -259,7 +320,11 @@ const NewProjectDialog = ({ open, onOpenChange }) => {
             <Label>Truck</Label>
             <Select value={form.truck} onValueChange={(v) => setForm((s) => ({ ...s, truck: v }))}>
               <SelectTrigger data-testid="project-truck-new-select"><SelectValue placeholder="Pick truck" /></SelectTrigger>
-              <SelectContent>{TRUCKS.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
+              <SelectContent>
+                {(trucks.filter((t) => t.active).length ? trucks.filter((t) => t.active).map((t) => t.name) : TRUCKS).map((t) => (
+                  <SelectItem key={t} value={t}>{t}</SelectItem>
+                ))}
+              </SelectContent>
             </Select>
           </div>
           <div className="col-span-2">
@@ -286,10 +351,48 @@ const NewProjectDialog = ({ open, onOpenChange }) => {
             <Label>Notes</Label>
             <Textarea value={form.notes} onChange={set("notes")} rows={2} />
           </div>
+          <div className="col-span-2">
+            <Label>Put it on the crew's schedule (optional)</Label>
+            <div className="space-y-2 mt-1.5">
+              {crewUsers.length === 0 && <p className="text-xs text-slate-400">No active crew accounts yet — add them on the Crew page's Team tab.</p>}
+              {crewUsers.map((u) => (
+                <div key={u.id} data-testid="project-crew-row" className="flex items-center gap-3">
+                  <Checkbox data-testid="project-crew-checkbox" id={`proj-crew-${u.id}`} checked={!!crewSel[u.id]} onCheckedChange={() => toggleCrew(u.id)} />
+                  <label htmlFor={`proj-crew-${u.id}`} className="text-sm flex-1 cursor-pointer">{u.name}</label>
+                  {crewSel[u.id] && (
+                    <Select value={crewSel[u.id]} onValueChange={(v) => setCrewSel((s) => ({ ...s, [u.id]: v }))}>
+                      <SelectTrigger data-testid="project-position-select" className="w-28 h-8 text-xs"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Driver">Driver</SelectItem>
+                        <SelectItem value="Helper">Helper</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  )}
+                </div>
+              ))}
+              {Object.keys(crewSel).length > 0 && (
+                <p className="text-[11px] text-slate-400">They'll get notified and see it under My Jobs and their schedule.</p>
+              )}
+            </div>
+          </div>
+          {warnings.length > 0 && (
+            <div data-testid="project-schedule-warnings" className="col-span-2 bg-amber-50 border border-amber-200 rounded-md p-3 space-y-1">
+              <p className="text-xs font-bold text-amber-800 flex items-center gap-1"><AlertTriangle className="w-3.5 h-3.5" /> Hold on:</p>
+              {warnings.map((w, i) => (
+                <p key={i} className="text-xs text-amber-800">• {w}</p>
+              ))}
+            </div>
+          )}
         </div>
-        <Button data-testid="project-save-btn" onClick={save} disabled={saving} className="w-full gap-2 bg-[#E8743B] hover:bg-[#d4632e]">
-          <Plus className="w-4 h-4" /> {saving ? "Saving…" : "Add project"}
-        </Button>
+        {warnings.length > 0 ? (
+          <Button data-testid="project-force-schedule-btn" onClick={() => save(true)} disabled={saving} className="w-full gap-2 bg-amber-600 hover:bg-amber-700">
+            Schedule anyway
+          </Button>
+        ) : (
+          <Button data-testid="project-save-btn" onClick={() => save(false)} disabled={saving} className="w-full gap-2 bg-[#E8743B] hover:bg-[#d4632e]">
+            <Plus className="w-4 h-4" /> {saving ? "Saving…" : "Add project"}
+          </Button>
+        )}
       </DialogContent>
     </Dialog>
   );

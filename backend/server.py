@@ -77,6 +77,7 @@ TASK_GROUPS = ("sales", "marketing", "crew")
 TASK_GROUP_FOR_ROLE = {"sales": "sales", "marketing": "marketing", "crew": "crew", "employee": "crew"}
 TASK_STATUS_F = "fldIpdRVz51aQaNZh"
 BLOG_STATUS_F = "fldu92VQBEbkeGhtQ"
+BLOG_TITLE_F = "fldKzcIH5j4ZMZQrj"
 PROJECT_QUOTE_FIELD = "fldkRQlJvhnUhWoR3"
 PROJECT_DEPOSIT_FIELD = "fldpqyinP1L9vZ2UP"
 PROJECT_REVENUE_FIELD = "fldvOyVAK9ywo2DNA"
@@ -1897,6 +1898,8 @@ async def create_record(table_key: str, payload: RecordPayload = Body(...), role
     rec = filter_record(data["records"][0], role, table_key)
     if table_key == "tasks":
         rec["audience"] = []
+    if table_key == "blog" and payload.fields.get(BLOG_STATUS_F) == "Published":
+        await notify_blog_published(data["records"][0])
     return rec
 
 
@@ -1923,6 +1926,8 @@ async def update_record(table_key: str, record_id: str, payload: RecordPayload =
     if table_key == "tasks" and role == "owner":
         meta = await mongo_db.task_meta.find_one({"_id": record_id}) or {}
         rec["audience"] = meta.get("audience", [])
+    if table_key == "blog" and payload.fields.get(BLOG_STATUS_F) == "Published":
+        await notify_blog_published(data["records"][0])
     return rec
 
 
@@ -1938,13 +1943,43 @@ async def delete_record(table_key: str, record_id: str, role: str = Depends(requ
 
 class TaskAudiencePayload(BaseModel):
     audience: List[str] = []
+    title: str = ""
+
+
+async def _team_notify(key: str, doc: Dict[str, Any]):
+    await mongo_db.team_notifications.update_one({"key": key}, {"$setOnInsert": {"key": key, **doc}}, upsert=True)
+
+
+async def notify_blog_published(record: Dict[str, Any]):
+    rid = record.get("id")
+    title = (record.get("fields") or {}).get(BLOG_TITLE_F) or ""
+    for g in TASK_GROUPS:
+        await _team_notify(f"blog:{rid}:{g}", {"_id": str(uuid4()), "type": "blog", "group": g,
+                                               "record_id": rid, "title": title, "created_at": now_iso()})
 
 
 @api_router.post("/tasks/{record_id}/audience")
 async def set_task_audience(record_id: str, payload: TaskAudiencePayload = Body(...), p: Dict[str, Any] = Depends(require_owner)):
     audience = sorted({g for g in payload.audience if g in TASK_GROUPS})
+    prev_doc = await mongo_db.task_meta.find_one({"_id": record_id}) or {}
+    prev = set(prev_doc.get("audience") or [])
     await mongo_db.task_meta.update_one({"_id": record_id}, {"$set": {"audience": audience}}, upsert=True)
+    for g in set(audience) - prev:
+        await _team_notify(f"task:{record_id}:{g}", {"_id": str(uuid4()), "type": "task", "group": g,
+                                                     "record_id": record_id, "title": payload.title.strip(), "created_at": now_iso()})
+    removed = prev - set(audience)
+    if removed:
+        await mongo_db.team_notifications.delete_many({"key": {"$in": [f"task:{record_id}:{g}" for g in removed]}})
     return {"id": record_id, "audience": audience}
+
+
+@api_router.get("/team-notifications")
+async def team_notifications(role: str = Depends(require_auth)):
+    grp = TASK_GROUP_FOR_ROLE.get(role)
+    if not grp:
+        return {"items": []}
+    docs = await mongo_db.team_notifications.find({"group": grp}).sort("created_at", -1).to_list(50)
+    return {"items": [{"id": d["_id"], "type": d["type"], "title": d.get("title", ""), "created_at": d["created_at"]} for d in docs]}
 
 
 # ---------------------------------------------------------------- crew module

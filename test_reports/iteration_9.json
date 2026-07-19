@@ -1,0 +1,56 @@
+{
+  "summary": "Iteration 9 — Backend + frontend QA of (1) team_notifications lifecycle (task audience + sales legacy token) and (2) POST/DELETE /api/assignments crew scheduling, plus (3) frontend New-Project crew picker + validation and (4) task badge E2E (marketing view '2' + sales '9+' cap + owner has none). All 3 new pytest cases pass, all 19 regression sharing tests still pass, all frontend checks pass. DB fully cleaned.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration9_notifications_assignments.py",
+    "/app/backend/tests/test_todo_blog_sharing.py",
+    "/app/test_reports/pytest/iter9_notifs_assignments.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Projects.jsx save() logic is correct: crew-picker checks `if (crew.length && !form.jobDate)` BEFORE attempting createRecord/createAssignmentApi, so leaving the date empty with crew picked shows the toast without hitting Airtable (verified). Good order.",
+    "Projects.jsx createdId state prevents duplicate Airtable project creation on 'Schedule anyway' retry — projId is reused after first successful createRecord. Not E2E tested (Airtable 503 in preview) but code path is straightforward and correct.",
+    "Layout.jsx badge polling: 60s interval + reload-on-role-change works via useEffect deps [role, isTeamRole]. Verified marketing badge appears immediately after role-switch (no 60s wait needed). Nice.",
+    "Layout.jsx seenMarks: localStorage key `hy_seen_{type}_{role}` is per-role — so switching between marketing/sales/crew doesn't cross-contaminate marks. Verified switching back to owner cleared badges (owner is not in isTeamRole).",
+    "server.py _team_notify uses $setOnInsert with key as dedupe → re-POST same audience does not create duplicate rows. Verified (crew still had exactly 1 item after 2nd POST).",
+    "server.py set_task_audience: when audience is removed, deletes team_notifications with matching keys — verified for both crew and marketing groups reset to 0.",
+    "server.py team_notifications endpoint: owner has no group in TASK_GROUP_FOR_ROLE → returns {items: []}. Verified.",
+    "Minor: `test_todo_blog_sharing.py::test_owner_sets_audience_filters_invalid_groups_and_sorts` and other audience-mutation tests clean up task_meta but NOT team_notifications inserted by the mutation. Left 2 orphan team_notifications after regression run this iteration (both cleaned up manually). Recommend adding `mongo_meta` fixture cleanup to also purge team_notifications for the record. Non-blocking."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration9_notifications_assignments.py (new — 3 pytest tests)"
+  ],
+  "success_rate": {
+    "backend": "100% (3/3 new pytest + 19/19 regression = 22/22 pass)",
+    "frontend": "100% (all owner/marketing/sales/crew checks pass, 0 TypeErrors)"
+  },
+  "test_credentials": "Owner HaulYeahOwner / HaulYeah2026! ✓  Sales legacy blank username + SellMoves2026! ✓  Crew javante@haulyeahmoves.com / JavCrew2026! ✓  Owner→Marketing view via role-switch-select ✓",
+  "seed_data_creation": "Created and deleted during this iteration: (a) 3 test task_meta+team_notifications for the lifecycle+sales+assignments pytest cases (via fixtures), (b) 2 recQAMKT_* task_meta for the marketing badge frontend test, (c) 11 recQASALES_* task_meta for the 9+ cap frontend test, (d) 1 assignment doc project_id=recQAPROJ (deleted at end of test). ALL cleaned up — final DB scan: 0 recQA/recTEST rows in team_notifications, task_meta, or assignments. Pre-existing task_meta rows untouched (1 legit row remains, unchanged from iteration 8).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "New pytest suite /app/backend/tests/test_iteration9_notifications_assignments.py runs in ~4s with `-o addopts=` (skip xdist). Covers: (a) full task-audience lifecycle including dedupe, add-group, reset-to-empty, owner-empty; (b) sales legacy password-only token returns 200 for /api/team-notifications; (c) POST /api/assignments with crew:[{user_id, position:Driver}] returns resolved crew name + shows up in javante's /api/crew/my-jobs + DELETE cleans up. AIRTABLE_API_KEY still empty → the crew-picker save flow can only be validated up to the date-validation toast in the UI (Airtable createRecord would 503 otherwise, but the toast fires BEFORE Airtable is called so this works). Owner login is via username 'HaulYeahOwner' (case-insensitive) + password with keyboard.type(delay>=15ms). role-switch-select is shadcn — click trigger, then get_by_role('option', name='Marketing view'). team_notifications with $setOnInsert dedupe → re-posting same audience is safe. task_meta docs persist with audience=[] after reset — cleanup regex `^rec(QA|TEST)` if needed. Frontend badge count derives from notifItems.filter(n.created_at > seenMarks[type]) — visiting /tasks or /blog immediately updates localStorage `hy_seen_{type}_{role}` and setSeenMarks, so badge disappears without page reload.",
+  "detailed_test_results": {
+    "backend_full_task_audience_lifecycle":       "PASS — owner shares recQA1 with crew (title 'QA Task') → crew has 1 item; marketing 0; re-POST same → still 1 (dedupe); add marketing → marketing gets 1; audience:[] → both 0; owner GET → {items:[]}.",
+    "backend_sales_legacy_token_returns_items":   "PASS — owner shares w/ sales, then legacy password-only login (no email, SellMoves2026!) → GET /api/team-notifications returns 200 with the 'QA Sales Legacy' task title in items.",
+    "backend_create_assignment_with_crew_and_delete": "PASS — POST /api/assignments {project_id:recQAPROJ, job_date:2026-08-25, crew:[{javante, Driver}]} → 200, crew[0].name='Javante Brown' resolved; GET /api/crew/my-jobs (javante) includes it; DELETE /api/assignments/{id} → 200 {deleted:true}; javante's my-jobs no longer includes it.",
+    "backend_regression_sharing_suite":           "PASS — all 19/19 tests in test_todo_blog_sharing.py still green.",
+    "frontend_owner_projects_new_dialog":         "PASS — /projects → 'New project' opens new-project-modal; 'Put it on the crew's schedule (optional)' label visible; 2 project-crew-row rows (Javante Brown, Junior Santil); toggling first checkbox reveals exactly 1 project-position-select (defaults to Helper).",
+    "frontend_owner_crew_no_date_validation":     "PASS — with Javante picked + no job_date + name='QA CREW NO DATE', clicking project-save-btn shows toast 'Pick a job date so it can go on the crew's schedule.' Modal stays open, no crash, project NOT created (validation fires BEFORE Airtable call).",
+    "frontend_owner_no_nav_badges":               "PASS — owner has nav-badge-tasks count=0 and nav-badge-blog count=0.",
+    "frontend_marketing_badge_shows_2":           "PASS — seeded 2 fake tasks for marketing group via API, role-switched Owner → 'Marketing view' → nav-badge-tasks appears with value '2' within 3s.",
+    "frontend_marketing_badge_clears_on_visit":   "PASS — clicked nav-to-do → badge disappears (count=0) within 1.5s.",
+    "frontend_marketing_switch_back_owner_no_badge": "PASS — role-switched back to 'Owner view' → nav-badge-tasks=0, nav-badge-blog=0.",
+    "frontend_sales_badge_9plus_cap":             "PASS — seeded 11 fake sales tasks, sales legacy login (blank username + SellMoves2026!) → nav-badge-tasks value='9+' (cap enforced).",
+    "frontend_sales_badge_clears_on_visit":       "PASS — clicked nav-to-do → nav-badge-tasks disappears.",
+    "frontend_regression_owner_tasks_page":       "PASS — /tasks renders with mass-message-btn (1), new-task-btn (1), tasks-search-input (1).",
+    "frontend_regression_crew_lands_today":       "PASS — javante login lands on /today with Job Card #INV-9042 (Driver, Truck 1, 9:00 AM, John Smith customer).",
+    "frontend_regression_crew_sidebar":           "PASS — crew sidebar has nav-to-do and nav-blog alongside today/my-jobs/time-clock/days-off.",
+    "frontend_regression_projects_calendar":      "PASS — /projects renders Calendar (July 2026 grid) + search box + all-jobs section.",
+    "console_type_errors":                        "PASS — 0 TypeErrors across owner, marketing view, sales legacy, and crew flows."
+  }
+}
