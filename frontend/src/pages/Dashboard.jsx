@@ -6,6 +6,7 @@ import { useApp } from "@/context/AppContext";
 import { Button } from "@/components/ui/button";
 import { InstructionBanner, KpiCard, PageTitle, Private, Money, Pill, EmptyState, Pill as StatusPill } from "@/components/Bits";
 import { WorkCalendar } from "@/components/WorkCalendar";
+import { CrewStatusCard } from "@/components/CrewStatusCard";
 import { LF, PF, TF, IF, SF, f, LEAD_STATUS_COLORS, LEAD_STATUSES, needsFollowUp } from "@/lib/fields";
 import { fmtMoney, fmtDate, minutesSince, ageLabel, todayISO, isOverdue, gmailCompose } from "@/lib/format";
 
@@ -162,6 +163,8 @@ export default function Dashboard() {
         <KpiCard testId="kpi-outstanding" label="Owed to us" value={fmtMoney(outstanding)} sub="Sent + overdue invoices" />
         <KpiCard testId="kpi-burn" label="Monthly burn" value={fmtMoney(burn)} sub="Active subscriptions" />
       </div>
+
+      <CrewStatusCard />
 
       <WorkCalendar />
 

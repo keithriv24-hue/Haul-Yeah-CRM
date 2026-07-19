@@ -87,3 +87,8 @@ See /app/memory/test_credentials.md (owner password, endpoints).
 1. Click Deploy in Emergent UI to push live (build checks passed).
 2. Add Airtable personal access token as AIRTABLE_API_KEY (preview secrets panel AND ensure production has a token with read/write scope to base appFAHTRNrRckuxI8 incl. Job Time Log table). Queued punches auto-flush once key works.
 3. Note: owner login username is now HaulYeahOwner (old password-only login still works as backup).
+
+## Session: July 19, 2026 (later) — Update overlay + live crew status
+- UpdateOverlay.jsx (App root, works pre-login): polls /api/health every 25s; 2 consecutive network/502/503/504 fails → full-screen branded "The website is updating" overlay; polls every 5s while down; auto window.location.reload() on recovery (loads fresh deployed bundle). Offline variant message via navigator.onLine.
+- "Who's on the clock" card on owner Dashboard (CrewStatusCard.jsx + GET /api/team/status, owner-only): every active crew member with green pulsing "On the clock since X · job" or gray "Not active right now"; polls 30s. Verified live flip on clock-in/out via curl + screenshot.
+- Both features verified self-test (curl + screenshots incl. real backend-stop overlay test). User must REDEPLOY to get these on haulyeahadmin.com. AIRTABLE_API_KEY still not provided (asked twice).

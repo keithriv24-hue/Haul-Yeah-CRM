@@ -1030,6 +1030,24 @@ async def calendar_jobs(month: str, p: Dict[str, Any] = Depends(require_owner)):
     return {"month": month, "days": days}
 
 
+@api_router.get("/team/status")
+async def team_status(p: Dict[str, Any] = Depends(require_owner)):
+    users = await mongo_db.users.find({"role": "crew", "active": True}).to_list(100)
+    open_entries = await mongo_db.time_entries.find({"clock_out": None}).to_list(100)
+    by_user = {e["user_id"]: e for e in open_entries}
+    crew = []
+    for u in users:
+        e = by_user.get(u["_id"])
+        crew.append({
+            "user_id": u["_id"], "name": u["name"],
+            "clocked_in": bool(e),
+            "since": e["clock_in"]["at"] if e else None,
+            "job_name": (e or {}).get("job_name"),
+        })
+    crew.sort(key=lambda c: (not c["clocked_in"], c["name"]))
+    return {"crew": crew}
+
+
 # ------- users management (owner)
 
 class UserCreatePayload(BaseModel):

@@ -24,6 +24,7 @@ import Crew from "@/pages/Crew";
 import CrewJobs from "@/pages/CrewJobs";
 import TimeClock from "@/pages/TimeClock";
 import DaysOff from "@/pages/DaysOff";
+import { UpdateOverlay } from "@/components/UpdateOverlay";
 
 function RoleRoutes() {
   const { role } = useAuth();
@@ -90,14 +91,17 @@ function RoleRoutes() {
 
 function App() {
   return (
-    <AuthGate>
-      <AppProvider>
-        <BrowserRouter>
-          <RoleRoutes />
-        </BrowserRouter>
-        <Toaster position="top-center" richColors />
-      </AppProvider>
-    </AuthGate>
+    <>
+      <UpdateOverlay />
+      <AuthGate>
+        <AppProvider>
+          <BrowserRouter>
+            <RoleRoutes />
+          </BrowserRouter>
+          <Toaster position="top-center" richColors />
+        </AppProvider>
+      </AuthGate>
+    </>
   );
 }
 
