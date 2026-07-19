@@ -3,7 +3,8 @@ import { PhoneCall, Calculator, CreditCard, Truck, CheckCircle2, Star, Video } f
 import { InstructionBanner, PageTitle } from "@/components/Bits";
 import { Button } from "@/components/ui/button";
 import { useApp } from "@/context/AppContext";
-import { fmtMoney } from "@/lib/format";
+import { fmtMoney, fmtMoneyCents } from "@/lib/format";
+import { useLivePricing } from "@/pages/Calculator";
 
 const STEPS = [
   {
@@ -13,13 +14,13 @@ const STEPS = [
   },
   {
     icon: Calculator,
-    title: "2. Quote a range",
-    text: "Use the Quote button on the lead card. Pick crew size, hours, travel type, stairs, and piano. The app shows a low and high price. Always say the final price is confirmed by phone.",
+    title: "2. Quote the move",
+    text: "Use the Quote button on the lead card or the Quote Calculator page. Pick crew size, hours, travel type, miles, stairs, packing, and any big items. The app shows one final price plus the deposit. Say it with confidence.",
   },
   {
     icon: CreditCard,
     title: "3. Send the deposit link",
-    text: "Make a payment link in your Square dashboard for 25% of the quote's high end. Paste it in the Deposit window. The app saves it to the lead and writes the email for you.",
+    text: "Send a Square invoice for the deposit shown by the calculator, or make a payment link in your Square dashboard and paste it in the Deposit window. The app saves it to the lead and writes the email for you.",
   },
   {
     icon: Truck,
@@ -39,7 +40,9 @@ const STEPS = [
 ];
 
 export default function Help() {
-  const { rates } = useApp();
+  const { rates: ctxRates } = useApp();
+  const { rates, items } = useLivePricing(ctxRates);
+  const activeItems = items.filter((it) => it.active);
   return (
     <div data-testid="help-page">
       <PageTitle title="Help" subtitle="From new lead to cash in the bank." />
@@ -64,12 +67,15 @@ export default function Help() {
         <ul className="text-sm space-y-1.5 text-white/85">
           <li>{fmtMoney(rates.manHour)} per man-hour</li>
           <li>Travel fee: {fmtMoney(rates.travelTruck)} with truck · {fmtMoney(rates.travelLabor)} labor-only</li>
-          <li>Stairs: {fmtMoney(rates.stairFlight)} per flight</li>
-          <li>Piano: {fmtMoney(rates.pianoUpright)} upright · {fmtMoney(rates.pianoGrand)} grand (flat)</li>
-          <li>Quote high end = subtotal + 10% cushion</li>
-          <li>Deposit = 25% of the high end</li>
+          <li>First {rates.mileageAllowance} round-trip miles free, then {fmtMoneyCents(rates.overageRate)} per extra mile</li>
+          <li>Stairs: {fmtMoney(rates.stairFlight)} per flight · Packing: {fmtMoney(rates.packingRate)} per man-hour</li>
+          {activeItems.length > 0 && (
+            <li data-testid="help-items-line">Big items: {activeItems.map((it) => `${it.name} ${fmtMoney(it.price)}`).join(" · ")}</li>
+          )}
+          <li>Final quote = subtotal + {rates.cushionPercent}% cushion, rounded up to the nearest {fmtMoney(rates.roundingIncrement)}</li>
+          <li>Deposit = {rates.depositPercent}% of the final quote</li>
         </ul>
-        <p className="text-xs text-white/60 mt-3">Quotes always show as a range. Change these rates on the Settings page.</p>
+        <p className="text-xs text-white/60 mt-3">One clean final price — no ranges. Change these numbers on the Settings page.</p>
       </div>
 
       <div className="bg-white border border-slate-200 rounded-lg p-5">

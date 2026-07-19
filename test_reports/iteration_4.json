@@ -1,0 +1,41 @@
+{
+  "summary": "Iteration 4 — FRONTEND ONLY QA of new Quote Calculator + owner-editable pricing (staged draft save) + specialty item library + Help cheat sheet + role regression. All 10 test scenarios in the review request passed end-to-end. Only one MINOR spec deviation found (empty cushionPercent input coerces to 0 and passes validation, but spec said empty should error). No critical bugs. All test data cleaned up (manHour restored to 65, Gun safe added/toggled/deleted, no residual test items in Settings).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Settings.jsx validate()", "issue": "MINOR — Empty cushionPercent input coerces via Number('') === 0, which satisfies min=0 and passes validation. Confirm-save-dialog opens with change line 'Cushion (%): 10% → 0%' instead of blocking with a toast. Negative case (-5) works correctly (dialog blocked, toast 'Cushion (%) must be a number between 0 and 100.'). Review request explicitly expects empty to also error. Same edge exists for any FIELD with min=0 (mileageAllowance, all $ fields). Fix: in validate(), reject when the raw form[key] string is trimmed-empty regardless of Number() coercion.", "selector": "[data-testid=\"rate-cushionPercent-input\"]", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Owner Dashboard console noise (regression from iter3)", "issues": ["Still 10x '503' console errors on every owner-side navigation because AIRTABLE_API_KEY is empty and the app fires periodic Airtable proxy requests (Squarish poller + tables refreshes). Health-gate these calls when health.airtable_configured is false. This is the same LOW-priority noise flagged in iteration_3; still present."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/test_reports/iteration_4.json"
+  ],
+  "action_items": [
+    "LOW — Tighten Settings.validate() so trimmed-empty string is rejected before Number() coercion (currently empty → 0 → passes). Affects all fields whose min is 0. Cushion (%) is the one called out in the spec.",
+    "LOW (carryover from iter3) — Role/health-gate owner-side Airtable-proxy polls when health.airtable_configured is false to eliminate the 10× 503 console noise."
+  ],
+  "critical_code_review_comments": [
+    "Settings.jsx uses local component state for `form` and `draftItems`, so navigating away from /settings (e.g. to /calculator to preview) and back LOSES the draft. This is not called out in the requirements and is fine for the 'save changes' contract (calculator does read old values while draft exists), but the owner will be surprised if they alt-tab to check the calculator mid-edit. Consider persisting draft to sessionStorage or moving it into AppContext.",
+    "Calculator.jsx useLivePricing polls every 30s AND on mount. Polling on every mount is correct; but Help.jsx also mounts its own useLivePricing which double-polls. Extract a single provider-level hook or move poll interval into AppContext so /help + /calculator share one refresh loop.",
+    "pricing.js computeQuote deposit rounding: `Math.round(finalQuote * rates.depositPercent) / 100` — this multiplies by depositPercent (25) then divides by 100. Works only because depositPercent is intended as a whole-percent integer; if owner sets depositPercent to a decimal like 12.5 it will still compute correctly, but the comment/UX doesn't make that clear. Add a small note in Settings that it's a percentage (currently label just says 'Deposit (%)' — OK).",
+    "Settings.jsx line 78: rateChanged() compares Number(form[key]) !== Number(savedRates[key]). If owner types '65.00' when saved is 65, Number-Number is equal so no change flagged (good), but the orange highlight also disappears. Minor UX nit.",
+    "Server-side /api/settings/rates already verified via curl per E1; not re-tested in this iteration."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "N/A (frontend-only per request)",
+    "frontend": "99% — all 10 required scenarios pass; 1 minor validation edge (empty cushion → 0)"
+  },
+  "test_credentials": "Owner HaulYeahOwner/HaulYeah2026!, Sales legacy (blank username) SellMoves2026!, Crew javante@haulyeahmoves.com/JavCrew2026!",
+  "seed_data_creation": "During test: (1) manHour temporarily set 65→70 via staged save+confirm, then restored to 65 via staged save+confirm (cleanup complete). (2) 'Gun safe' item added at $300 via staged save; toggled active OFF via staged save; deleted via staged save (all three flows exercised end-to-end and item is GONE from settings). Final Settings state matches baseline: manHour=65, items=[Piano (upright) $500, Piano (baby grand) $800]. No lingering test data.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Everything owner requested for the calculator + staged pricing rewrite is live and math-correct. Verified numbers: (a) 3 crew × 5.5 hrs × $65 + $125 truck + 4 mi overage × $0.85 = $1,200.90 subtotal, +10% cushion $120.09, round up to $1,350 final, 25% deposit $337.50, balance $1,012.50 — EXACT match. (b) After 1× Piano upright: subtotal $1,700.90 → final $1,900 → deposit $475.00. (c) After manHour saved to $70: 3×5.5×70=$1,155 crew + $125 + $3.40 = $1,283.40 subtotal, +10% $128.34 → $1,411.74 → round up to $1,450 → deposit $362.50. All specialty item CRUD (add/toggle-hide/delete-with-undo) flows through the staged 'Save Changes → confirm dialog → apply' pipeline correctly and the calculator picks it up on remount. Help cheat sheet contains live rates + specialty-items line + cushion/deposit formulas, no 'undefined' or 'NaN' anywhere. Sales legacy login (blank username + SellMoves2026!) lands on /leads, sidebar shows only Leads + Quote Calculator (NO Settings), /settings blocked, calculator math correct, both piano items visible. Crew login (Javante) lands on /jobs cleanly — no 403 toasts about settings/rates. The Airtable-empty 503 console noise from iteration_3 is UNCHANGED (still 10+ per owner nav) — separate LOW carryover item. Only real gap is the trimmed-empty-input validation edge described above.",
+  "rca_of_the_issue": "Only one gap: validate() in Settings.jsx uses `Number(form[key])` which coerces '' → 0. Since cushionPercent has min=0, the empty case passes. To reproduce: /settings → clear the Cushion (%) input → Save Changes → confirm dialog opens showing 'Cushion (%): 10% → 0%'. Mitigation: before Number() coercion, check `if (String(form[key]).trim() === '') { toast.error(...); return false; }` inside validate() loop."
+}

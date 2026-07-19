@@ -12,17 +12,17 @@ import { LF, f } from "@/lib/fields";
 import { Money } from "@/components/Bits";
 
 export default function DepositModal({ lead, open, onOpenChange }) {
-  const { updateRecord } = useApp();
+  const { updateRecord, rates } = useApp();
   const [link, setLink] = useState("");
   const [saving, setSaving] = useState(false);
   const quote = f(lead, LF.quote);
-  const deposit = depositFromQuote(quote);
+  const deposit = depositFromQuote(quote, rates.depositPercent);
   const name = f(lead, LF.name) || "";
   const email = f(lead, LF.email) || "";
 
   const emailBody =
     `Hi ${name.split(" ")[0] || "there"},\n\n` +
-    `Good news — we can lock in your move date. The deposit is ${fmtMoney(deposit)} (25% of your quote's high end).\n\n` +
+    `Good news — we can lock in your move date. The deposit is ${fmtMoney(deposit)} (${rates.depositPercent}% of your quote).\n\n` +
     `Pay here: ${link || "[paste your Square link]"}\n\n` +
     `Final price confirmed by phone.\n\nThanks!\nHaul Yeah Moving\nWeekend moves, flat price, no surprises.`;
 
@@ -55,7 +55,7 @@ export default function DepositModal({ lead, open, onOpenChange }) {
           </DialogDescription>
         </DialogHeader>
         <div className="border border-[#1B2A4A]/15 bg-[#1B2A4A]/[0.04] rounded-lg p-4">
-          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Deposit to collect (25% of quote)</div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Deposit to collect ({rates.depositPercent}% of quote)</div>
           <div data-testid="deposit-amount" className="font-display text-3xl font-extrabold text-[#1B2A4A]"><Money value={deposit} /></div>
           {!quote && <p className="text-xs text-red-500 mt-1">No quote saved yet. Use the Quote button first.</p>}
         </div>

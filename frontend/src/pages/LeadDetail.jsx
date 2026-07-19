@@ -19,7 +19,7 @@ import { AddNoteDialog } from "@/pages/Leads";
 import { LF, f, LEAD_STATUSES, STATUS_PILL, nextStepHint, KNOWN_LEAD_FIELD_IDS, formatExtraValue, needsFollowUp, quietDays, HOME_SIZES } from "@/lib/fields";
 import { fmtDate, gmailCompose, gmailSearch, calendarTemplate, smsLink, winBackSmsBody, payNudgeSmsBody } from "@/lib/format";
 import { quoteSmsBody } from "@/lib/quote";
-import { lowFromHigh, depositFromQuote } from "@/lib/pricing";
+import { depositFromQuote } from "@/lib/pricing";
 import { bookLeadAsJob } from "@/lib/leadActions";
 
 const InfoRow = ({ icon: Icon, label, children, isPrivate = true }) => (
@@ -33,7 +33,7 @@ const InfoRow = ({ icon: Icon, label, children, isPrivate = true }) => (
 export default function LeadDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { loadTable, loadSchema, records, tableState, updateRecord, createRecord, deleteRecord, schemas, invoicesForLead, loadSquareInvoices } = useApp();
+  const { loadTable, loadSchema, records, tableState, updateRecord, createRecord, deleteRecord, schemas, invoicesForLead, loadSquareInvoices, rates } = useApp();
   const { role } = useAuth();
   const isSales = role === "sales";
   const isOwner = role === "owner";
@@ -290,7 +290,7 @@ export default function LeadDetail() {
                 <Calculator className="w-3.5 h-3.5" /> Quote
               </Button>
               <Button data-testid="lead-detail-text-quote-btn" asChild variant="outline" size="sm" className="gap-1 text-xs" disabled={!phone || !quote}>
-                <a href={phone && quote ? smsLink(phone, quoteSmsBody(name, lowFromHigh(quote), quote, depositFromQuote(quote))) : undefined}>
+                <a href={phone && quote ? smsLink(phone, quoteSmsBody(name, quote, depositFromQuote(quote, rates.depositPercent))) : undefined}>
                   <MessageSquare className="w-3.5 h-3.5" /> Text quote
                 </a>
               </Button>

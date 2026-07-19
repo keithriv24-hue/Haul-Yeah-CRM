@@ -455,7 +455,7 @@ async def get_rates(role: str = Depends(require_auth)):
     if role not in ("owner", "sales"):
         raise HTTPException(status_code=403, detail="Your role can't open this.")
     doc = await mongo_db.settings.find_one({"_id": "calculator_rates"}) or {}
-    return {**DEFAULT_RATES, **{k: v for k, v in doc.items() if k in DEFAULT_RATES}}
+    return {**DEFAULT_RATES, **{k: v for k, v in doc.items() if k in DEFAULT_RATES}, "_updatedAt": doc.get("_updatedAt", {})}
 
 
 @api_router.put("/settings/rates")
@@ -465,8 +465,72 @@ async def save_rates(payload: RatesPayload, role: str = Depends(require_auth)):
     rates = payload.model_dump()
     if any(v < 0 for v in rates.values()):
         raise HTTPException(status_code=422, detail="Rates can't be negative.")
-    await mongo_db.settings.update_one({"_id": "calculator_rates"}, {"$set": rates}, upsert=True)
-    return rates
+    if rates["roundingIncrement"] < 1:
+        raise HTTPException(status_code=422, detail="The rounding increment must be at least $1.")
+    doc = await mongo_db.settings.find_one({"_id": "calculator_rates"}) or {}
+    current = {**DEFAULT_RATES, **{k: v for k, v in doc.items() if k in DEFAULT_RATES}}
+    stamps = doc.get("_updatedAt", {})
+    now_iso = datetime.now(timezone.utc).isoformat()
+    for k, v in rates.items():
+        if v != current.get(k):
+            stamps[k] = now_iso
+    await mongo_db.settings.update_one({"_id": "calculator_rates"}, {"$set": {**rates, "_updatedAt": stamps}}, upsert=True)
+    return {**rates, "_updatedAt": stamps}
+
+
+DEFAULT_ITEMS = [
+    {"id": "piano-upright", "name": "Piano (upright)", "price": 500, "active": True},
+    {"id": "piano-grand", "name": "Piano (baby grand)", "price": 800, "active": True},
+]
+
+
+class CalcItemUpsert(BaseModel):
+    id: Optional[str] = None
+    name: str
+    price: float
+    active: bool = True
+
+
+class CalcItemsPayload(BaseModel):
+    upserts: list[CalcItemUpsert] = []
+    deletes: list[str] = []
+
+
+async def load_calc_items():
+    doc = await mongo_db.settings.find_one({"_id": "calculator_items"})
+    if doc is None:
+        await mongo_db.settings.insert_one({"_id": "calculator_items", "items": DEFAULT_ITEMS})
+        return [dict(i) for i in DEFAULT_ITEMS]
+    return doc.get("items", [])
+
+
+@api_router.get("/settings/items")
+async def get_calc_items(role: str = Depends(require_auth)):
+    if role not in ("owner", "sales"):
+        raise HTTPException(status_code=403, detail="Your role can't open this.")
+    return {"items": await load_calc_items()}
+
+
+@api_router.put("/settings/items")
+async def save_calc_items(payload: CalcItemsPayload, role: str = Depends(require_auth)):
+    if role != "owner":
+        raise HTTPException(status_code=403, detail="Only the owner can change the item list.")
+    items = await load_calc_items()
+    deletes = set(payload.deletes)
+    items = [i for i in items if i["id"] not in deletes]
+    by_id = {i["id"]: i for i in items}
+    for u in payload.upserts:
+        name = u.name.strip()
+        if not name:
+            raise HTTPException(status_code=422, detail="Every item needs a name.")
+        if u.price < 0 or u.price > 100000:
+            raise HTTPException(status_code=422, detail=f'"{name}" needs a price between $0 and $100,000.')
+        if u.id and u.id in by_id:
+            by_id[u.id].update({"name": name, "price": u.price, "active": u.active})
+        else:
+            items.append({"id": uuid4().hex[:12], "name": name, "price": u.price, "active": u.active})
+    await mongo_db.settings.update_one({"_id": "calculator_items"}, {"$set": {"items": items}}, upsert=True)
+    return {"items": items}
 
 
 class BusinessPayload(BaseModel):

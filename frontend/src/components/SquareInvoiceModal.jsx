@@ -17,12 +17,12 @@ import { depositFromQuote } from "@/lib/pricing";
 import { getSquareStatusApi, sendSquareInvoiceApi, apiErrorMessage } from "@/lib/api";
 
 export default function SquareInvoiceModal({ lead, open, onOpenChange }) {
-  const { updateRecord, loadSquareInvoices } = useApp();
+  const { updateRecord, loadSquareInvoices, rates } = useApp();
   const quote = f(lead, LF.quote);
   const name = f(lead, LF.name) || "Customer";
   const email = f(lead, LF.email) || "";
   const phone = f(lead, LF.phone) || "";
-  const deposit = depositFromQuote(quote);
+  const deposit = depositFromQuote(quote, rates.depositPercent);
 
   const [choice, setChoice] = useState(quote ? "deposit" : "custom");
   const [custom, setCustom] = useState("");
@@ -41,7 +41,7 @@ export default function SquareInvoiceModal({ lead, open, onOpenChange }) {
   }, [open, quote]);
 
   const amount = choice === "deposit" ? deposit : choice === "full" ? Number(quote) || 0 : Number(custom) || 0;
-  const label = choice === "deposit" ? "25% deposit" : choice === "full" ? "full quote" : "custom amount";
+  const label = choice === "deposit" ? `${rates.depositPercent}% deposit` : choice === "full" ? "full quote" : "custom amount";
   const canSend = amount > 0 && !!email && square?.configured;
 
   const send = async () => {
@@ -134,7 +134,7 @@ export default function SquareInvoiceModal({ lead, open, onOpenChange }) {
             <div>
               <Label className="mb-1.5 block">How much?</Label>
               <div className="flex gap-2">
-                {quote ? pill("deposit", "25% deposit", fmtMoney(deposit)) : null}
+                {quote ? pill("deposit", `${rates.depositPercent}% deposit`, fmtMoney(deposit)) : null}
                 {quote ? pill("full", "Full quote", fmtMoney(quote)) : null}
                 {pill("custom", "Custom", choice === "custom" && custom ? fmtMoney(Number(custom)) : "You pick")}
               </div>
