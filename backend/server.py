@@ -62,7 +62,7 @@ JWT_ALGORITHM = "HS256"
 _login_attempts: Dict[str, Dict[str, float]] = {}
 
 ROLES = ("owner", "sales", "employee")
-ALL_ROLES = ("owner", "sales", "employee", "crew")
+ALL_ROLES = ("owner", "sales", "employee", "crew", "marketing")
 ROLE_ENV = {"owner": "APP_PASSWORD", "sales": "SALES_PASSWORD", "employee": "EMPLOYEE_PASSWORD"}
 ROLE_TABLES = {
     "owner": set(TABLES),
@@ -1317,9 +1317,35 @@ async def crew_review_request(job_id: str, payload: ReviewRequestPayload, p: Dic
 
 
 @api_router.get("/review-requests")
-async def list_review_requests(p: Dict[str, Any] = Depends(require_owner)):
+async def list_review_requests(p: Dict[str, Any] = Depends(require_marketing)):
     docs = await mongo_db.review_requests.find({}).sort("sent_at", -1).to_list(500)
     return {"requests": [{**{k: v for k, v in d.items() if k != "_id"}, "id": d["_id"]} for d in docs]}
+
+
+class ReviewStatusPayload(BaseModel):
+    review_received: Optional[bool] = None
+    stars: Optional[int] = None
+
+
+@api_router.patch("/review-requests/{request_id}")
+async def patch_review_request(request_id: str, payload: ReviewStatusPayload, p: Dict[str, Any] = Depends(require_marketing)):
+    doc = await mongo_db.review_requests.find_one({"_id": request_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Review request not found.")
+    review = dict(doc.get("review") or {})
+    if payload.review_received is not None:
+        review["received"] = payload.review_received
+        if not payload.review_received:
+            review["stars"] = None
+    if payload.stars is not None:
+        if payload.stars < 1 or payload.stars > 5:
+            raise HTTPException(status_code=422, detail="Stars must be 1 to 5.")
+        review["stars"] = payload.stars
+        review["received"] = True
+    review["updated_at"] = now_iso()
+    review["updated_by"] = p["name"]
+    await mongo_db.review_requests.update_one({"_id": request_id}, {"$set": {"review": review}})
+    return {**{k: v for k, v in doc.items() if k != "_id"}, "id": doc["_id"], "review": review}
 
 
 # ------- Stored quote breakdowns (for itemized Square invoices)
@@ -1490,6 +1516,283 @@ async def quote_pdf(token: str):
                     headers={"Content-Disposition": 'inline; filename="haul-yeah-moving-quote.pdf"'})
 
 
+# ------- Marketing module
+
+MARKETING_SOURCES = ["Meta Ad", "Google Business Profile", "Referral", "Repeat Customer", "Walk-in/Other", "Website — Direct"]
+LEAD_STATUS_F = "fldplIOmtbERJFG6X"
+LEAD_SOURCE_F = "fldNQ7kAAIcVQbysk"
+UTM_FIELD_NAMES = {"utm_source": "UTM Source", "utm_medium": "UTM Medium", "utm_campaign": "UTM Campaign", "ad_name": "Ad Name"}
+STAGE_INDEX = {"New": 0, "Contacted": 1, "Quoted": 2, "Booked": 3, "Completed": 4}
+DEFAULT_MKT_THRESHOLDS = {"cplGreen": 20.0, "cplRed": 25.0, "bookingGreen": 20.0, "bookingRed": 15.0}
+_utm_map_cache: Dict[str, Any] = {"at": 0.0, "map": {}}
+
+
+async def require_marketing(request: Request) -> Dict[str, Any]:
+    p = await current_principal(request)
+    if p["role"] not in ("owner", "marketing"):
+        raise HTTPException(status_code=403, detail="Only the owner or marketing can open this.")
+    return p
+
+
+async def utm_field_map() -> Dict[str, str]:
+    if time.time() - _utm_map_cache["at"] < 600:
+        return _utm_map_cache["map"]
+    out: Dict[str, str] = {}
+    key = get_api_key()
+    if key:
+        try:
+            url = f"{AIRTABLE_API_URL}/meta/bases/{get_base_id()}/tables"
+            await limiter.wait()
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.get(url, headers={"Authorization": f"Bearer {key}"})
+            if resp.status_code == 200:
+                table = next((t for t in resp.json().get("tables", []) if t.get("id") == TABLES["leads"]), None)
+                names = {fl["name"].strip().lower(): fl["id"] for fl in (table or {}).get("fields", [])}
+                for k, name in UTM_FIELD_NAMES.items():
+                    fid = names.get(name.lower())
+                    if fid:
+                        out[k] = fid
+        except httpx.HTTPError:
+            pass
+    _utm_map_cache.update({"at": time.time(), "map": out})
+    return out
+
+
+def _stage_idx(status: str) -> int:
+    return STAGE_INDEX.get(status, 0)
+
+
+async def _marketing_lead_rows(start: str, end: str) -> Optional[List[Dict[str, Any]]]:
+    if not get_api_key():
+        return None
+    records: List[Dict[str, Any]] = []
+    offset = None
+    try:
+        while True:
+            params: Dict[str, Any] = {"pageSize": 100, "returnFieldsByFieldId": "true"}
+            if offset:
+                params["offset"] = offset
+            data = await airtable_request("GET", TABLES["leads"], params=params)
+            records.extend(data.get("records", []))
+            offset = data.get("offset")
+            if not offset or len(records) >= 3000:
+                break
+    except HTTPException:
+        return None
+    metas = {m["_id"]: m for m in await mongo_db.lead_meta.find({}).to_list(3000)}
+    umap = await utm_field_map()
+    rows = []
+    for r in records:
+        created_day = (r.get("createdTime") or "")[:10]
+        if not created_day or not (start <= created_day <= end):
+            continue
+        fl = r.get("fields", {})
+        meta = metas.get(r["id"], {})
+        source = str(fl.get(LEAD_SOURCE_F) or meta.get("source") or "").strip() or "Website — Direct"
+        rows.append({
+            "id": r["id"], "created": r.get("createdTime"), "status": fl.get(LEAD_STATUS_F) or "New",
+            "source": source,
+            "campaign": str(fl.get(umap.get("utm_campaign", ""), "") or meta.get("utm_campaign") or "").strip(),
+            "ad_name": str(fl.get(umap.get("ad_name", ""), "") or meta.get("ad_name") or "").strip(),
+            "contacted_at": meta.get("contacted_at"),
+        })
+    return rows
+
+
+async def _paid_by_lead() -> Dict[str, float]:
+    docs = await mongo_db.square_invoices.find(
+        {"status": "PAID", "lead_id": {"$ne": None}}, {"_id": 0, "lead_id": 1, "amount": 1}).to_list(3000)
+    out: Dict[str, float] = {}
+    for d in docs:
+        out[d["lead_id"]] = out.get(d["lead_id"], 0) + (d.get("amount") or 0)
+    return out
+
+
+def _agg_rows(rows: List[Dict[str, Any]], paid: Dict[str, float], keyfn) -> List[Dict[str, Any]]:
+    groups: Dict[str, Dict[str, Any]] = {}
+    for r in rows:
+        k = keyfn(r)
+        if not k:
+            continue
+        g = groups.setdefault(k, {"key": k, "leads": 0, "contacted": 0, "quoted": 0, "booked": 0,
+                                  "completed": 0, "revenue": 0.0, "_ss": 0.0, "_sn": 0})
+        idx = _stage_idx(r["status"])
+        g["leads"] += 1
+        if idx >= 1:
+            g["contacted"] += 1
+        if idx >= 2:
+            g["quoted"] += 1
+        if idx >= 3:
+            g["booked"] += 1
+        if idx >= 4:
+            g["completed"] += 1
+        g["revenue"] += paid.get(r["id"], 0)
+        if r.get("contacted_at") and r.get("created"):
+            try:
+                mins = (datetime.fromisoformat(r["contacted_at"]) -
+                        datetime.fromisoformat(r["created"].replace("Z", "+00:00"))).total_seconds() / 60
+                if mins >= 0:
+                    g["_ss"] += mins
+                    g["_sn"] += 1
+            except ValueError:
+                pass
+    out = []
+    for g in groups.values():
+        g["revenue"] = round(g["revenue"], 2)
+        g["avg_speed_minutes"] = round(g["_ss"] / g["_sn"]) if g["_sn"] else None
+        g["speed_tracked"] = g.pop("_sn")
+        g.pop("_ss")
+        out.append(g)
+    out.sort(key=lambda x: -x["leads"])
+    return out
+
+
+@api_router.get("/marketing/overview")
+async def marketing_overview(start: str, end: str, p: Dict[str, Any] = Depends(require_marketing)):
+    rows = await _marketing_lead_rows(start, end)
+    available = rows is not None
+    rows = rows or []
+    paid = await _paid_by_lead()
+    sources = _agg_rows(rows, paid, lambda r: r["source"])
+    campaigns = _agg_rows(rows, paid, lambda r: r["campaign"] or r["ad_name"])
+    total_list = _agg_rows(rows, paid, lambda r: "all")
+    totals = total_list[0] if total_list else {"key": "all", "leads": 0, "contacted": 0, "quoted": 0, "booked": 0,
+                                              "completed": 0, "revenue": 0, "avg_speed_minutes": None, "speed_tracked": 0}
+    daily: Dict[str, Dict[str, Any]] = {}
+    for r in rows:
+        d = (r["created"] or "")[:10]
+        e = daily.setdefault(d, {"date": d, "leads": 0, "booked": 0})
+        e["leads"] += 1
+        if _stage_idx(r["status"]) >= 3:
+            e["booked"] += 1
+    funnel = [{"stage": label, "count": totals[k]} for label, k in
+              (("Leads", "leads"), ("Contacted", "contacted"), ("Quoted", "quoted"),
+               ("Booked", "booked"), ("Completed", "completed"))]
+    return {"airtable_available": available, "start": start, "end": end, "totals": totals,
+            "funnel": funnel, "sources": sources, "campaigns": campaigns,
+            "daily": sorted(daily.values(), key=lambda x: x["date"]),
+            "known_campaigns": sorted({c["key"] for c in campaigns})}
+
+
+class AdSpendPayload(BaseModel):
+    platform: str
+    campaign: str
+    date_start: str
+    date_end: str
+    amount: float
+
+
+@api_router.get("/marketing/ad-spend")
+async def list_ad_spend(p: Dict[str, Any] = Depends(require_marketing)):
+    docs = await mongo_db.ad_spend.find({}).sort("date_start", -1).to_list(500)
+    return {"entries": [{**{k: v for k, v in d.items() if k != "_id"}, "id": d["_id"]} for d in docs]}
+
+
+@api_router.post("/marketing/ad-spend")
+async def add_ad_spend(payload: AdSpendPayload, p: Dict[str, Any] = Depends(require_marketing)):
+    if payload.amount <= 0:
+        raise HTTPException(status_code=422, detail="Spend amount must be more than $0.")
+    if not payload.campaign.strip():
+        raise HTTPException(status_code=422, detail="Pick or type the campaign name.")
+    if not payload.date_start or not payload.date_end or payload.date_end < payload.date_start:
+        raise HTTPException(status_code=422, detail="Check the date range.")
+    doc = {"_id": str(uuid4()), "platform": payload.platform.strip() or "Other",
+           "campaign": payload.campaign.strip(), "date_start": payload.date_start,
+           "date_end": payload.date_end, "amount": round(payload.amount, 2),
+           "logged_by": p["name"], "created_at": now_iso()}
+    await mongo_db.ad_spend.insert_one(doc)
+    return {**{k: v for k, v in doc.items() if k != "_id"}, "id": doc["_id"]}
+
+
+@api_router.delete("/marketing/ad-spend/{spend_id}")
+async def delete_ad_spend(spend_id: str, p: Dict[str, Any] = Depends(require_marketing)):
+    await mongo_db.ad_spend.delete_one({"_id": spend_id})
+    return {"deleted": True}
+
+
+@api_router.get("/marketing/thresholds")
+async def get_marketing_thresholds(p: Dict[str, Any] = Depends(require_marketing)):
+    doc = await mongo_db.settings.find_one({"_id": "marketing_thresholds"}) or {}
+    return {**DEFAULT_MKT_THRESHOLDS, **{k: v for k, v in doc.items() if k in DEFAULT_MKT_THRESHOLDS}}
+
+
+class ThresholdsPayload(BaseModel):
+    cplGreen: float
+    cplRed: float
+    bookingGreen: float
+    bookingRed: float
+
+
+@api_router.put("/marketing/thresholds")
+async def save_marketing_thresholds(payload: ThresholdsPayload, p: Dict[str, Any] = Depends(require_owner)):
+    vals = payload.model_dump()
+    if any(v < 0 for v in vals.values()):
+        raise HTTPException(status_code=422, detail="Thresholds can't be negative.")
+    await mongo_db.settings.update_one({"_id": "marketing_thresholds"}, {"$set": vals}, upsert=True)
+    return vals
+
+
+def _entry_et_date(e: Dict[str, Any]) -> str:
+    try:
+        return datetime.fromisoformat(e["clock_in"]["at"]).astimezone(ZoneInfo("America/New_York")).date().isoformat()
+    except (KeyError, ValueError, TypeError):
+        return ""
+
+
+@api_router.get("/marketing/margin")
+async def marketing_margin(start: str, end: str, p: Dict[str, Any] = Depends(require_owner)):
+    rows = await _marketing_lead_rows(start, end)
+    if rows is None:
+        return {"airtable_available": False, "sources": []}
+    src_by_lead = {r["id"]: r["source"] for r in rows}
+    paid = await _paid_by_lead()
+    revenue: Dict[str, float] = {}
+    for r in rows:
+        revenue[r["source"]] = revenue.get(r["source"], 0) + paid.get(r["id"], 0)
+    labor: Dict[str, float] = {}
+    if src_by_lead:
+        jobs = await mongo_db.jobs.find({"lead_id": {"$in": list(src_by_lead)}}).to_list(500)
+        rates = await get_crew_rates()
+        for job in jobs:
+            crew_ids = [c["user_id"] for c in job.get("crew", [])]
+            if not crew_ids or not job.get("job_date"):
+                continue
+            entries = await mongo_db.time_entries.find({"user_id": {"$in": crew_ids}}).to_list(500)
+            cost = sum((e.get("hours") or 0) * position_rate(e.get("position", "Helper"), rates)
+                       for e in entries if _entry_et_date(e) == job["job_date"])
+            src = src_by_lead.get(job.get("lead_id"))
+            if src:
+                labor[src] = labor.get(src, 0) + cost
+    out = []
+    for src in sorted(set(revenue) | set(labor)):
+        rev = round(revenue.get(src, 0), 2)
+        cost = round(labor.get(src, 0), 2)
+        out.append({"source": src, "revenue": rev, "labor_cost": cost, "margin": round(rev - cost, 2),
+                    "margin_pct": round((rev - cost) / rev * 100) if rev else None})
+    out.sort(key=lambda x: -x["revenue"])
+    return {"airtable_available": True, "sources": out}
+
+
+class LeadMetaPayload(BaseModel):
+    source: str
+    utm_source: Optional[str] = None
+    utm_medium: Optional[str] = None
+    utm_campaign: Optional[str] = None
+    ad_name: Optional[str] = None
+
+
+@api_router.post("/lead-meta/{lead_id}")
+async def set_lead_meta(lead_id: str, payload: LeadMetaPayload, role: str = Depends(require_auth)):
+    if role not in ("owner", "sales"):
+        raise HTTPException(status_code=403, detail="Your role can't set lead sources.")
+    if payload.source.strip() not in MARKETING_SOURCES:
+        raise HTTPException(status_code=422, detail="Pick a lead source from the list.")
+    updates = {k: v for k, v in payload.model_dump().items() if v is not None}
+    updates["updated_at"] = now_iso()
+    await mongo_db.lead_meta.update_one({"_id": lead_id}, {"$set": updates}, upsert=True)
+    return {"ok": True}
+
+
 
 @api_router.get("/square/invoices")
 async def list_square_invoices(role: str = Depends(require_auth)):
@@ -1581,6 +1884,10 @@ async def update_record(table_key: str, record_id: str, payload: RecordPayload =
     await check_table_access(role, table_key)
     body = {"records": [{"id": record_id, "fields": clean_write_fields(payload.fields, role, table_key)}], "typecast": True}
     data = await airtable_request("PATCH", table_id, json_body=body)
+    if table_key == "leads" and payload.fields.get(LEAD_STATUS_F) in ("Contacted", "Quoted", "Booked", "Completed"):
+        existing = await mongo_db.lead_meta.find_one({"_id": record_id})
+        if not existing or not existing.get("contacted_at"):
+            await mongo_db.lead_meta.update_one({"_id": record_id}, {"$set": {"contacted_at": now_iso()}}, upsert=True)
     return filter_record(data["records"][0], role, table_key)
 
 
@@ -2008,8 +2315,8 @@ async def list_users(p: Dict[str, Any] = Depends(require_owner)):
 @api_router.post("/users")
 async def create_user(payload: UserCreatePayload, p: Dict[str, Any] = Depends(require_owner)):
     roles = [r for r in (payload.roles or [payload.role]) if r]
-    if not roles or any(r not in ("crew", "sales", "owner") for r in roles):
-        raise HTTPException(status_code=422, detail="Roles must be crew, sales, or owner.")
+    if not roles or any(r not in ("crew", "sales", "owner", "marketing") for r in roles):
+        raise HTTPException(status_code=422, detail="Roles must be crew, sales, owner, or marketing.")
     email = payload.email.strip().lower()
     if "@" not in email:
         raise HTTPException(status_code=422, detail="That email doesn't look right.")
@@ -2046,14 +2353,14 @@ async def patch_user(user_id: str, payload: UserPatchPayload, p: Dict[str, Any] 
         changes.append("email")
     if payload.roles is not None:
         roles = [r for r in payload.roles if r]
-        if not roles or any(r not in ("crew", "sales", "owner") for r in roles):
-            raise HTTPException(status_code=422, detail="Roles must be crew, sales, or owner.")
+        if not roles or any(r not in ("crew", "sales", "owner", "marketing") for r in roles):
+            raise HTTPException(status_code=422, detail="Roles must be crew, sales, owner, or marketing.")
         updates["roles"] = roles
         updates["role"] = roles[0]
         changes.append(f"roles → {'+'.join(roles)}")
     elif payload.role is not None:
-        if payload.role not in ("crew", "sales", "owner"):
-            raise HTTPException(status_code=422, detail="Role must be crew, sales, or owner.")
+        if payload.role not in ("crew", "sales", "owner", "marketing"):
+            raise HTTPException(status_code=422, detail="Role must be crew, sales, owner, or marketing.")
         updates["role"] = payload.role
         updates["roles"] = [payload.role]
         changes.append(f"role → {payload.role}")
