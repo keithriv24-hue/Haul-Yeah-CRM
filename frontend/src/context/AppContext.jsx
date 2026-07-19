@@ -25,6 +25,8 @@ export const AppProvider = ({ children }) => {
   const schemaRequested = useRef(new Set());
   const dataRef = useRef(data);
   dataRef.current = data;
+  const healthRef = useRef(health);
+  healthRef.current = health;
   const { role } = useAuth();
   const prevRoleRef = useRef(role);
 
@@ -153,6 +155,10 @@ export const AppProvider = ({ children }) => {
     const existing = dataRef.current[table];
     if (existing?.records && !force) return existing.records;
     if (existing?.loading && !force) return null;
+    if (healthRef.current?.airtable_configured === false && !force) {
+      setData((d) => ({ ...d, [table]: { ...d[table], loading: false, error: "Airtable key is not set yet." } }));
+      return null;
+    }
     setData((d) => ({ ...d, [table]: { ...d[table], loading: true, error: null } }));
     try {
       const records = await listRecords(table);

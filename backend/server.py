@@ -984,7 +984,7 @@ async def timelog_status(p: Dict[str, Any] = Depends(require_owner)):
     return {
         "configured": bool(get_api_key()),
         "pending": len(pending),
-        "pending_jobs": [{"job_name": d.get("job_name"), "job_date": d.get("job_date"),
+        "pending_jobs": [{"assignment_id": d["_id"], "job_name": d.get("job_name"), "job_date": d.get("job_date"),
                           "error": (d.get("timelog_sync") or {}).get("error")} for d in pending],
         "last_synced_at": ((last[0].get("timelog_sync") or {}).get("at")) if last else None,
     }

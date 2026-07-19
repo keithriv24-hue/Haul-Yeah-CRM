@@ -155,10 +155,21 @@ const JobCard = ({ job, onChanged }) => {
             <DialogTitle className="font-display">Finish "{job.job_name}"?</DialogTitle>
             <DialogDescription>Add a quick note about how it went (optional). The boss gets pinged to ask the customer for a review.</DialogDescription>
           </DialogHeader>
+          <div>
+            <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">Anything slow you down?</p>
+            <div className="grid grid-cols-2 gap-x-3 gap-y-2">
+              {DELAY_FACTORS.map((fct) => (
+                <label key={fct} data-testid="delay-factor-option" className="flex items-center gap-2 text-sm cursor-pointer">
+                  <Checkbox checked={factors.includes(fct)} onCheckedChange={() => toggleFactor(fct)} />
+                  {fct}
+                </label>
+              ))}
+            </div>
+          </div>
           <Textarea data-testid="complete-notes-input" placeholder="Anything to flag? Damage, extra stops, great customer…" value={notes} onChange={(e) => setNotes(e.target.value)} />
           <DialogFooter>
             <Button variant="outline" onClick={() => setCompleteOpen(false)}>Not yet</Button>
-            <Button data-testid="complete-confirm-btn" disabled={busy} onClick={() => advance("Complete", notes)} className="bg-emerald-600 hover:bg-emerald-700 gap-1.5">
+            <Button data-testid="complete-confirm-btn" disabled={busy} onClick={() => advance("Complete", notes, factors.length ? factors : ["None"])} className="bg-emerald-600 hover:bg-emerald-700 gap-1.5">
               <Flag className="w-4 h-4" /> Mark complete
             </Button>
           </DialogFooter>
