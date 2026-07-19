@@ -20,6 +20,10 @@ from zoneinfo import ZoneInfo
 import bcrypt
 
 import httpx
+from reportlab.lib.pagesizes import letter as PDF_LETTER
+from reportlab.lib.utils import ImageReader
+from reportlab.lib.colors import HexColor
+from reportlab.pdfgen.canvas import Canvas as PDFCanvas
 import jwt
 from dotenv import load_dotenv
 from fastapi import APIRouter, Body, Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
@@ -1310,9 +1314,11 @@ class QuoteBreakdownPayload(BaseModel):
 async def save_quote_breakdown(lead_id: str, payload: QuoteBreakdownPayload, role: str = Depends(require_auth)):
     if role not in ("owner", "sales"):
         raise HTTPException(status_code=403, detail="Your role can't save quotes.")
+    doc = await mongo_db.lead_quotes.find_one({"_id": lead_id}) or {}
+    token = doc.get("token") or uuid4().hex
     await mongo_db.lead_quotes.update_one(
-        {"_id": lead_id}, {"$set": {"breakdown": payload.breakdown, "updated_at": now_iso()}}, upsert=True)
-    return {"ok": True}
+        {"_id": lead_id}, {"$set": {"breakdown": payload.breakdown, "updated_at": now_iso(), "token": token}}, upsert=True)
+    return {"ok": True, "token": token}
 
 
 @api_router.get("/quotes/{lead_id}")
@@ -1320,7 +1326,128 @@ async def get_quote_breakdown(lead_id: str, role: str = Depends(require_auth)):
     if role not in ("owner", "sales"):
         raise HTTPException(status_code=403, detail="Your role can't see quotes.")
     doc = await mongo_db.lead_quotes.find_one({"_id": lead_id}) or {}
-    return {"breakdown": doc.get("breakdown"), "updated_at": doc.get("updated_at")}
+    return {"breakdown": doc.get("breakdown"), "updated_at": doc.get("updated_at"), "token": doc.get("token")}
+
+
+def _pdf_move_date(v: Any) -> str:
+    try:
+        return datetime.fromisoformat(str(v)[:10]).strftime("%A, %B %-d, %Y")
+    except ValueError:
+        return str(v)
+
+
+def build_quote_pdf(b: Dict[str, Any]) -> bytes:
+    navy = HexColor("#1B2A4A")
+    orange = HexColor("#E8743B")
+    slate = HexColor("#64748B")
+    light = HexColor("#F2F4F8")
+    white = HexColor("#FFFFFF")
+    money = lambda v: f"${v:,.2f}"
+
+    final = round(float(b.get("finalQuote") or 0), 2)
+    lines = [dict(l) for l in (b.get("lines") or []) if float(l.get("amount") or 0) > 0]
+    if lines:
+        drift = round(final - sum(round(float(l["amount"]), 2) for l in lines), 2)
+        if abs(drift) >= 0.01:
+            lines[-1]["amount"] = round(float(lines[-1]["amount"]) + drift, 2)
+    else:
+        lines = [{"name": "Local Moving Service — flat rate", "amount": final}]
+    deposit = round(float(b.get("deposit") or final * 0.25), 2)
+    balance = round(final - deposit, 2)
+    dep_pct = round(deposit / final * 100) if final else 25
+
+    buf = io.BytesIO()
+    c = PDFCanvas(buf, pagesize=PDF_LETTER)
+    W, H = PDF_LETTER
+
+    c.setFillColor(navy)
+    c.rect(0, H - 130, W, 130, stroke=0, fill=1)
+    try:
+        c.drawImage(ImageReader("/app/frontend/public/logo.png"), 40, H - 116, width=160, height=100,
+                    preserveAspectRatio=True, anchor="w", mask="auto")
+    except Exception:
+        c.setFillColor(white)
+        c.setFont("Helvetica-Bold", 20)
+        c.drawString(40, H - 75, "HAUL YEAH MOVING")
+    c.setFillColor(white)
+    c.setFont("Helvetica-Bold", 25)
+    c.drawRightString(W - 40, H - 68, "MOVING QUOTE")
+    c.setFillColor(orange)
+    c.setFont("Helvetica-Oblique", 11)
+    c.drawRightString(W - 40, H - 88, "Weekend moves, flat price, no surprises.")
+
+    y = H - 168
+    c.setFillColor(navy)
+    c.setFont("Helvetica-Bold", 15)
+    c.drawString(40, y, f"Prepared for {b.get('customerName') or 'you'}")
+    c.setFillColor(slate)
+    c.setFont("Helvetica", 10)
+    y -= 17
+    c.drawString(40, y, f"Quote date: {datetime.now(ZoneInfo('America/New_York')).strftime('%B %-d, %Y')}")
+    for label, key in (("Move date", "moveDate"), ("From", "fromAddress"), ("To", "toAddress")):
+        val = (str(b.get(key) or "")).strip()
+        if val:
+            y -= 14
+            c.drawString(40, y, f"{label}: {_pdf_move_date(val) if key == 'moveDate' else val}")
+
+    y -= 34
+    c.setFillColor(navy)
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(48, y, "WHAT'S INCLUDED")
+    c.drawRightString(W - 48, y, "PRICE")
+    y -= 8
+    c.setStrokeColor(navy)
+    c.setLineWidth(1.2)
+    c.line(40, y, W - 40, y)
+    c.setFont("Helvetica", 11)
+    for i, l in enumerate(lines[:12]):
+        y -= 27
+        if i % 2 == 0:
+            c.setFillColor(light)
+            c.rect(40, y - 9, W - 80, 27, stroke=0, fill=1)
+        c.setFillColor(navy)
+        c.drawString(48, y, str(l.get("name") or "")[:72])
+        c.drawRightString(W - 48, y, money(round(float(l["amount"]), 2)))
+
+    y -= 48
+    c.setFillColor(navy)
+    c.rect(40, y - 12, W - 80, 40, stroke=0, fill=1)
+    c.setFillColor(white)
+    c.setFont("Helvetica-Bold", 13)
+    c.drawString(48, y, "YOUR FLAT TOTAL")
+    c.setFillColor(orange)
+    c.setFont("Helvetica-Bold", 17)
+    c.drawRightString(W - 48, y, money(final))
+
+    y -= 46
+    c.setFillColor(navy)
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(48, y, f"Deposit to lock in your date ({dep_pct}%):")
+    c.drawRightString(W - 48, y, money(deposit))
+    y -= 19
+    c.setFont("Helvetica", 11)
+    c.drawString(48, y, "Balance due on move day:")
+    c.drawRightString(W - 48, y, money(balance))
+
+    c.setFillColor(slate)
+    c.setFont("Helvetica", 9)
+    c.drawCentredString(W / 2, 62, "One flat price — crew, truck, travel, and care all included. No hourly surprises.")
+    c.setFillColor(orange)
+    c.setFont("Helvetica-BoldOblique", 10)
+    c.drawCentredString(W / 2, 46, "Haul Yeah Moving — Weekend moves, flat price, no surprises.")
+    c.showPage()
+    c.save()
+    return buf.getvalue()
+
+
+@public_router.get("/quote-pdf/{token}")
+async def quote_pdf(token: str):
+    doc = await mongo_db.lead_quotes.find_one({"token": token})
+    if not doc or not doc.get("breakdown"):
+        raise HTTPException(status_code=404, detail="This quote link is no longer active.")
+    pdf = build_quote_pdf(doc["breakdown"])
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": 'inline; filename="haul-yeah-moving-quote.pdf"'})
 
 
 

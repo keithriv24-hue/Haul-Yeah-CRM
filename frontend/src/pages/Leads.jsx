@@ -11,6 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { InstructionBanner, PageTitle, Private, Money, AgeTimer, EmptyState, LoadingRows, ConfirmDeleteButton, FollowUpBadge, InvoiceBadge } from "@/components/Bits";
 import QuoteModal from "@/components/QuoteModal";
+import QuotePdfModal from "@/components/QuotePdfModal";
 import DepositModal from "@/components/DepositModal";
 import LeadModal from "@/components/LeadModal";
 import SquareInvoiceModal from "@/components/SquareInvoiceModal";
@@ -58,7 +59,7 @@ export const AddNoteDialog = ({ lead, open, onOpenChange }) => {
   );
 };
 
-const LeadCard = ({ lead, onQuote, onDeposit, onNote, onInvoice }) => {
+const LeadCard = ({ lead, onQuote, onDeposit, onNote, onInvoice, onPdf }) => {
   const { updateRecord, createRecord, deleteRecord, schemas, invoicesForLead, rates } = useApp();
   const { role } = useAuth();
   const isSales = role === "sales";
@@ -215,6 +216,11 @@ const LeadCard = ({ lead, onQuote, onDeposit, onNote, onInvoice }) => {
             <MessageSquare className="w-3.5 h-3.5" /> Text quote
           </a>
         </Button>
+        {!!quote && ["Quoted", "Booked"].includes(status) && (
+          <Button data-testid="lead-pdf-btn" variant="outline" size="sm" className="gap-1 text-xs border-[#E8743B]/40 text-[#E8743B] hover:bg-orange-50 hover:text-[#d4632e]" onClick={() => onPdf(lead)}>
+            <FileText className="w-3.5 h-3.5" /> Quote PDF
+          </Button>
+        )}
         <Button data-testid="lead-note-btn" variant="outline" size="sm" className="gap-1 text-xs" onClick={() => onNote(lead)}>
           <StickyNote className="w-3.5 h-3.5" /> Add note
         </Button>
@@ -276,6 +282,7 @@ export default function Leads() {
   const filter = searchParams.get("filter") || "All";
   const setFilter = (v) => setSearchParams(v === "All" ? {} : { filter: v });
   const [quoteLead, setQuoteLead] = useState(null);
+  const [pdfLead, setPdfLead] = useState(null);
   const [depositLead, setDepositLead] = useState(null);
   const [noteLead, setNoteLead] = useState(null);
   const [invoiceLead, setInvoiceLead] = useState(null);
@@ -335,12 +342,13 @@ export default function Leads() {
       ) : (
         <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
           {leads.map((l) => (
-            <LeadCard key={l.id} lead={l} onQuote={setQuoteLead} onDeposit={setDepositLead} onNote={setNoteLead} onInvoice={setInvoiceLead} />
+            <LeadCard key={l.id} lead={l} onQuote={setQuoteLead} onDeposit={setDepositLead} onNote={setNoteLead} onInvoice={setInvoiceLead} onPdf={setPdfLead} />
           ))}
         </div>
       )}
 
       {quoteLead && <QuoteModal key={quoteLead.id} lead={quoteLead} open={!!quoteLead} onOpenChange={(o) => !o && setQuoteLead(null)} />}
+      {pdfLead && <QuotePdfModal key={pdfLead.id} lead={pdfLead} open={!!pdfLead} onOpenChange={(o) => !o && setPdfLead(null)} />}
       {depositLead && <DepositModal lead={depositLead} open={!!depositLead} onOpenChange={(o) => !o && setDepositLead(null)} />}
       {noteLead && <AddNoteDialog lead={noteLead} open={!!noteLead} onOpenChange={(o) => !o && setNoteLead(null)} />}
       {invoiceLead && <SquareInvoiceModal lead={invoiceLead} open={!!invoiceLead} onOpenChange={(o) => !o && setInvoiceLead(null)} />}

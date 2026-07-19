@@ -122,3 +122,10 @@ See /app/memory/test_credentials.md (owner password, endpoints).
 - Test data in PREVIEW db: job INV-9042 (simulated webhook), webhook key 'test_sig_key_123'. Production DB is separate — owner must paste real Square webhook key + OpenPhone creds in PRODUCTION Settings after deploy, and create the webhook subscription in Square Developer dashboard pointing to https://haulyeahadmin.com/api/webhooks/square.
 - Known data gap: crew users have no phone numbers in profiles → teammate call/text icons hidden until owner fills Employee Files.
 - Testing: iteration_5 — 15 scenarios, 100% pass (owner board, assign dialog, integrations, crew today, bubble, tracking public page, review flow, clock popup, regressions incl. $1,350 calculator).
+
+## Session: July 19, 2026 (late) — Quote PDF one-pager (COMPLETE, self-tested)
+- Branded customer-facing PDF (navy/orange, logo, tagline) generated backend-side with reportlab: GET /api/quote-pdf/{token} on public_router (no login; stable token per lead in lead_quotes, created on quote save).
+- Content: Prepared for {customer}, quote date, move date, from/to, itemized "WHAT'S INCLUDED" table (customer-safe lines only — cushion + rounding folded into the labor line, drift auto-adjusted on last line so lines sum EXACTLY to flat total), YOUR FLAT TOTAL band, deposit % + balance-due rows, tagline footer. Verified: $1,850 example sums exactly, no "cushion" text anywhere, 404 on dead token.
+- Quote saves (Calculator + QuoteModal) now snapshot customerName/from/to/moveDate into the breakdown. PUT /api/quotes/{lead_id} returns token.
+- UI: "Quote PDF" button (orange outline, lead-pdf-btn / lead-detail-pdf-btn) on lead cards + lead detail when quote exists AND status is Quoted or Booked → QuotePdfModal: line preview w/ totals, Open PDF, Copy link, Text it (sms: deep link w/ message), Email it (mailto). Legacy quotes without stored breakdown get a one-click "Make a one-line PDF" fallback.
+- reportlab added to requirements.txt (pymupdf/pypdf were dev-only, removed).

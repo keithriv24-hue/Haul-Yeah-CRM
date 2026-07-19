@@ -13,6 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { InstructionBanner, Private, Money, AgeTimer, EmptyState, LoadingRows, ConfirmDeleteButton, FollowUpBadge, InvoiceBadge } from "@/components/Bits";
 import QuoteModal from "@/components/QuoteModal";
+import QuotePdfModal from "@/components/QuotePdfModal";
 import DepositModal from "@/components/DepositModal";
 import SquareInvoiceModal from "@/components/SquareInvoiceModal";
 import { AddNoteDialog } from "@/pages/Leads";
@@ -38,6 +39,7 @@ export default function LeadDetail() {
   const isSales = role === "sales";
   const isOwner = role === "owner";
   const [quoteOpen, setQuoteOpen] = useState(false);
+  const [pdfOpen, setPdfOpen] = useState(false);
   const [depositOpen, setDepositOpen] = useState(false);
   const [noteOpen, setNoteOpen] = useState(false);
   const [invoiceOpen, setInvoiceOpen] = useState(false);
@@ -294,6 +296,11 @@ export default function LeadDetail() {
                   <MessageSquare className="w-3.5 h-3.5" /> Text quote
                 </a>
               </Button>
+              {!!quote && ["Quoted", "Booked"].includes(status) && (
+                <Button data-testid="lead-detail-pdf-btn" variant="outline" size="sm" className="gap-1 text-xs border-[#E8743B]/40 text-[#E8743B] hover:bg-orange-50 hover:text-[#d4632e]" onClick={() => setPdfOpen(true)}>
+                  <FileText className="w-3.5 h-3.5" /> Quote PDF
+                </Button>
+              )}
               <Button data-testid="lead-detail-note-btn" variant="outline" size="sm" className="gap-1 text-xs" onClick={() => setNoteOpen(true)}>
                 <StickyNote className="w-3.5 h-3.5" /> Add note
               </Button>
@@ -371,6 +378,7 @@ export default function LeadDetail() {
       </div>
 
       {quoteOpen && <QuoteModal key={lead.id} lead={lead} open={quoteOpen} onOpenChange={setQuoteOpen} />}
+      {pdfOpen && <QuotePdfModal key={`pdf-${lead.id}`} lead={lead} open={pdfOpen} onOpenChange={setPdfOpen} />}
       {depositOpen && <DepositModal lead={lead} open={depositOpen} onOpenChange={setDepositOpen} />}
       {noteOpen && <AddNoteDialog lead={lead} open={noteOpen} onOpenChange={setNoteOpen} />}
       {invoiceOpen && <SquareInvoiceModal lead={lead} open={invoiceOpen} onOpenChange={setInvoiceOpen} />}

@@ -46,7 +46,11 @@ export default function QuoteModal({ lead, open, onOpenChange }) {
     setSaving(true);
     try {
       await updateRecord("leads", lead.id, quoteSaveFields(lead, q, crew, hours));
-      saveQuoteBreakdownApi(lead.id, { lines: invoiceLineItems(q), finalQuote: q.finalQuote, deposit: q.deposit }).catch(() => {});
+      saveQuoteBreakdownApi(lead.id, {
+        lines: invoiceLineItems(q), finalQuote: q.finalQuote, deposit: q.deposit,
+        customerName: f(lead, LF.name) || "", fromAddress: f(lead, LF.from) || "",
+        toAddress: f(lead, LF.to) || "", moveDate: f(lead, LF.moveDate) || "",
+      }).catch(() => {});
       toast.success("Quote saved. Lead is now Quoted.");
       onOpenChange(false);
     } catch {}

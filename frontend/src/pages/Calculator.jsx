@@ -179,7 +179,11 @@ export default function Calculator() {
     setSaving(true);
     try {
       await updateRecord("leads", lead.id, quoteSaveFields(lead, q, crew, hours));
-      saveQuoteBreakdownApi(lead.id, { lines: invoiceLineItems(q), finalQuote: q.finalQuote, deposit: q.deposit }).catch(() => {});
+      saveQuoteBreakdownApi(lead.id, {
+        lines: invoiceLineItems(q), finalQuote: q.finalQuote, deposit: q.deposit,
+        customerName: f(lead, LF.name) || "", fromAddress: f(lead, LF.from) || "",
+        toAddress: f(lead, LF.to) || "", moveDate: f(lead, LF.moveDate) || "",
+      }).catch(() => {});
       toast.success(`Quote saved to ${f(lead, LF.name) || "lead"}. Status is now Quoted.`);
     } catch {}
     setSaving(false);
