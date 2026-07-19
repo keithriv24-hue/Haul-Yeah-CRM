@@ -57,6 +57,7 @@ Full-stack internal CRM PWA for Haul Yeah Moving (weekend moving company, North 
 - [x] Money-landed banner + cha-ching: AppContext polls /api/square/invoices every 60s (owner only); newly-PAID invoices (tracked in localStorage hy_paid_seen, baseline-inits silently on first run) trigger playChaChing (/chaching.wav — synthesized coin+bell), a toast, and a dismissible emerald "Money landed!" banner on Dashboard — browser-verified via seeded Mongo doc (then cleaned)
 - [x] Win-back texts: "Win back" sms button (winBackSmsBody) on Lost/Cold lead cards + detail; stamps "Win-back text sent {date}." note on tap
 - [x] Payment nudge texts: "Nudge pay" sms button on lead cards + detail when latest Square invoice is UNPAID/PARTIALLY_PAID/SCHEDULED (includes pay link, stamps note); Invoices page rows (Sent/Overdue) get "Text nudge" with phone looked up by customer-name match in Contacts→Leads (disabled + tooltip if no match) — pages render clean, sms bodies in format.js
+- [x] Crew day sheet: /day-sheet route (owner + employee) with date picker (defaults today), Print button (window.print), jobs for that date (non-cancelled) showing from→to, truck, crew, est hours, blank start-time line, notes; no money on the sheet. Layout chrome (aside/header/bottom nav/padding) print:hidden — print-mode browser-verified; "Day sheet" button on Projects page header
 
 ## Current status / blockers
 - AIRTABLE_API_KEY not yet added by user (secrets panel). All data routes return friendly 503 until then. Verify with GET /api/airtable/verify after key is added.

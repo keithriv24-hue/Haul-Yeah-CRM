@@ -13,6 +13,7 @@ import Leads from "@/pages/Leads";
 import LeadDetail from "@/pages/LeadDetail";
 import Contacts from "@/pages/Contacts";
 import Projects from "@/pages/Projects";
+import DaySheet from "@/pages/DaySheet";
 import Tasks from "@/pages/Tasks";
 import Blog from "@/pages/Blog";
 import Invoices from "@/pages/Invoices";
@@ -40,6 +41,7 @@ function RoleRoutes() {
       <Routes>
         <Route element={<Layout />}>
           <Route path="/projects" element={<Projects />} />
+          <Route path="/day-sheet" element={<DaySheet />} />
           <Route path="/tasks" element={<Tasks />} />
           <Route path="*" element={<Navigate to="/projects" replace />} />
         </Route>
@@ -55,6 +57,7 @@ function RoleRoutes() {
         <Route path="/calculator" element={<Calculator />} />
         <Route path="/contacts" element={<Contacts />} />
         <Route path="/projects" element={<Projects />} />
+        <Route path="/day-sheet" element={<DaySheet />} />
         <Route path="/tasks" element={<Tasks />} />
         <Route path="/blog" element={<Blog />} />
         <Route path="/invoices" element={<Invoices />} />

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { toast } from "sonner";
-import { ChevronDown, ChevronUp, Truck, ShieldAlert, CalendarPlus, Star, Check } from "lucide-react";
+import { ChevronDown, ChevronUp, Truck, ShieldAlert, CalendarPlus, Star, Check, ClipboardList } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -179,7 +180,15 @@ export default function Projects() {
 
   return (
     <div data-testid="projects-page">
-      <PageTitle title="Projects" subtitle="Your booked jobs, next date first." />
+      <PageTitle
+        title="Projects"
+        subtitle="Your booked jobs, next date first."
+        action={
+          <Button asChild data-testid="day-sheet-btn" variant="outline" className="gap-1.5">
+            <Link to="/day-sheet"><ClipboardList className="w-4 h-4" /> Day sheet</Link>
+          </Button>
+        }
+      />
       <InstructionBanner>
         {isOwner
           ? "Your booked jobs, next date first. Update the status as the day goes. Open Details for crew, truck, and margin."

@@ -59,7 +59,7 @@ export default function Layout() {
 
   return (
     <div className="min-h-screen bg-[#F2F4F8]">
-      <aside className="hidden md:flex fixed inset-y-0 left-0 w-60 flex-col bg-[#1B2A4A] text-white z-50">
+      <aside className="hidden md:flex print:hidden fixed inset-y-0 left-0 w-60 flex-col bg-[#1B2A4A] text-white z-50">
         <div className="px-5 pt-6 pb-5 border-b border-white/10">
           <img src="/logo.png" alt="Haul Yeah Moving" data-testid="sidebar-logo" className="w-full rounded-lg" />
           <div className="text-[11px] text-white/50 mt-3">Weekend moves, flat price, no surprises.</div>
@@ -136,8 +136,8 @@ export default function Layout() {
         </div>
       </aside>
 
-      <div className="md:pl-60">
-        <header className="sticky top-0 z-40 bg-white/85 backdrop-blur-md border-b border-slate-200">
+      <div className="md:pl-60 print:pl-0">
+        <header className="sticky top-0 z-40 bg-white/85 backdrop-blur-md border-b border-slate-200 print:hidden">
           <div className="flex items-center justify-between gap-2 px-4 md:px-8 h-14">
             <div className="md:hidden">
               <img src="/logo.png" alt="Haul Yeah Moving" data-testid="mobile-logo" className="h-9 w-auto rounded" />
@@ -163,12 +163,12 @@ export default function Layout() {
           )}
         </header>
 
-        <main className="px-4 md:px-8 py-6 pb-24 md:pb-10 max-w-7xl mx-auto">
+        <main className="px-4 md:px-8 py-6 pb-24 md:pb-10 max-w-7xl mx-auto print:p-0 print:max-w-none">
           <Outlet />
         </main>
       </div>
 
-      <nav className="md:hidden fixed bottom-0 inset-x-0 z-50 bg-[#1B2A4A] border-t border-white/10">
+      <nav className="md:hidden print:hidden fixed bottom-0 inset-x-0 z-50 bg-[#1B2A4A] border-t border-white/10">
         <div className="flex overflow-x-auto no-scrollbar px-1 pb-[env(safe-area-inset-bottom)]">
           {navItems.map(({ to, label, icon: Icon }) => (
             <NavLink
