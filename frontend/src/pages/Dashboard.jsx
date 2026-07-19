@@ -4,7 +4,7 @@ import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, 
 import { Truck, AlertTriangle } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { InstructionBanner, KpiCard, PageTitle, Private, Money, Pill, EmptyState, Pill as StatusPill } from "@/components/Bits";
-import { LF, PF, TF, IF, SF, f, LEAD_STATUS_COLORS, LEAD_STATUSES } from "@/lib/fields";
+import { LF, PF, TF, IF, SF, f, LEAD_STATUS_COLORS, LEAD_STATUSES, needsFollowUp } from "@/lib/fields";
 import { fmtMoney, fmtDate, minutesSince, ageLabel, todayISO, isOverdue } from "@/lib/format";
 
 const num = (v) => Number(v) || 0;
@@ -25,6 +25,7 @@ export default function Dashboard() {
   const oldestNewMins = newLeads.length ? Math.max(...newLeads.map((l) => minutesSince(l.createdTime))) : 0;
   const newAlert = newLeads.length > 0 && oldestNewMins > 5;
   const openLeads = leads.filter((l) => !["Lost", "Cold", "Booked"].includes(f(l, LF.status)));
+  const callbacks = leads.filter(needsFollowUp);
   const pipeline = openLeads.reduce((s, l) => s + num(f(l, LF.quote)), 0);
   const activeProjects = projects.filter((p) => f(p, PF.status) !== "Cancelled");
   const booked = activeProjects.reduce((s, p) => s + (num(f(p, PF.finalRevenue)) || num(f(p, PF.quote))), 0);
@@ -67,6 +68,14 @@ export default function Dashboard() {
           isPrivate={false}
           alert={newAlert}
           sub={newLeads.length ? `Oldest has waited ${ageLabel(oldestNewMins)}` : "All caught up"}
+        />
+        <KpiCard
+          testId="kpi-callbacks"
+          label="Call-backs due"
+          value={String(callbacks.length)}
+          isPrivate={false}
+          alert={callbacks.length > 0}
+          sub={callbacks.length ? "Quoted leads gone quiet 2+ days" : "No one waiting on you"}
         />
         <KpiCard testId="kpi-open-leads" label="Open leads" value={String(openLeads.length)} isPrivate={false} sub="Still in play" />
         <KpiCard testId="kpi-pipeline" label="Pipeline value" value={fmtMoney(pipeline)} sub="Quotes still open" />

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
-import { ChevronDown, ChevronUp, Truck, ShieldAlert, CalendarPlus, Star } from "lucide-react";
+import { toast } from "sonner";
+import { ChevronDown, ChevronUp, Truck, ShieldAlert, CalendarPlus, Star, Check } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -42,6 +43,16 @@ const ProjectCard = ({ project }) => {
   const linkedLead = isOwner ? records("leads").find((r) => r.id === (f(project, PF.lead) || [])[0]) : null;
   const custPhone = linkedLead ? f(linkedLead, LF.phone) : null;
   const custName = linkedLead ? f(linkedLead, LF.name) : "";
+  const reviewAsked = /review asked/i.test(f(project, PF.notes) || "");
+
+  const markReviewAsked = () => {
+    if (reviewAsked) return;
+    const old = f(project, PF.notes) || "";
+    const line = `Review asked ${new Date().toLocaleDateString("en-US")}.`;
+    updateRecord("projects", project.id, { [PF.notes]: old ? `${old}\n${line}` : line })
+      .then(() => toast.success("Marked as asked — you won't text them twice."))
+      .catch(() => {});
+  };
 
   return (
     <div data-testid="project-card" className="bg-white border border-slate-200 rounded-lg p-4">
@@ -73,12 +84,15 @@ const ProjectCard = ({ project }) => {
               asChild
               variant="outline"
               size="sm"
-              className="gap-1 text-xs border-amber-300 text-amber-700 hover:bg-amber-50 hover:text-amber-800"
+              className={`gap-1 text-xs ${reviewAsked
+                ? "border-emerald-300 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800"
+                : "border-amber-300 text-amber-700 hover:bg-amber-50 hover:text-amber-800"}`}
               disabled={!custPhone}
-              title={custPhone ? "Text them a review ask" : "No phone on the linked lead"}
+              title={reviewAsked ? "You already asked — tapping texts them again" : custPhone ? "Text them a review ask" : "No phone on the linked lead"}
             >
-              <a href={custPhone ? smsLink(custPhone, reviewSmsBody(custName, business.reviewLink)) : undefined}>
-                <Star className="w-3.5 h-3.5" /> Ask for review
+              <a href={custPhone ? smsLink(custPhone, reviewSmsBody(custName, business.reviewLink)) : undefined} onClick={markReviewAsked}>
+                {reviewAsked ? <Check className="w-3.5 h-3.5" /> : <Star className="w-3.5 h-3.5" />}
+                {reviewAsked ? "Review asked" : "Ask for review"}
               </a>
             </Button>
           )}

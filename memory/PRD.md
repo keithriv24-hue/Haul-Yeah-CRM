@@ -43,6 +43,8 @@ Full-stack internal CRM PWA for Haul Yeah Moving (weekend moving company, North 
 - [x] Inline lead editing: Edit button on lead detail "Move details" card unlocks name/phone/email/move date/home size/from/to with Save+Cancel (writes via PATCH)
 - [x] Follow-up reminders: red "quiet N days — call them back" badge (FollowUpBadge) on lead cards + detail for Quoted leads with no deposit and no note activity for 2+ days (lastTouch parses dates from notes, falls back to createdTime); nextStepHint updated too
 - [x] Review request text: owner-only "Ask for review" button on Completed jobs (Projects) drafting an SMS to the linked lead's phone; Google review link stored via GET/PUT /api/settings/business (Mongo, PUT owner-only) with a Settings box — 36 pytest + browser-verified persistence
+- [x] Call-backs due Dashboard KPI (kpi-callbacks, red alert when > 0) counting needsFollowUp leads — browser-verified
+- [x] Review tracking: clicking "Ask for review" appends "Review asked {date}." to project notes; button flips to emerald "Review asked ✓" (regex on notes), tapping again re-texts
 
 ## Current status / blockers
 - AIRTABLE_API_KEY not yet added by user (secrets panel). All data routes return friendly 503 until then. Verify with GET /api/airtable/verify after key is added.
