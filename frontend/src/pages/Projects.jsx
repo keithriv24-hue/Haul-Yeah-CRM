@@ -1,13 +1,16 @@
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
-import { ChevronDown, ChevronUp, Truck, ShieldAlert, CalendarPlus, Star, Check, ClipboardList } from "lucide-react";
+import { ChevronDown, ChevronUp, Truck, ShieldAlert, CalendarPlus, Star, Check, ClipboardList, Plus } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { InstructionBanner, PageTitle, Private, Money, EmptyState, LoadingRows, SearchBar, searchMatch } from "@/components/Bits";
+import { InstructionBanner, PageTitle, Private, Money, EmptyState, LoadingRows, SearchBar, searchMatch, ConfirmDeleteButton } from "@/components/Bits";
 import { PF, LF, f, PROJECT_STATUSES, TRUCKS, STATUS_PILL } from "@/lib/fields";
 import { fmtDate, fmtMoney, calendarTemplate, smsLink, reviewSmsBody, mapsLink } from "@/lib/format";
 import { useAuth } from "@/components/AuthGate";
@@ -31,7 +34,7 @@ const NumField = ({ record, fieldId, label, testId }) => {
 };
 
 const ProjectCard = ({ project }) => {
-  const { updateRecord, records, business } = useApp();
+  const { updateRecord, deleteRecord, records, business } = useApp();
   const { role } = useAuth();
   const isOwner = (role || "owner") === "owner";
   const [open, setOpen] = useState(false);
@@ -100,6 +103,13 @@ const ProjectCard = ({ project }) => {
           <Button data-testid="project-details-btn" variant="outline" size="sm" className="gap-1 text-xs" onClick={() => setOpen(!open)}>
             {open ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />} Details
           </Button>
+          {isOwner && (
+            <ConfirmDeleteButton
+              what={`the "${f(project, PF.jobName) || "job"}" project`}
+              testId="project-delete-btn"
+              onConfirm={() => deleteRecord("projects", project.id).then(() => toast.success("Project deleted.")).catch(() => {})}
+            />
+          )}
         </div>
       </div>
 
@@ -192,11 +202,105 @@ const ProjectCard = ({ project }) => {
   );
 };
 
+const blankProject = { jobName: "", jobDate: "", fromAddr: "", toAddr: "", crewSize: "", estHours: "", quote: "", truck: "", notes: "" };
+
+const NewProjectDialog = ({ open, onOpenChange }) => {
+  const { createRecord } = useApp();
+  const [form, setForm] = useState(blankProject);
+  const [saving, setSaving] = useState(false);
+  const set = (k) => (e) => setForm((s) => ({ ...s, [k]: e.target.value }));
+
+  useEffect(() => {
+    if (open) setForm(blankProject);
+  }, [open]);
+
+  const save = async () => {
+    if (!form.jobName.trim()) {
+      toast.error("Give the project a job name first.");
+      return;
+    }
+    setSaving(true);
+    try {
+      await createRecord("projects", {
+        [PF.jobName]: form.jobName.trim(),
+        [PF.status]: "Pending Deposit",
+        [PF.jobDate]: form.jobDate,
+        [PF.fromAddr]: form.fromAddr,
+        [PF.toAddr]: form.toAddr,
+        [PF.crewSize]: form.crewSize === "" ? null : Number(form.crewSize),
+        [PF.estHours]: form.estHours === "" ? null : Number(form.estHours),
+        [PF.quote]: form.quote === "" ? null : Number(form.quote),
+        [PF.truck]: form.truck,
+        [PF.notes]: form.notes,
+      });
+      toast.success("Project added.");
+      onOpenChange(false);
+    } catch {}
+    setSaving(false);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent data-testid="new-project-modal" className="max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="font-display">New project</DialogTitle>
+          <DialogDescription>For jobs that didn't come through a booked lead — added straight to the board.</DialogDescription>
+        </DialogHeader>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="col-span-2">
+            <Label>Job name *</Label>
+            <Input data-testid="project-name-input" value={form.jobName} onChange={set("jobName")} placeholder="Smith move — 2BR" />
+          </div>
+          <div>
+            <Label>Job date</Label>
+            <Input data-testid="project-date-input" type="date" value={form.jobDate} onChange={set("jobDate")} />
+          </div>
+          <div>
+            <Label>Truck</Label>
+            <Select value={form.truck} onValueChange={(v) => setForm((s) => ({ ...s, truck: v }))}>
+              <SelectTrigger data-testid="project-truck-new-select"><SelectValue placeholder="Pick truck" /></SelectTrigger>
+              <SelectContent>{TRUCKS.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
+            </Select>
+          </div>
+          <div className="col-span-2">
+            <Label>From address</Label>
+            <Input data-testid="project-from-input" value={form.fromAddr} onChange={set("fromAddr")} />
+          </div>
+          <div className="col-span-2">
+            <Label>To address</Label>
+            <Input data-testid="project-to-input" value={form.toAddr} onChange={set("toAddr")} />
+          </div>
+          <div>
+            <Label>Crew size</Label>
+            <Input data-testid="project-crew-new-input" type="number" min="0" value={form.crewSize} onChange={set("crewSize")} />
+          </div>
+          <div>
+            <Label>Est. hours</Label>
+            <Input data-testid="project-hours-new-input" type="number" min="0" value={form.estHours} onChange={set("estHours")} />
+          </div>
+          <div>
+            <Label>Quote ($)</Label>
+            <Input data-testid="project-quote-new-input" type="number" min="0" value={form.quote} onChange={set("quote")} />
+          </div>
+          <div className="col-span-2">
+            <Label>Notes</Label>
+            <Textarea value={form.notes} onChange={set("notes")} rows={2} />
+          </div>
+        </div>
+        <Button data-testid="project-save-btn" onClick={save} disabled={saving} className="w-full gap-2 bg-[#E8743B] hover:bg-[#d4632e]">
+          <Plus className="w-4 h-4" /> {saving ? "Saving…" : "Add project"}
+        </Button>
+      </DialogContent>
+    </Dialog>
+  );
+};
+
 export default function Projects() {
   const { loadTable, records, tableState } = useApp();
   const { role } = useAuth();
   const isOwner = (role || "owner") === "owner";
   const [query, setQuery] = useState("");
+  const [newOpen, setNewOpen] = useState(false);
   useEffect(() => {
     loadTable("projects");
     if (isOwner) loadTable("leads");
@@ -213,9 +317,16 @@ export default function Projects() {
         title="Projects"
         subtitle="Your booked jobs, next date first."
         action={
-          <Button asChild data-testid="day-sheet-btn" variant="outline" className="gap-1.5">
-            <Link to="/day-sheet"><ClipboardList className="w-4 h-4" /> Day sheet</Link>
-          </Button>
+          <div className="flex gap-2">
+            <Button asChild data-testid="day-sheet-btn" variant="outline" className="gap-1.5">
+              <Link to="/day-sheet"><ClipboardList className="w-4 h-4" /> Day sheet</Link>
+            </Button>
+            {isOwner && (
+              <Button data-testid="new-project-btn" onClick={() => setNewOpen(true)} className="gap-1.5 bg-[#E8743B] hover:bg-[#d4632e]">
+                <Plus className="w-4 h-4" /> New project
+              </Button>
+            )}
+          </div>
         }
       />
       <InstructionBanner>
@@ -240,6 +351,7 @@ export default function Projects() {
       ) : (
         <div className="space-y-3">{projects.map((p) => <ProjectCard key={p.id} project={p} />)}</div>
       )}
+      {isOwner && <NewProjectDialog open={newOpen} onOpenChange={setNewOpen} />}
     </div>
   );
 }

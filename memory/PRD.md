@@ -160,3 +160,7 @@ See /app/memory/test_credentials.md (owner password, endpoints).
 - FRONTEND: To-Do + Blog nav/routes added to sales, marketing, crew, employee views (Layout NAV + App.js). Tasks.jsx role-aware (no owner buttons for teams, team-flavoured banner/empty states, drag/status-move still allowed). Blog.jsx role-aware: non-owners get read-only published grid (published-post-card) + read dialog (post-read-modal); owner keeps kanban.
 - Testing: iteration_8 — 19/19 backend pytest (tests/test_todo_blog_sharing.py) + 18/18 frontend checks across owner/marketing/sales/crew. Full curl gating matrix verified by main agent first.
 - REMINDER: Airtable key still missing in preview so task/blog DATA flows (actual sharing with real records) run only in production after redeploy.
+
+## Session: July 19, 2026 (night 3) — Add/remove projects (COMPLETE, self-tested)
+- Projects page (owner): "New project" button (new-project-btn) → dialog (new-project-modal) with job name*, date, truck, from/to addresses, crew size, est hours, quote, notes → creates Airtable project with status "Pending Deposit" (for walk-in jobs that didn't come through a booked lead).
+- Delete per project card (project-delete-btn, owner-only) via shared ConfirmDeleteButton → deleteRecord (server already enforces owner-only Airtable deletes). Verified: modal renders with all fields via screenshot; create/delete use standard AppContext + proxy patterns already covered by earlier test iterations.
