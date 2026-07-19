@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Plus, PenLine } from "lucide-react";
 import { useApp } from "@/context/AppContext";
+import { useAuth } from "@/components/AuthGate";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -105,10 +106,28 @@ const PostForm = ({ open, onOpenChange, post }) => {
   );
 };
 
+const ReadPostDialog = ({ post, onClose }) => (
+  <Dialog open={!!post} onOpenChange={(v) => !v && onClose()}>
+    <DialogContent data-testid="post-read-modal" className="max-w-lg max-h-[90vh] overflow-y-auto">
+      <DialogHeader>
+        <DialogTitle className="font-display">{post ? f(post, BF.title) : ""}</DialogTitle>
+        <DialogDescription>
+          {post && f(post, BF.category) && <span>{f(post, BF.category)} · </span>}
+          {post && (f(post, BF.publishDate) ? fmtDate(f(post, BF.publishDate)) : "Published")}
+        </DialogDescription>
+      </DialogHeader>
+      <p className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">{post ? f(post, BF.body) || "No body written yet." : ""}</p>
+    </DialogContent>
+  </Dialog>
+);
+
 export default function Blog() {
+  const { role } = useAuth();
+  const isOwner = (role || "owner") === "owner";
   const { loadTable, records, tableState } = useApp();
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [reading, setReading] = useState(null);
   const [query, setQuery] = useState("");
 
   useEffect(() => {
@@ -116,20 +135,27 @@ export default function Blog() {
   }, [loadTable]);
 
   const posts = records("blog").filter((p) => searchMatch(query, f(p, BF.title), f(p, BF.category), f(p, BF.slug), f(p, BF.body)));
+  const published = posts.filter((p) => (f(p, BF.status) || "") === "Published");
   const { loading, error } = tableState("blog");
 
   return (
     <div data-testid="blog-page">
       <PageTitle
         title="Blog"
-        subtitle="Your content pipeline."
+        subtitle={isOwner ? "Your content pipeline." : "Published posts from the team."}
         action={
-          <Button data-testid="new-post-btn" onClick={() => { setEditing(null); setModalOpen(true); }} className="gap-1.5 bg-[#E8743B] hover:bg-[#d4632e]">
-            <Plus className="w-4 h-4" /> New post
-          </Button>
+          isOwner ? (
+            <Button data-testid="new-post-btn" onClick={() => { setEditing(null); setModalOpen(true); }} className="gap-1.5 bg-[#E8743B] hover:bg-[#d4632e]">
+              <Plus className="w-4 h-4" /> New post
+            </Button>
+          ) : null
         }
       />
-      <InstructionBanner>Move posts left to right: Idea → Draft → In Review → Published. Tap a card to edit it.</InstructionBanner>
+      <InstructionBanner>
+        {isOwner
+          ? "Move posts left to right: Idea → Draft → In Review → Published. Only Published posts show up for the rest of the team."
+          : "The finished, published posts land here — drafts and ideas stay with the owner. Tap a card to read it."}
+      </InstructionBanner>
 
       <div className="mb-4">
         <SearchBar value={query} onChange={setQuery} placeholder="Search posts…" testId="blog-search-input" />
@@ -139,6 +165,28 @@ export default function Blog() {
         <LoadingRows />
       ) : error && !posts.length ? (
         <EmptyState>{error}</EmptyState>
+      ) : !isOwner ? (
+        published.length === 0 ? (
+          <EmptyState>{query ? "No published posts match that search." : "Nothing published yet. New posts show up here the moment the owner publishes them."}</EmptyState>
+        ) : (
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {published.map((p) => (
+              <button
+                key={p.id}
+                data-testid="published-post-card"
+                onClick={() => setReading(p)}
+                className="text-left bg-white border border-slate-200 rounded-lg p-4 hover:border-[#E8743B] transition-colors"
+              >
+                <div className="text-sm font-semibold text-[#1B2A4A] leading-snug">{f(p, BF.title) || "Untitled"}</div>
+                <div className="text-xs text-slate-500 mt-1">
+                  {f(p, BF.category) && <span>{f(p, BF.category)} · </span>}
+                  {f(p, BF.publishDate) ? fmtDate(f(p, BF.publishDate)) : "Published"}
+                </div>
+                {f(p, BF.body) && <p className="text-xs text-slate-500 mt-2 line-clamp-3">{f(p, BF.body)}</p>}
+              </button>
+            ))}
+          </div>
+        )
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           {BLOG_STATUSES.map((status) => {
@@ -173,7 +221,8 @@ export default function Blog() {
         </div>
       )}
 
-      <PostForm open={modalOpen} onOpenChange={setModalOpen} post={editing} />
+      {isOwner && <PostForm open={modalOpen} onOpenChange={setModalOpen} post={editing} />}
+      {!isOwner && <ReadPostDialog post={reading} onClose={() => setReading(null)} />}
     </div>
   );
 }

@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Plus, GripVertical } from "lucide-react";
+import { Plus, GripVertical, Megaphone } from "lucide-react";
 import { useApp } from "@/context/AppContext";
+import { useAuth } from "@/components/AuthGate";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,8 +12,37 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { InstructionBanner, PageTitle, Pill, EmptyState, LoadingRows, SearchBar, searchMatch } from "@/components/Bits";
 import { TF, f, TASK_STATUSES, TASK_PRIORITIES, TASK_CATEGORIES } from "@/lib/fields";
 import { fmtDate, isOverdue } from "@/lib/format";
+import { setTaskAudienceApi, apiErrorMessage } from "@/lib/api";
 
-const TaskCard = ({ task }) => {
+const GROUPS = [
+  { key: "sales", label: "Sales" },
+  { key: "marketing", label: "Marketing" },
+  { key: "crew", label: "Crew" },
+];
+const ALL_GROUPS = GROUPS.map((g) => g.key);
+
+const AudienceChips = ({ value, onToggle, testPrefix }) => (
+  <div className="flex flex-wrap items-center gap-1">
+    {GROUPS.map((g) => {
+      const on = value.includes(g.key);
+      return (
+        <button
+          key={g.key}
+          type="button"
+          data-testid={`${testPrefix}-${g.key}`}
+          onClick={() => onToggle(g.key)}
+          className={`text-[10px] font-semibold rounded-full border px-2 py-0.5 transition-colors ${
+            on ? "bg-[#1B2A4A] text-white border-[#1B2A4A]" : "bg-white text-slate-400 border-slate-200 hover:border-slate-400"
+          }`}
+        >
+          {g.label}
+        </button>
+      );
+    })}
+  </div>
+);
+
+const TaskCard = ({ task, isOwner, onToggleAudience }) => {
   const { updateRecord } = useApp();
   const overdue = isOverdue(f(task, TF.dueDate)) && f(task, TF.status) !== "Done";
   return (
@@ -39,6 +69,7 @@ const TaskCard = ({ task }) => {
           </span>
         )}
       </div>
+      {isOwner && <AudienceChips value={task.audience || []} onToggle={(g) => onToggleAudience(task, g)} testPrefix="task-share" />}
       <div className="md:hidden">
         <Select value={f(task, TF.status) || "Backlog"} onValueChange={(v) => updateRecord("tasks", task.id, { [TF.status]: v }).catch(() => {})}>
           <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
@@ -52,10 +83,13 @@ const TaskCard = ({ task }) => {
 const blank = { task: "", priority: "Medium", category: "Ops", dueDate: "", notes: "" };
 
 export default function Tasks() {
+  const { role } = useAuth();
+  const isOwner = (role || "owner") === "owner";
   const { loadTable, records, tableState, updateRecord, createRecord } = useApp();
   const [dragOver, setDragOver] = useState(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState(blank);
+  const [audience, setAudience] = useState([]);
   const [saving, setSaving] = useState(false);
   const [query, setQuery] = useState("");
 
@@ -73,6 +107,27 @@ export default function Tasks() {
     if (id) updateRecord("tasks", id, { [TF.status]: status }).catch(() => {});
   };
 
+  const openNew = (aud) => {
+    setForm(blank);
+    setAudience(aud);
+    setModalOpen(true);
+  };
+
+  const toggleFormAudience = (g) =>
+    setAudience((a) => (a.includes(g) ? a.filter((x) => x !== g) : [...a, g]));
+
+  const toggleCardAudience = async (task, group) => {
+    const cur = task.audience || [];
+    const next = cur.includes(group) ? cur.filter((g) => g !== group) : [...cur, group];
+    try {
+      await setTaskAudienceApi(task.id, next);
+      await loadTable("tasks", true);
+      toast.success(next.length ? `Shared with: ${next.join(", ")}.` : "Back to owner-only.");
+    } catch (e) {
+      toast.error(apiErrorMessage(e));
+    }
+  };
+
   const save = async () => {
     if (!form.task.trim()) {
       toast.error("Write what the task is first.");
@@ -80,7 +135,7 @@ export default function Tasks() {
     }
     setSaving(true);
     try {
-      await createRecord("tasks", {
+      const rec = await createRecord("tasks", {
         [TF.task]: form.task.trim(),
         [TF.status]: "To Do",
         [TF.priority]: form.priority,
@@ -88,8 +143,19 @@ export default function Tasks() {
         [TF.dueDate]: form.dueDate,
         [TF.notes]: form.notes,
       });
-      toast.success("Task added to To Do.");
+      if (audience.length) {
+        await setTaskAudienceApi(rec.id, audience);
+        await loadTable("tasks", true);
+      }
+      toast.success(
+        audience.length === 3
+          ? "Sent to everyone — Sales, Marketing, and Crew will all see it."
+          : audience.length
+          ? `Task added and shared with: ${audience.join(", ")}.`
+          : "Task added to To Do."
+      );
       setForm(blank);
+      setAudience([]);
       setModalOpen(false);
     } catch {}
     setSaving(false);
@@ -99,14 +165,25 @@ export default function Tasks() {
     <div data-testid="tasks-page">
       <PageTitle
         title="To-Do Board"
-        subtitle="Drag cards as work moves along."
+        subtitle={isOwner ? "Drag cards as work moves along." : "What the owner shared with your team."}
         action={
-          <Button data-testid="new-task-btn" onClick={() => setModalOpen(true)} className="gap-1.5 bg-[#E8743B] hover:bg-[#d4632e]">
-            <Plus className="w-4 h-4" /> Add task
-          </Button>
+          isOwner ? (
+            <div className="flex gap-2">
+              <Button data-testid="mass-message-btn" variant="outline" onClick={() => openNew(ALL_GROUPS)} className="gap-1.5 border-[#1B2A4A]/30 text-[#1B2A4A]">
+                <Megaphone className="w-4 h-4" /> Mass message
+              </Button>
+              <Button data-testid="new-task-btn" onClick={() => openNew([])} className="gap-1.5 bg-[#E8743B] hover:bg-[#d4632e]">
+                <Plus className="w-4 h-4" /> Add task
+              </Button>
+            </div>
+          ) : null
         }
       />
-      <InstructionBanner>Drag cards between columns as work moves along. On a phone, use the dropdown on each card.</InstructionBanner>
+      <InstructionBanner>
+        {isOwner
+          ? "Drag cards between columns. Tap Sales / Marketing / Crew on a card to share it with that team — or use Mass message to hit everyone at once."
+          : "These are the tasks shared with your team. Drag a card (or use the dropdown on a phone) as you get it done."}
+      </InstructionBanner>
 
       <div className="mb-4">
         <SearchBar value={query} onChange={setQuery} placeholder="Search tasks…" testId="tasks-search-input" />
@@ -116,6 +193,8 @@ export default function Tasks() {
         <LoadingRows />
       ) : error && !tasks.length ? (
         <EmptyState>{error}</EmptyState>
+      ) : !isOwner && tasks.length === 0 ? (
+        <EmptyState>{query ? "No tasks match that search." : "Nothing shared with your team yet. The owner assigns tasks from their To-Do board."}</EmptyState>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           {TASK_STATUSES.map((status) => {
@@ -134,7 +213,7 @@ export default function Tasks() {
                   <span className="text-xs font-bold text-slate-400">{col.length}</span>
                 </div>
                 <div className="space-y-2">
-                  {col.map((t) => <TaskCard key={t.id} task={t} />)}
+                  {col.map((t) => <TaskCard key={t.id} task={t} isOwner={isOwner} onToggleAudience={toggleCardAudience} />)}
                   {col.length === 0 && <div className="text-xs text-slate-400 text-center py-4">Drop tasks here</div>}
                 </div>
               </div>
@@ -146,8 +225,12 @@ export default function Tasks() {
       <Dialog open={modalOpen} onOpenChange={setModalOpen}>
         <DialogContent data-testid="new-task-modal" className="max-w-md">
           <DialogHeader>
-            <DialogTitle className="font-display">Add task</DialogTitle>
-            <DialogDescription>New tasks start in the To Do column.</DialogDescription>
+            <DialogTitle className="font-display">{audience.length === 3 ? "Mass message" : "Add task"}</DialogTitle>
+            <DialogDescription>
+              {audience.length === 3
+                ? "This goes to Sales, Marketing, and Crew all at once."
+                : "New tasks start in the To Do column."}
+            </DialogDescription>
           </DialogHeader>
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2">
@@ -176,9 +259,26 @@ export default function Tasks() {
               <Label>Notes</Label>
               <Textarea value={form.notes} onChange={(e) => setForm((s) => ({ ...s, notes: e.target.value }))} rows={2} />
             </div>
+            <div className="col-span-2">
+              <Label>Who sees this?</Label>
+              <div className="flex flex-wrap items-center gap-2 mt-1.5">
+                <AudienceChips value={audience} onToggle={toggleFormAudience} testPrefix="new-task-share" />
+                <button
+                  type="button"
+                  data-testid="new-task-share-everyone"
+                  onClick={() => setAudience(audience.length === 3 ? [] : ALL_GROUPS)}
+                  className={`text-[10px] font-semibold rounded-full border px-2 py-0.5 transition-colors ${
+                    audience.length === 3 ? "bg-[#E8743B] text-white border-[#E8743B]" : "bg-white text-[#E8743B] border-[#E8743B]/40 hover:border-[#E8743B]"
+                  }`}
+                >
+                  Everyone
+                </button>
+              </div>
+              <p className="text-[11px] text-slate-400 mt-1">Leave them all off to keep it owner-only.</p>
+            </div>
           </div>
           <Button data-testid="task-save-btn" onClick={save} disabled={saving} className="w-full gap-2 bg-[#E8743B] hover:bg-[#d4632e]">
-            <Plus className="w-4 h-4" /> {saving ? "Saving…" : "Save task"}
+            <Plus className="w-4 h-4" /> {saving ? "Saving…" : audience.length === 3 ? "Send to everyone" : "Save task"}
           </Button>
         </DialogContent>
       </Dialog>

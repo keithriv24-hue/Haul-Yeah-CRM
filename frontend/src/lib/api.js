@@ -104,6 +104,7 @@ export const getMktThresholdsApi = () => axios.get(`${API}/marketing/thresholds`
 export const saveMktThresholdsApi = (p) => axios.put(`${API}/marketing/thresholds`, p).then((r) => r.data);
 export const marketingMarginApi = (start, end) => axios.get(`${API}/marketing/margin`, { params: { start, end } }).then((r) => r.data);
 export const setLeadMetaApi = (leadId, p) => axios.post(`${API}/lead-meta/${leadId}`, p).then((r) => r.data);
+export const setTaskAudienceApi = (id, audience) => axios.post(`${API}/tasks/${id}/audience`, { audience }).then((r) => r.data);
 export const saveQuoteBreakdownApi = (leadId, breakdown) => axios.put(`${API}/quotes/${leadId}`, { breakdown }).then((r) => r.data);
 export const getQuoteBreakdownApi = (leadId) => axios.get(`${API}/quotes/${leadId}`).then((r) => r.data);
 export const trackApi = (token) => axios.get(`${API}/track/${token}`).then((r) => r.data);

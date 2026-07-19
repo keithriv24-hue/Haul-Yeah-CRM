@@ -67,9 +67,16 @@ ALL_ROLES = ("owner", "sales", "employee", "crew", "marketing")
 ROLE_ENV = {"owner": "APP_PASSWORD", "sales": "SALES_PASSWORD", "employee": "EMPLOYEE_PASSWORD"}
 ROLE_TABLES = {
     "owner": set(TABLES),
-    "sales": {"leads"},
-    "employee": {"projects", "tasks"},
+    "sales": {"leads", "tasks", "blog"},
+    "employee": {"projects", "tasks", "blog"},
+    "marketing": {"tasks", "blog"},
+    "crew": {"tasks", "blog"},
 }
+
+TASK_GROUPS = ("sales", "marketing", "crew")
+TASK_GROUP_FOR_ROLE = {"sales": "sales", "marketing": "marketing", "crew": "crew", "employee": "crew"}
+TASK_STATUS_F = "fldIpdRVz51aQaNZh"
+BLOG_STATUS_F = "fldu92VQBEbkeGhtQ"
 PROJECT_QUOTE_FIELD = "fldkRQlJvhnUhWoR3"
 PROJECT_DEPOSIT_FIELD = "fldpqyinP1L9vZ2UP"
 PROJECT_REVENUE_FIELD = "fldvOyVAK9ywo2DNA"
@@ -1867,6 +1874,15 @@ async def list_records(table_key: str, role: str = Depends(require_auth)):
         offset = data.get("offset")
         if not offset:
             break
+    if table_key == "tasks":
+        metas = {m["_id"]: m for m in await mongo_db.task_meta.find({}).to_list(2000)}
+        if role == "owner":
+            records = [{**r, "audience": (metas.get(r["id"]) or {}).get("audience", [])} for r in records]
+        else:
+            grp = TASK_GROUP_FOR_ROLE.get(role)
+            records = [r for r in records if grp in ((metas.get(r["id"]) or {}).get("audience") or [])]
+    elif table_key == "blog" and role != "owner":
+        records = [r for r in records if (r.get("fields", {}).get(BLOG_STATUS_F) or "") == "Published"]
     return {"records": [filter_record(r, role, table_key) for r in records]}
 
 
@@ -1874,22 +1890,40 @@ async def list_records(table_key: str, role: str = Depends(require_auth)):
 async def create_record(table_key: str, payload: RecordPayload = Body(...), role: str = Depends(require_auth)):
     table_id = resolve_table(table_key)
     await check_table_access(role, table_key)
+    if table_key in ("tasks", "blog") and role != "owner":
+        raise HTTPException(status_code=403, detail="Only the owner can add these.")
     body = {"records": [{"fields": clean_write_fields(payload.fields, role, table_key)}], "typecast": True}
     data = await airtable_request("POST", table_id, json_body=body)
-    return filter_record(data["records"][0], role, table_key)
+    rec = filter_record(data["records"][0], role, table_key)
+    if table_key == "tasks":
+        rec["audience"] = []
+    return rec
 
 
 @api_router.patch("/tables/{table_key}/{record_id}")
 async def update_record(table_key: str, record_id: str, payload: RecordPayload = Body(...), role: str = Depends(require_auth)):
     table_id = resolve_table(table_key)
     await check_table_access(role, table_key)
+    if table_key == "blog" and role != "owner":
+        raise HTTPException(status_code=403, detail="Only the owner can edit blog posts.")
+    if table_key == "tasks" and role != "owner":
+        if any(k != TASK_STATUS_F for k in payload.fields):
+            raise HTTPException(status_code=403, detail="You can only move a task between columns.")
+        grp = TASK_GROUP_FOR_ROLE.get(role)
+        meta = await mongo_db.task_meta.find_one({"_id": record_id})
+        if not meta or grp not in (meta.get("audience") or []):
+            raise HTTPException(status_code=403, detail="That task isn't shared with your team.")
     body = {"records": [{"id": record_id, "fields": clean_write_fields(payload.fields, role, table_key)}], "typecast": True}
     data = await airtable_request("PATCH", table_id, json_body=body)
     if table_key == "leads" and payload.fields.get(LEAD_STATUS_F) in ("Contacted", "Quoted", "Booked", "Completed"):
         existing = await mongo_db.lead_meta.find_one({"_id": record_id})
         if not existing or not existing.get("contacted_at"):
             await mongo_db.lead_meta.update_one({"_id": record_id}, {"$set": {"contacted_at": now_iso()}}, upsert=True)
-    return filter_record(data["records"][0], role, table_key)
+    rec = filter_record(data["records"][0], role, table_key)
+    if table_key == "tasks" and role == "owner":
+        meta = await mongo_db.task_meta.find_one({"_id": record_id}) or {}
+        rec["audience"] = meta.get("audience", [])
+    return rec
 
 
 @api_router.delete("/tables/{table_key}/{record_id}")
@@ -1900,6 +1934,17 @@ async def delete_record(table_key: str, record_id: str, role: str = Depends(requ
         raise HTTPException(status_code=403, detail="Only the owner can delete records.")
     await airtable_request("DELETE", table_id, path=f"/{record_id}")
     return {"deleted": True, "id": record_id}
+
+
+class TaskAudiencePayload(BaseModel):
+    audience: List[str] = []
+
+
+@api_router.post("/tasks/{record_id}/audience")
+async def set_task_audience(record_id: str, payload: TaskAudiencePayload = Body(...), p: Dict[str, Any] = Depends(require_owner)):
+    audience = sorted({g for g in payload.audience if g in TASK_GROUPS})
+    await mongo_db.task_meta.update_one({"_id": record_id}, {"$set": {"audience": audience}}, upsert=True)
+    return {"id": record_id, "audience": audience}
 
 
 # ---------------------------------------------------------------- crew module

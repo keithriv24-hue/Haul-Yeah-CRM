@@ -1,0 +1,73 @@
+{
+  "summary": "Iteration 8 — Full backend + frontend QA of the new To-Do sharing controls and role-aware Blog. All 19 pytest backend cases pass; all 18 frontend checks (owner + marketing view + sales + crew) pass. No blocking bugs. Test task_meta docs cleaned up.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_todo_blog_sharing.py",
+    "/app/test_reports/pytest/iter8_sharing.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py list_records (line ~1877): tasks/blog list endpoint calls Airtable then filters in Python. Fine at current row counts, but for tasks the mongo task_meta lookup is 'find all' (up to 2000 docs) every request — cheap now, but if task_meta grows, either (a) index-look-up per record id or (b) constrain the query to record ids returned from Airtable would be more efficient.",
+    "server.py update_record (line ~1909): crew/sales/marketing PATCH tasks with a NON-status field returns 403 'You can only move a task between columns'. Correct, but the 'shared with your team' check happens AFTER the field-check, meaning an unshared record with a non-status field returns the field-check error first. Order is fine, just worth documenting that the two 403 error messages are order-dependent (main agent's curl matrix already verified this).",
+    "Blog.jsx owner branch: when Airtable is unavailable (error state) the kanban does NOT render — the EmptyState card takes over. That's the shared list-page pattern (same as tasks/leads/etc), so consistent behaviour. In preview env this means the 4 status columns are only visually verifiable AFTER Airtable is configured — automated tests here can only assert new-post-btn is present. Not a bug, just something for the next tester to note.",
+    "Tasks.jsx: 'Everyone' chip visually distinct (orange fill vs slate) — good affordance. Toggling it OFF when already ON sets audience back to []. Confirmed by save-button label flip Save→Send→Save. Solid UX.",
+    "Layout.jsx NAV: 'To-Do' and 'Blog' now include 'employee' role (legacy crew view via legacy password). Backend ROLE_TABLES only lists tasks/blog for [owner, sales, employee, marketing, crew] — so 'employee' role also has table access to tasks/blog now, matching frontend nav. Consistent."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_todo_blog_sharing.py (new pytest suite — 19 tests)"
+  ],
+  "success_rate": {
+    "backend": "100% (19/19 pytest tests passed)",
+    "frontend": "100% (18/18 checks passed across owner, marketing view, sales, crew)"
+  },
+  "test_credentials": "Owner HaulYeahOwner / HaulYeah2026! (worked). Sales legacy blank username + SellMoves2026! (worked). Crew javante@haulyeahmoves.com / JavCrew2026! (worked). Marketing view via owner role-switch-select → 'Marketing view' (worked).",
+  "seed_data_creation": "During pytest 3 fake Airtable record ids were briefly upserted into task_meta (recTEST_*): (1) filter-and-sort test, (2) reset-to-empty test, (3) crew-shared PATCH test. All 3 rows deleted at end of their tests. Final scan: 0 recTEST_* rows remain. Real task_meta row count unchanged (1 pre-existing). No other collections mutated. No Square invoices created.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend suite /app/backend/tests/test_todo_blog_sharing.py runs in ~4s with '-o addopts=' to skip the pytest.ini xdist config. It uses python-dotenv to load /app/frontend/.env + /app/backend/.env so MONGO_URL/DB_NAME/REACT_APP_BACKEND_URL work regardless of shell env. Coverage: (a) POST /api/tasks/{id}/audience owner-only + input sanitisation, (b) non-owner tasks/blog GET returns 503 not 403 (Airtable missing), (c) crew task create+patch guards, (d) marketing/sales blog patch + crew blog create 403s. Airtable is still empty in preview — all Airtable-fronted endpoints legitimately 503 on any table CRUD after gate-passing. Blog owner kanban only renders when posts load — in preview (503) an EmptyState appears instead; not a bug. Frontend password login MUST use page.keyboard.type() with delay>=15ms (documented since iteration 7); page.fill() leaves the submit button disabled. role-switch-select is a shadcn button — open + click get_by_role('option', name='...view'). Everyone chip toggles all 3 groups on/off and flips dialog title Save task↔Mass message and save-button label Save task↔Send to everyone.",
+  "detailed_test_results": {
+    "backend_audience_owner_normalises_input": "PASS — POST {'audience':['sales','junk','crew']} returns ['crew','sales'] (invalid filtered, sorted); mongo persists correctly.",
+    "backend_audience_reset_to_empty":         "PASS — set to all 3 then reset to []; mongo doc has audience=[].",
+    "backend_audience_crew_forbidden":         "PASS — crew token → 403; no mongo doc created.",
+    "backend_audience_sales_forbidden":        "PASS — sales legacy token → 403; no mongo doc created.",
+    "backend_audience_marketing_forbidden":    "PASS — marketing token → 403; no mongo doc created.",
+    "backend_crew_tasks_get_503_not_403":      "PASS — GET /api/tables/tasks with crew token → 503 (Airtable missing), NOT 403.",
+    "backend_crew_blog_get_503_not_403":       "PASS — same for blog.",
+    "backend_marketing_tasks_get_503_not_403": "PASS.",
+    "backend_marketing_blog_get_503_not_403":  "PASS.",
+    "backend_sales_tasks_get_503_not_403":     "PASS.",
+    "backend_sales_blog_get_503_not_403":      "PASS.",
+    "backend_marketing_leads_still_403":       "PASS — marketing token GET /api/tables/leads → 403 (unchanged behaviour).",
+    "backend_crew_post_tasks_403":             "PASS — 403 body mentions 'owner'.",
+    "backend_crew_patch_nonstatus_403":        "PASS — 403 body mentions 'column'/'move'.",
+    "backend_crew_patch_status_unshared_403":  "PASS — 403 body mentions 'shared'/'team'.",
+    "backend_crew_patch_status_after_share_gate_passes": "PASS — owner shares record with crew; crew PATCH with only status returns 503 (Airtable), not 403 → gate cleared.",
+    "backend_marketing_patch_blog_403":        "PASS — 403 body contains both 'owner' and 'blog'.",
+    "backend_sales_patch_blog_403":            "PASS — 403.",
+    "backend_crew_post_blog_403":              "PASS — 403.",
+    "frontend_owner_tasks_buttons":            "PASS — mass-message-btn (1), new-task-btn (1), tasks-search-input (1) all rendered.",
+    "frontend_owner_add_dialog_chips_and_defaults": "PASS — 3 group chips (sales/marketing/crew) + Everyone chip present. Initial dialog title='Add task', save button='Save task'.",
+    "frontend_owner_everyone_toggle_on":       "PASS — clicking Everyone flips dialog title to 'Mass message' and save button to 'Send to everyone' (implies all 3 group chips flipped ON).",
+    "frontend_owner_everyone_toggle_off":      "PASS — clicking Everyone again restores save button to 'Save task' (all 3 flipped OFF).",
+    "frontend_owner_mass_message_btn_opens_prefilled": "PASS — clicking mass-message-btn opens the dialog already in 'Mass message'/'Send to everyone' state.",
+    "frontend_owner_blog_new_post_btn":        "PASS — new-post-btn rendered for owner on /blog. Kanban columns absent because Airtable-503 error triggers EmptyState (expected behaviour, verified in code review).",
+    "frontend_owner_dashboard_h1":             "PASS — Dashboard h1 renders at /.",
+    "frontend_regression_tasks_search":        "PASS — tasks-search-input still present on owner /tasks.",
+    "frontend_marketing_view_sidebar":         "PASS — after role-switch to Marketing view, sidebar shows nav-marketing + nav-to-do + nav-blog.",
+    "frontend_marketing_tasks_no_owner_btns":  "PASS — /tasks renders tasks-page with NO mass-message-btn and NO new-task-btn.",
+    "frontend_marketing_blog_readonly":        "PASS — /blog renders blog-page, NO new-post-btn, 'published' banner/label present.",
+    "frontend_marketing_switch_back_to_owner": "PASS — role-switch back to 'Owner view' restores nav-dashboard.",
+    "frontend_sales_legacy_login_sidebar":     "PASS — blank username + SellMoves2026! logs in as sales; sidebar has nav-to-do + nav-blog alongside leads/calculator/script.",
+    "frontend_sales_tasks_no_owner_btns":      "PASS — sales /tasks renders without mass/new buttons.",
+    "frontend_sales_blog_readonly":            "PASS — sales /blog renders without new-post-btn; 'published' banner present.",
+    "frontend_crew_sidebar_includes_todo_blog": "PASS — javante login → sidebar has nav-today, nav-my-jobs, nav-time-clock, nav-days-off, plus new nav-to-do and nav-blog.",
+    "frontend_crew_tasks_no_owner_btns":       "PASS — crew /tasks renders without owner controls.",
+    "frontend_crew_blog_readonly":             "PASS — crew /blog renders without new-post-btn.",
+    "console_type_errors":                     "PASS — 0 TypeErrors across all visited pages. Only console noise is expected 401s from pre-login /api/auth/me poll (documented in prior iterations)."
+  }
+}

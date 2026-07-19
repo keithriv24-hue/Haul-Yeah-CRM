@@ -40,6 +40,8 @@ function RoleRoutes() {
           <Route path="/leads/:id" element={<LeadDetail />} />
           <Route path="/calculator" element={<Calculator />} />
           <Route path="/script" element={<Script />} />
+          <Route path="/tasks" element={<Tasks />} />
+          <Route path="/blog" element={<Blog />} />
           <Route path="*" element={<Navigate to="/leads" replace />} />
         </Route>
       </Routes>
@@ -53,6 +55,8 @@ function RoleRoutes() {
           <Route path="/jobs" element={<CrewJobs />} />
           <Route path="/clock" element={<TimeClock />} />
           <Route path="/days-off" element={<DaysOff />} />
+          <Route path="/tasks" element={<Tasks />} />
+          <Route path="/blog" element={<Blog />} />
           <Route path="*" element={<Navigate to="/today" replace />} />
         </Route>
       </Routes>
@@ -63,6 +67,8 @@ function RoleRoutes() {
       <Routes>
         <Route element={<Layout />}>
           <Route path="/marketing" element={<MarketingDashboard />} />
+          <Route path="/tasks" element={<Tasks />} />
+          <Route path="/blog" element={<Blog />} />
           <Route path="*" element={<Navigate to="/marketing" replace />} />
         </Route>
       </Routes>
@@ -75,6 +81,7 @@ function RoleRoutes() {
           <Route path="/projects" element={<Projects />} />
           <Route path="/day-sheet" element={<DaySheet />} />
           <Route path="/tasks" element={<Tasks />} />
+          <Route path="/blog" element={<Blog />} />
           <Route path="*" element={<Navigate to="/projects" replace />} />
         </Route>
       </Routes>
