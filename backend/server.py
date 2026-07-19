@@ -1030,21 +1030,117 @@ async def calendar_jobs(month: str, p: Dict[str, Any] = Depends(require_owner)):
     return {"month": month, "days": days}
 
 
+# ------- Late alerts: warn owners when crew hasn't clocked in by arrival time
+
+LATE_GRACE_MINUTES = 10
+
+
+def _12h(hhmm: str) -> str:
+    try:
+        hh, mm = [int(x) for x in hhmm.split(":")[:2]]
+        return f"{hh % 12 or 12}:{mm:02d} {'AM' if hh < 12 else 'PM'}"
+    except (ValueError, AttributeError):
+        return hhmm or ""
+
+
+async def _late_crew_map() -> Dict[str, Dict[str, Any]]:
+    now_et = datetime.now(EASTERN)
+    today = now_et.strftime("%Y-%m-%d")
+    assignments = await mongo_db.assignments.find(
+        {"job_date": today, "arrival_time": {"$nin": [None, ""]}}).to_list(100)
+    if not assignments:
+        return {}
+    day_start_utc = datetime(now_et.year, now_et.month, now_et.day, tzinfo=EASTERN).astimezone(timezone.utc).isoformat()
+    late: Dict[str, Dict[str, Any]] = {}
+    for a in assignments:
+        try:
+            hh, mm = [int(x) for x in a["arrival_time"].split(":")[:2]]
+        except (ValueError, AttributeError):
+            continue
+        due = now_et.replace(hour=hh, minute=mm, second=0, microsecond=0)
+        if now_et < due + timedelta(minutes=LATE_GRACE_MINUTES):
+            continue
+        for c in a.get("crew", []):
+            uid = c["user_id"]
+            if uid in late:
+                continue
+            entry = await mongo_db.time_entries.find_one({"user_id": uid, "clock_in.at": {"$gte": day_start_utc}})
+            if entry:
+                continue
+            late[uid] = {"assignment_id": a["_id"], "job_name": a.get("job_name"),
+                         "arrival_time": a["arrival_time"], "name": c["name"]}
+    return late
+
+
+async def late_alert_loop():
+    while True:
+        await asyncio.sleep(120)
+        try:
+            late = await _late_crew_map()
+            for uid, info in late.items():
+                a = await mongo_db.assignments.find_one({"_id": info["assignment_id"]})
+                if not a or uid in a.get("late_alerts", []):
+                    continue
+                await notify(None, "owner", "Late alert",
+                             f"{info['name']} hasn't clocked in for {info['job_name']} — crew was due at {_12h(info['arrival_time'])}.",
+                             ntype="late", data={"assignment_id": info["assignment_id"], "user_id": uid})
+                await mongo_db.assignments.update_one({"_id": info["assignment_id"]},
+                                                      {"$addToSet": {"late_alerts": uid}})
+        except Exception as exc:
+            logger.warning("Late alert loop error: %s", exc)
+
+
+class UserProfilePayload(BaseModel):
+    legal_name: Optional[str] = None
+    phone: Optional[str] = None
+    birthday: Optional[str] = None
+    ssn: Optional[str] = None
+    address: Optional[str] = None
+    emergency_name: Optional[str] = None
+    emergency_phone: Optional[str] = None
+    hire_date: Optional[str] = None
+    notes: Optional[str] = None
+
+
+@api_router.get("/users/{user_id}/profile")
+async def get_user_profile(user_id: str, p: Dict[str, Any] = Depends(require_owner)):
+    u = await mongo_db.users.find_one({"_id": user_id})
+    if not u:
+        raise HTTPException(status_code=404, detail="No such user.")
+    return {"name": u["name"], "profile": u.get("profile", {})}
+
+
+@api_router.put("/users/{user_id}/profile")
+async def save_user_profile(user_id: str, payload: UserProfilePayload, p: Dict[str, Any] = Depends(require_owner)):
+    u = await mongo_db.users.find_one({"_id": user_id})
+    if not u:
+        raise HTTPException(status_code=404, detail="No such user.")
+    profile = {k: (v.strip() if isinstance(v, str) else "") for k, v in payload.model_dump().items()}
+    await mongo_db.users.update_one({"_id": user_id}, {"$set": {"profile": profile, "updated_at": now_iso()}})
+    await audit(p, "updated employee file", u["name"])
+    return {"profile": profile}
+
+
 @api_router.get("/team/status")
 async def team_status(p: Dict[str, Any] = Depends(require_owner)):
     users = await mongo_db.users.find({"role": "crew", "active": True}).to_list(100)
     open_entries = await mongo_db.time_entries.find({"clock_out": None}).to_list(100)
     by_user = {e["user_id"]: e for e in open_entries}
+    late = await _late_crew_map()
     crew = []
     for u in users:
         e = by_user.get(u["_id"])
+        lt = None if e else late.get(u["_id"])
         crew.append({
             "user_id": u["_id"], "name": u["name"],
             "clocked_in": bool(e),
             "since": e["clock_in"]["at"] if e else None,
             "job_name": (e or {}).get("job_name"),
+            "late": bool(lt),
+            "late_job": (lt or {}).get("job_name"),
+            "due_at": (lt or {}).get("arrival_time"),
         })
-    crew.sort(key=lambda c: (not c["clocked_in"], c["name"]))
+    crew.sort(key=lambda c: (not c["clocked_in"], not c["late"], c["name"]))
     return {"crew": crew}
 
 
@@ -1949,6 +2045,7 @@ async def seed_on_startup():
     except Exception as exc:
         logger.error("Startup seeding failed: %s", exc)
     asyncio.create_task(timelog_retry_loop())
+    asyncio.create_task(late_alert_loop())
 
 
 app.include_router(auth_router)

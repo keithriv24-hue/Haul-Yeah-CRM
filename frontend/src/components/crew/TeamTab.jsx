@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { UserPlus, KeyRound, UserX, UserCheck, Truck, Plus, DollarSign, Pencil, Trash2 } from "lucide-react";
+import { UserPlus, KeyRound, UserX, UserCheck, Truck, Plus, DollarSign, Pencil, Trash2, IdCard } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -11,6 +11,7 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import { EmployeeFileDialog } from "@/components/crew/EmployeeFileDialog";
 import {
   listUsersApi, createUserApi, patchUserApi, listTrucksApi, createTruckApi, patchTruckApi, deleteTruckApi,
   getCrewRatesApi, saveCrewRatesApi, apiErrorMessage,
@@ -155,6 +156,7 @@ export const TeamTab = () => {
   const [rates, setRates] = useState({ driver: 28, helper: 24 });
   const [addOpen, setAddOpen] = useState(false);
   const [resetUser, setResetUser] = useState(null);
+  const [fileUser, setFileUser] = useState(null);
   const [editTruck, setEditTruck] = useState(null);
   const [newTruck, setNewTruck] = useState("");
   const [newPlate, setNewPlate] = useState("");
@@ -233,6 +235,9 @@ export const TeamTab = () => {
               <Badge variant="outline" className={`text-[10px] ${ROLE_BADGE[u.role] || ""}`}>{u.role}</Badge>
               {!u.active && <Badge variant="outline" className="text-[10px] bg-red-50 text-red-600 border-red-200">off</Badge>}
               {u.must_change_password && u.active && <Badge variant="outline" className="text-[10px] bg-amber-50 text-amber-700 border-amber-200">temp password</Badge>}
+              <Button data-testid="employee-file-btn" variant="outline" size="sm" className="gap-1 text-xs" onClick={() => setFileUser(u)}>
+                <IdCard className="w-3.5 h-3.5" /> File
+              </Button>
               <Button data-testid="reset-password-btn" variant="outline" size="sm" className="gap-1 text-xs" onClick={() => setResetUser(u)}>
                 <KeyRound className="w-3.5 h-3.5" /> Reset password
               </Button>
@@ -306,6 +311,7 @@ export const TeamTab = () => {
 
       <AddUserDialog open={addOpen} onOpenChange={setAddOpen} onSaved={load} />
       <ResetPasswordDialog user={resetUser} onOpenChange={setResetUser} onSaved={load} />
+      <EmployeeFileDialog user={fileUser} onOpenChange={setFileUser} />
       <EditTruckDialog truck={editTruck} onOpenChange={setEditTruck} onSaved={load} />
     </div>
   );

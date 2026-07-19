@@ -50,6 +50,8 @@ export const deleteTruckApi = (id) => axios.delete(`${API}/trucks/${id}`).then((
 export const calendarJobsApi = (month) => axios.get(`${API}/calendar/jobs`, { params: { month } }).then((r) => r.data);
 export const timelogStatusApi = () => axios.get(`${API}/timelog/status`).then((r) => r.data);
 export const teamStatusApi = () => axios.get(`${API}/team/status`).then((r) => r.data);
+export const getUserProfileApi = (id) => axios.get(`${API}/users/${id}/profile`).then((r) => r.data);
+export const saveUserProfileApi = (id, profile) => axios.put(`${API}/users/${id}/profile`, profile).then((r) => r.data);
 export const listAssignmentsApi = (params = {}) => axios.get(`${API}/assignments`, { params }).then((r) => r.data.assignments);
 export const createAssignmentApi = (a) => axios.post(`${API}/assignments`, a).then((r) => r.data);
 export const updateAssignmentApi = (id, a) => axios.patch(`${API}/assignments/${id}`, a).then((r) => r.data);
