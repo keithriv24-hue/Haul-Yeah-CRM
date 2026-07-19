@@ -22,13 +22,14 @@ const ROLE_BADGE = {
   owner: "bg-[#1B2A4A] text-white border-transparent",
   sales: "bg-sky-100 text-sky-800 border-sky-300",
   crew: "bg-orange-100 text-orange-800 border-orange-300",
+  marketing: "bg-teal-100 text-teal-800 border-teal-300",
 };
 
 const RoleChecks = ({ roles, onToggle, idPrefix }) => (
   <div>
     <Label>Roles (pick all that apply)</Label>
     <div className="space-y-1.5 mt-1">
-      {["crew", "sales", "owner"].map((r) => (
+      {["crew", "sales", "marketing", "owner"].map((r) => (
         <label key={r} className="flex items-center gap-2 text-sm cursor-pointer">
           <Checkbox data-testid={`${idPrefix}-role-${r}`} checked={roles.includes(r)} onCheckedChange={() => onToggle(r)} />
           <span className="capitalize text-[#1B2A4A]">{r}</span>
@@ -40,7 +41,7 @@ const RoleChecks = ({ roles, onToggle, idPrefix }) => (
 );
 
 const AddUserDialog = ({ open, onOpenChange, onSaved }) => {
-  const [form, setForm] = useState({ name: "", email: "", roles: ["crew"], password: "" });
+  const [form, setForm] = useState({ name: "", email: "", roles: ["crew"] });
   const [busy, setBusy] = useState(false);
   const set = (k) => (v) => setForm((f) => ({ ...f, [k]: v }));
   const toggleRole = (r) =>
@@ -49,9 +50,9 @@ const AddUserDialog = ({ open, onOpenChange, onSaved }) => {
   const save = async () => {
     setBusy(true);
     try {
-      await createUserApi({ name: form.name, email: form.email, password: form.password, roles: form.roles, role: form.roles[0] });
-      toast.success(`${form.name} added. They'll set their own password on first login.`);
-      setForm({ name: "", email: "", roles: ["crew"], password: "" });
+      await createUserApi({ name: form.name, email: form.email, roles: form.roles, role: form.roles[0] });
+      toast.success(`${form.name} added. Their starting password is haulyeah123 — they'll change it on first login.`);
+      setForm({ name: "", email: "", roles: ["crew"] });
       onOpenChange(false);
       onSaved();
     } catch (e) {
@@ -65,17 +66,20 @@ const AddUserDialog = ({ open, onOpenChange, onSaved }) => {
       <DialogContent data-testid="add-user-dialog">
         <DialogHeader>
           <DialogTitle className="font-display">Add a team member</DialogTitle>
-          <DialogDescription>Give them a starting password — they'll be asked to change it the first time they sign in.</DialogDescription>
+          <DialogDescription>Every new person starts with the same password — they'll be asked to change it the first time they sign in.</DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
           <div><Label>Name</Label><Input data-testid="add-user-name" value={form.name} onChange={(e) => set("name")(e.target.value)} placeholder="First Last" /></div>
           <div><Label>Email (their login)</Label><Input data-testid="add-user-email" type="email" value={form.email} onChange={(e) => set("email")(e.target.value)} placeholder="name@haulyeahmoves.com" /></div>
           <RoleChecks roles={form.roles} onToggle={toggleRole} idPrefix="add-user" />
-          <div><Label>Starting password (8+ characters)</Label><Input data-testid="add-user-password" value={form.password} onChange={(e) => set("password")(e.target.value)} placeholder="e.g. HaulCrew2026!" /></div>
+          <div data-testid="add-user-default-password-note" className="flex items-start gap-2 rounded-md bg-amber-50 border border-amber-200 px-3 py-2.5 text-sm text-amber-800">
+            <KeyRound className="w-4 h-4 mt-0.5 shrink-0" />
+            <span>Their starting password is <strong className="font-mono">haulyeah123</strong>. Tell them to use it once — the app makes them pick their own right away.</span>
+          </div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button data-testid="add-user-save" disabled={busy || !form.name || !form.email || form.password.length < 8 || form.roles.length === 0} onClick={save} className="bg-[#E8743B] hover:bg-[#d4632e]">
+          <Button data-testid="add-user-save" disabled={busy || !form.name || !form.email || form.roles.length === 0} onClick={save} className="bg-[#E8743B] hover:bg-[#d4632e]">
             Add them
           </Button>
         </DialogFooter>

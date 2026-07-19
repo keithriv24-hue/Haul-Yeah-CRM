@@ -94,6 +94,15 @@ export const crewActiveJobApi = () => axios.get(`${API}/crew/active-job`).then((
 export const sendTrackingLinkApi = (jobId) => axios.post(`${API}/crew/jobs/${jobId}/tracking-link`).then((r) => r.data);
 export const sendReviewRequestApi = (jobId, payload) => axios.post(`${API}/crew/jobs/${jobId}/review-request`, payload).then((r) => r.data);
 export const listReviewRequestsApi = () => axios.get(`${API}/review-requests`).then((r) => r.data.requests);
+export const patchReviewRequestApi = (id, p) => axios.patch(`${API}/review-requests/${id}`, p).then((r) => r.data);
+export const marketingOverviewApi = (start, end) => axios.get(`${API}/marketing/overview`, { params: { start, end } }).then((r) => r.data);
+export const listAdSpendApi = () => axios.get(`${API}/marketing/ad-spend`).then((r) => r.data.entries);
+export const addAdSpendApi = (p) => axios.post(`${API}/marketing/ad-spend`, p).then((r) => r.data);
+export const deleteAdSpendApi = (id) => axios.delete(`${API}/marketing/ad-spend/${id}`).then((r) => r.data);
+export const getMktThresholdsApi = () => axios.get(`${API}/marketing/thresholds`).then((r) => r.data);
+export const saveMktThresholdsApi = (p) => axios.put(`${API}/marketing/thresholds`, p).then((r) => r.data);
+export const marketingMarginApi = (start, end) => axios.get(`${API}/marketing/margin`, { params: { start, end } }).then((r) => r.data);
+export const setLeadMetaApi = (leadId, p) => axios.post(`${API}/lead-meta/${leadId}`, p).then((r) => r.data);
 export const saveQuoteBreakdownApi = (leadId, breakdown) => axios.put(`${API}/quotes/${leadId}`, { breakdown }).then((r) => r.data);
 export const getQuoteBreakdownApi = (leadId) => axios.get(`${API}/quotes/${leadId}`).then((r) => r.data);
 export const trackApi = (token) => axios.get(`${API}/track/${token}`).then((r) => r.data);

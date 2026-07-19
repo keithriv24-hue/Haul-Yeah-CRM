@@ -62,6 +62,7 @@ JWT_ALGORITHM = "HS256"
 _login_attempts: Dict[str, Dict[str, float]] = {}
 
 ROLES = ("owner", "sales", "employee")
+SWITCH_ROLES = ("owner", "sales", "employee", "marketing")
 ALL_ROLES = ("owner", "sales", "employee", "crew", "marketing")
 ROLE_ENV = {"owner": "APP_PASSWORD", "sales": "SALES_PASSWORD", "employee": "EMPLOYEE_PASSWORD"}
 ROLE_TABLES = {
@@ -408,7 +409,7 @@ async def switch_role(payload: SwitchPayload, request: Request):
         if not user or not user.get("active", True):
             raise HTTPException(status_code=401, detail="This account is turned off. Talk to the owner.")
         roles = user.get("roles") or [user.get("role")]
-        if "owner" in roles and payload.role in ROLES:
+        if "owner" in roles and payload.role in SWITCH_ROLES:
             return {"token": make_token(payload.role, owner_switch=True), "role": payload.role, "can_switch": True}
         if payload.role not in roles:
             raise HTTPException(status_code=403, detail="You don't have that view.")
@@ -417,7 +418,7 @@ async def switch_role(payload: SwitchPayload, request: Request):
     current = token_payload.get("role") or "owner"
     if current != "owner" and not token_payload.get("owner_switch"):
         raise HTTPException(status_code=403, detail="Only the owner can switch accounts.")
-    if payload.role not in ROLES:
+    if payload.role not in SWITCH_ROLES:
         raise HTTPException(status_code=422, detail="Unknown role.")
     return {"token": make_token(payload.role, owner_switch=True), "role": payload.role, "can_switch": True}
 
@@ -1316,6 +1317,13 @@ async def crew_review_request(job_id: str, payload: ReviewRequestPayload, p: Dic
     return {"ok": True}
 
 
+async def require_marketing(request: Request) -> Dict[str, Any]:
+    p = await current_principal(request)
+    if p["role"] not in ("owner", "marketing"):
+        raise HTTPException(status_code=403, detail="Only the owner or marketing can open this.")
+    return p
+
+
 @api_router.get("/review-requests")
 async def list_review_requests(p: Dict[str, Any] = Depends(require_marketing)):
     docs = await mongo_db.review_requests.find({}).sort("sent_at", -1).to_list(500)
@@ -1525,13 +1533,6 @@ UTM_FIELD_NAMES = {"utm_source": "UTM Source", "utm_medium": "UTM Medium", "utm_
 STAGE_INDEX = {"New": 0, "Contacted": 1, "Quoted": 2, "Booked": 3, "Completed": 4}
 DEFAULT_MKT_THRESHOLDS = {"cplGreen": 20.0, "cplRed": 25.0, "bookingGreen": 20.0, "bookingRed": 15.0}
 _utm_map_cache: Dict[str, Any] = {"at": 0.0, "map": {}}
-
-
-async def require_marketing(request: Request) -> Dict[str, Any]:
-    p = await current_principal(request)
-    if p["role"] not in ("owner", "marketing"):
-        raise HTTPException(status_code=403, detail="Only the owner or marketing can open this.")
-    return p
 
 
 async def utm_field_map() -> Dict[str, str]:
@@ -2294,7 +2295,10 @@ class UserCreatePayload(BaseModel):
     email: str
     role: str = "crew"
     roles: Optional[List[str]] = None
-    password: str
+    password: Optional[str] = None
+
+
+DEFAULT_STARTING_PASSWORD = "haulyeah123"
 
 
 class UserPatchPayload(BaseModel):
@@ -2320,12 +2324,13 @@ async def create_user(payload: UserCreatePayload, p: Dict[str, Any] = Depends(re
     email = payload.email.strip().lower()
     if "@" not in email:
         raise HTTPException(status_code=422, detail="That email doesn't look right.")
-    if len(payload.password) < 8:
+    password = payload.password or DEFAULT_STARTING_PASSWORD
+    if len(password) < 8:
         raise HTTPException(status_code=422, detail="The password needs at least 8 characters.")
     if await mongo_db.users.find_one({"email": email}):
         raise HTTPException(status_code=409, detail="A user with that email already exists.")
     doc = {"_id": str(uuid4()), "name": payload.name.strip(), "email": email, "role": roles[0], "roles": roles,
-           "password_hash": hash_password(payload.password), "active": True, "must_change_password": True,
+           "password_hash": hash_password(password), "active": True, "must_change_password": True,
            "gps_consent_at": None, "created_at": now_iso()}
     await mongo_db.users.insert_one(doc)
     await audit(p, "created user", f"{doc['name']} ({email}, {'+'.join(roles)})")

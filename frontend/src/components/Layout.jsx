@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import {
   LayoutDashboard, Users, BookUser, Truck, KanbanSquare, PenLine, Receipt,
   CreditCard, Handshake, HelpCircle, Eye, EyeOff, RefreshCw, KeyRound, LogOut, Calculator, SlidersHorizontal, MessageSquareText, Video, UserRound,
-  HardHat, ClipboardList, AlarmClock, CalendarDays, Briefcase, Sun,
+  HardHat, ClipboardList, AlarmClock, CalendarDays, Briefcase, Sun, Megaphone,
 } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { useAuth } from "@/components/AuthGate";
@@ -23,6 +23,7 @@ const NAV = [
   { to: "/projects", label: "Projects", icon: Truck, roles: ["owner", "employee"] },
   { to: "/crew", label: "Crew", icon: HardHat, roles: ["owner"] },
   { to: "/jobs", label: "Jobs", icon: Briefcase, roles: ["owner"] },
+  { to: "/marketing", label: "Marketing", icon: Megaphone, roles: ["owner", "marketing"] },
   { to: "/today", label: "Today", icon: Sun, roles: ["crew"] },
   { to: "/jobs", label: "My Jobs", icon: ClipboardList, roles: ["crew"] },
   { to: "/clock", label: "Time Clock", icon: AlarmClock, roles: ["crew"] },
@@ -36,7 +37,7 @@ const NAV = [
   { to: "/help", label: "Help", icon: HelpCircle, roles: ["owner"] },
 ];
 
-const ROLE_LABEL = { owner: "Owner", sales: "Sales", employee: "Crew", crew: "Crew" };
+const ROLE_LABEL = { owner: "Owner", sales: "Sales", employee: "Crew", crew: "Crew", marketing: "Marketing" };
 
 const LiveIndicator = () => {
   const { health } = useApp();
@@ -54,7 +55,7 @@ export default function Layout() {
   const { role, canSwitch, switchRole, user } = useAuth();
   const navItems = NAV.filter((n) => n.roles.includes(role || "owner"));
   const multiRoles = (user?.roles || []).length > 1 ? user.roles : null;
-  const switchOptions = multiRoles || (canSwitch ? ["owner", "sales", "employee"] : null);
+  const switchOptions = multiRoles || (canSwitch ? ["owner", "sales", "employee", "marketing"] : null);
   useGpsPing(role);
 
   const handleSwitch = (r) => {
@@ -123,8 +124,8 @@ export default function Layout() {
               {privacy ? "Privacy on" : "Privacy off"}
             </Button>
           )}
-          <div className={`grid gap-2 ${role === "crew" ? "grid-cols-1" : "grid-cols-2"}`}>
-            {role !== "crew" && (
+          <div className={`grid gap-2 ${role === "crew" || role === "marketing" ? "grid-cols-1" : "grid-cols-2"}`}>
+            {role !== "crew" && role !== "marketing" && (
               <Button
                 data-testid="refresh-data-btn"
                 variant="outline"
@@ -160,8 +161,8 @@ export default function Layout() {
             <div className="hidden md:block" />
             <div className="flex items-center gap-2">
               {(role === "owner" || role === "crew") && <NotificationsBell />}
-              {role !== "crew" && <LiveIndicator />}
-              {role !== "crew" && (
+              {role !== "crew" && role !== "marketing" && <LiveIndicator />}
+              {role !== "crew" && role !== "marketing" && (
                 <Button data-testid="new-meet-btn" asChild variant="outline" size="sm" className="gap-1.5">
                   <a href="https://meet.google.com/new" target="_blank" rel="noreferrer">
                     <Video className="w-4 h-4" />
@@ -171,7 +172,7 @@ export default function Layout() {
               )}
             </div>
           </div>
-          {health.airtable_configured === false && role !== "crew" && (
+          {health.airtable_configured === false && role !== "crew" && role !== "marketing" && (
             <div data-testid="key-missing-banner" className="flex items-center gap-2 bg-amber-50 border-t border-amber-200 text-amber-800 text-sm px-4 md:px-8 py-2.5">
               <KeyRound className="w-4 h-4 shrink-0" />
               <span>
@@ -218,10 +219,11 @@ export default function Layout() {
                 <SelectItem value="owner">Owner view</SelectItem>
                 <SelectItem value="sales">Sales view</SelectItem>
                 <SelectItem value="employee">Crew view</SelectItem>
+                <SelectItem value="marketing">Marketing view</SelectItem>
               </SelectContent>
             </Select>
           )}
-          {role !== "crew" && (
+          {role !== "crew" && role !== "marketing" && (
             <button
               data-testid="tab-refresh-btn"
               onClick={refreshAll}

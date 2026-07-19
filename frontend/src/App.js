@@ -26,6 +26,7 @@ import TimeClock from "@/pages/TimeClock";
 import DaysOff from "@/pages/DaysOff";
 import CrewToday from "@/pages/CrewToday";
 import JobsBoard from "@/pages/JobsBoard";
+import MarketingDashboard from "@/pages/MarketingDashboard";
 import Track from "@/pages/Track";
 import { UpdateOverlay } from "@/components/UpdateOverlay";
 
@@ -57,6 +58,16 @@ function RoleRoutes() {
       </Routes>
     );
   }
+  if (role === "marketing") {
+    return (
+      <Routes>
+        <Route element={<Layout />}>
+          <Route path="/marketing" element={<MarketingDashboard />} />
+          <Route path="*" element={<Navigate to="/marketing" replace />} />
+        </Route>
+      </Routes>
+    );
+  }
   if (role === "employee") {
     return (
       <Routes>
@@ -80,6 +91,7 @@ function RoleRoutes() {
         <Route path="/projects" element={<Projects />} />
         <Route path="/crew" element={<Crew />} />
         <Route path="/jobs" element={<JobsBoard />} />
+        <Route path="/marketing" element={<MarketingDashboard />} />
         <Route path="/day-sheet" element={<DaySheet />} />
         <Route path="/tasks" element={<Tasks />} />
         <Route path="/blog" element={<Blog />} />

@@ -1,0 +1,52 @@
+{
+  "summary": "Iteration 6 — full end-to-end test of the new Marketing module + default-password onboarding. All 20 backend pytest tests pass and every requested frontend flow works. No blocking bugs found.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_marketing_module.py",
+    "/app/test_reports/pytest/marketing_iter6.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "TeamTab.jsx AddUserDialog initial state defaults roles to ['crew']. When the tester (or a real owner) wants a marketing-only user, they must remember to uncheck 'crew' first. Recommend either (a) starting with roles=[] so the operator has to pick, or (b) making the checkboxes single-select via a radio-like affordance, so that clicking 'marketing' auto-unchecks 'crew'. During QA I initially only added marketing while leaving crew checked and the created user landed on /today (crew nav) instead of /marketing because the backend uses roles[0] ('crew') as the primary role.",
+    "server.py create_user sets role from the first item of the roles list (roles[0]) — the ordering of the array from the frontend determines the user's landing page. Consider making 'primary_role' explicit or preferring 'marketing'/'owner' over 'crew' when a user has multiple roles, to remove this footgun.",
+    "MarketingDashboard.jsx uses window.location for date range presets is fine, but the 'mkt-airtable-banner' text is duplicated with the global 'Airtable key needed' banner in Layout — two amber banners appear together on /marketing. Not a bug, minor UX polish."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_marketing_module.py (new pytest suite covering marketing module + default password)"
+  ],
+  "success_rate": {
+    "backend": "100% (20/20 pytest tests passed)",
+    "frontend": "100% (11/11 requested flows verified)"
+  },
+  "test_credentials": "Owner HaulYeahOwner / HaulYeah2026! (worked). Crew javante@haulyeahmoves.com / JavCrew2026! (worked). Sales legacy blank username + SellMoves2026! (worked). Default new-user haulyeah123 (worked, forces change-password on first login).",
+  "seed_data_creation": "During testing I temporarily created two users via API/UI: (1) TEST_qamkt_<hex>@test.com by pytest and (2) qamarketing@test.com by frontend Playwright. BOTH have been deleted from mongo 'users' collection at end of run. Also removed a leftover test_qa_crew_temp@haulyeahmoves.com row from a previous iteration. Existing 2 review_requests docs were touched (toggled review.received and stars=4) — this is expected exercise of the flow and left in place per instructions. mongo 'ad_spend' collection cleaned by test (POST then DELETE). One threshold change was applied via UI (cplGreen=18) and via pytest (cplGreen=12) — thresholds now sit at the last pytest value.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend pytest suite: /app/backend/tests/test_marketing_module.py runs in ~3s and covers user-default-password, marketing token permissions, ad-spend CRUD + validation, thresholds owner-only + non-negative, and review-request PATCH. The Airtable-related endpoints (/api/tables/leads, /api/marketing/overview, /api/marketing/margin) return airtable_available:false / 503 in this preview — expected because AIRTABLE_API_KEY is empty. Two amber banners on /marketing (global 'Airtable key needed' + inline 'Lead numbers need the Airtable connection') is by design. Marketing thresholds now: cplGreen=12, cplRed=35, bookingGreen=0.35, bookingRed=0.12 — restore to defaults if you want cleaner state.",
+  "detailed_test_results": {
+    "backend_user_default_password": "PASS — POST /api/users {name, email, roles:[marketing]} with no password returns 200 + must_change_password=true. Login with default 'haulyeah123' succeeds and login response includes user.must_change_password=true. Mongo doc created with hashed pw and must_change_password=true, then deleted via cleanup.",
+    "backend_switch_role_marketing": "PASS — POST /api/auth/switch-role {role:'marketing'} as owner returns 200 + token with role=marketing. Marketing token has access to /marketing/overview (returns airtable_available:false, funnel/totals present), /marketing/ad-spend (list works), /marketing/thresholds (get works), /review-requests. Marketing token is correctly 403 on /marketing/margin and 403 on /tables/leads.",
+    "backend_ad_spend_crud": "PASS — POST /marketing/ad-spend with valid payload returns 200 + id. GET list shows the new entry. DELETE by id returns 200 and entry disappears. Validation: amount=0 → 422, campaign='   ' (whitespace) → 422, date_end < date_start → 422.",
+    "backend_thresholds_owner_only": "PASS — Marketing token PUT /marketing/thresholds → 403. Owner PUT with valid payload → 200 and value persists in subsequent GET. Owner PUT with negative value → 422.",
+    "backend_review_requests_patch": "PASS — 2 existing docs in DB (verified untouched otherwise). PATCH {review_received:true} → 200 and review.received=true. PATCH {stars:4} → 200 and review.stars=4. Verified persistence via subsequent GET. PATCH {stars:6} → 422, PATCH {stars:0} → 422.",
+    "frontend_marketing_nav_and_tabs": "PASS — Owner sidebar shows nav-marketing. Clicking loads /marketing with marketing-dashboard element. All 4 tabs present (mkt-tab-overview/adspend/reviews/margin). Presets mkt-preset-7/30/90 render as buttons; range inputs mkt-range-start/end are date inputs prefilled to a 30-day window. Amber mkt-airtable-banner shown as expected.",
+    "frontend_adspend_tab": "PASS — Filled campaign 'QA Test Campaign' + amount 500. Add btn created adspend-entry-row and a perf-row showing 'QA Test Campaign • $500 • 0 leads • CPL — (slate chip) • 0 booked • 0.0x ROAS (red chip)'. Threshold inputs editable for owner (disabled attr absent). threshold-save-btn saved thresholds with 'Thresholds saved.' toast. Delete btn removed the entry (row count 1 → 0).",
+    "frontend_reviews_tab": "PASS — reviews-table shows the 2 seeded review-row items. Clicking review-received-checkbox toggled data-state from 'checked' to 'unchecked' (persisted). Clicking review-star-4 set the row to 4 filled stars + received=true, which persisted across a full page reload (verified: [True, True, True, True, False]).",
+    "frontend_true_margin_owner_only": "PASS — mkt-tab-margin visible for owner and renders margin-table with 'No paid revenue or labor in this range yet.' empty-state (expected since no Airtable). Tab is HIDDEN for marketing role (verified via role-switch + fresh marketing login).",
+    "frontend_role_switch_marketing_view": "PASS — role-switch-select in sidebar now includes 'Marketing view'. Selecting it navigates to /marketing, hides mkt-tab-margin, and disables all 4 threshold inputs (disabled='' attr) + removes threshold-save-btn. Switching back to 'Owner view' restores the True Margin tab.",
+    "frontend_add_user_dialog_no_password": "PASS — add-user-btn opens add-user-dialog. NO password input inside dialog. add-user-default-password-note is present and text contains 'haulyeah123'. All 4 role checkboxes present (crew, sales, marketing, owner). add-user-save enables once name+email+role filled (with only name+email+role, no password). Save toast: 'QA Marketing added. Their starting password is haulyeah123 — they'll change it on first login.'",
+    "frontend_forced_password_change_and_marketing_landing": "PASS — Logged out then in as qamarketing@test.com / haulyeah123 → change-password-form shown (change-new-input, change-confirm-input, change-password-submit). Changed to QaMark2026! → 'Password set. You're in!' toast → landed on /marketing. Sidebar shows ONLY ['nav-marketing']. mkt-tab-margin hidden.",
+    "frontend_leads_source_dropdown": "PASS — New-lead modal 'Where did they find us?' is lead-source-select with exactly 6 options in order: ['Meta Ad', 'Google Business Profile', 'Referral', 'Repeat Customer', 'Walk-in/Other', 'Website — Direct']. Did NOT click save (Airtable is unavailable and Square live — safe).",
+    "regression_sales_legacy_login": "PASS — Blank username + SellMoves2026! → /leads.",
+    "regression_crew_login": "PASS — javante@haulyeahmoves.com / JavCrew2026! → /today with crew nav ['nav-today', 'nav-my-jobs', 'nav-time-clock', 'nav-days-off'].",
+    "regression_owner_pages": "PASS — /dashboard (redirects to '/', Dashboard renders), /jobs (JobsBoard renders), /settings (Settings page renders) — none throw error boundaries or contain 'Something went wrong' / TypeError."
+  }
+}

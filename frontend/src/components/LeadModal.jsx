@@ -9,7 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useApp } from "@/context/AppContext";
-import { LF, HOME_SIZES, CONTACT_METHODS, SPECIALTY_ITEMS } from "@/lib/fields";
+import { LF, HOME_SIZES, CONTACT_METHODS, SPECIALTY_ITEMS, LEAD_SOURCES } from "@/lib/fields";
 
 const blank = { name: "", phone: "", email: "", moveDate: "", from: "", to: "", homeSize: "", notes: "", source: "" };
 
@@ -117,7 +117,12 @@ export default function LeadModal({ open, onOpenChange }) {
           </div>
           <div>
             <Label>Where did they find us?</Label>
-            <Input data-testid="lead-source-input" value={form.source} onChange={set("source")} placeholder="Google, referral…" />
+            <Select value={form.source} onValueChange={(v) => setForm((f) => ({ ...f, source: v }))}>
+              <SelectTrigger data-testid="lead-source-select"><SelectValue placeholder="Pick the source" /></SelectTrigger>
+              <SelectContent>
+                {LEAD_SOURCES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+              </SelectContent>
+            </Select>
           </div>
           <div className="col-span-2">
             <Label>Notes</Label>

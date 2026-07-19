@@ -96,6 +96,7 @@ export const formatExtraValue = (v) => {
 
 export const LEAD_STATUSES = ["New", "Contacted", "Warm", "Hot", "Quoted", "Booked", "Lost", "Cold"];
 export const HOME_SIZES = ["Studio/1BR", "2BR", "3BR", "4BR+", "Labor-only (no truck)"];
+export const LEAD_SOURCES = ["Meta Ad", "Google Business Profile", "Referral", "Repeat Customer", "Walk-in/Other", "Website — Direct"];
 export const SPECIALTY_ITEMS = ["Piano", "Safe/vault", "Gym equipment", "Antiques/art", "Large sectional", "None"];
 export const CONTACT_METHODS = ["Text", "Call", "Email"];
 export const CONTACT_TYPES = ["Customer", "Realtor Partner", "Property Manager", "Storage Facility", "Vendor", "Crew"];
