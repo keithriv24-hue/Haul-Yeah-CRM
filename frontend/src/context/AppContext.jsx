@@ -2,6 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useRef, useSt
 import { toast } from "sonner";
 import { apiErrorMessage, createRecordApi, deleteRecordApi, getBusinessApi, getHealth, getRates, getSchemaApi, listRecords, listSquareInvoicesApi, saveBusinessApi, saveRatesApi, updateRecordApi } from "@/lib/api";
 import { DEFAULT_RATES } from "@/lib/pricing";
+import { LF } from "@/lib/fields";
 import { useAuth } from "@/components/AuthGate";
 
 const AppContext = createContext(null);
@@ -73,6 +74,22 @@ export const AppProvider = ({ children }) => {
     try {
       const list = await listSquareInvoicesApi();
       setSquareInvoices(list);
+      const paidLeadIds = new Set(list.filter((i) => i.status === "PAID" && i.lead_id && i.deposit_synced).map((i) => i.lead_id));
+      if (paidLeadIds.size) {
+        setData((d) => {
+          const leadRecords = d.leads?.records;
+          if (!leadRecords) return d;
+          return {
+            ...d,
+            leads: {
+              ...d.leads,
+              records: leadRecords.map((r) =>
+                paidLeadIds.has(r.id) ? { ...r, fields: { ...r.fields, [LF.depositPaid]: true } } : r
+              ),
+            },
+          };
+        });
+      }
       return list;
     } catch {
       return [];

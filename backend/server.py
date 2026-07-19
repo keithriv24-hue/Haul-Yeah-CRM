@@ -482,6 +482,16 @@ async def send_square_invoice(payload: SquareInvoicePayload, role: str = Depends
 
 
 SQUARE_TERMINAL_STATUSES = {"PAID", "REFUNDED", "CANCELED", "FAILED"}
+LEAD_DEPOSIT_PAID_FIELD = "fld7BsZG5A6S1oh7Z"
+
+
+async def mark_lead_deposit_paid(lead_id: str) -> bool:
+    try:
+        body = {"records": [{"id": lead_id, "fields": {LEAD_DEPOSIT_PAID_FIELD: True}}], "typecast": True}
+        await airtable_request("PATCH", TABLES["leads"], json_body=body)
+        return True
+    except HTTPException:
+        return False
 
 
 @api_router.get("/square/invoices")
@@ -496,12 +506,19 @@ async def list_square_invoices(role: str = Depends(require_auth)):
                 continue
             try:
                 data = await square_request("GET", f"/v2/invoices/{d['invoice_id']}")
-                new_status = data.get("invoice", {}).get("status", d.get("status"))
-                d["status"] = new_status
-                await mongo_db.square_invoices.update_one(
-                    {"invoice_id": d["invoice_id"]}, {"$set": {"status": new_status, "checked_at": now}})
-            except HTTPException:
+            except HTTPException as exc:
+                if exc.status_code == 404:
+                    await mongo_db.square_invoices.update_one(
+                        {"invoice_id": d["invoice_id"]}, {"$set": {"checked_at": now}})
                 continue
+            new_status = data.get("invoice", {}).get("status", d.get("status"))
+            d["status"] = new_status
+            updates: Dict[str, Any] = {"status": new_status, "checked_at": now}
+            if new_status == "PAID" and d.get("lead_id") and not d.get("deposit_synced"):
+                if await mark_lead_deposit_paid(d["lead_id"]):
+                    updates["deposit_synced"] = True
+                    d["deposit_synced"] = True
+            await mongo_db.square_invoices.update_one({"invoice_id": d["invoice_id"]}, {"$set": updates})
     docs.sort(key=lambda d: d.get("created_at") or "", reverse=True)
     return {"invoices": docs}
 
