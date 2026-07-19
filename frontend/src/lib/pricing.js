@@ -39,3 +39,14 @@ export function computeQuote(inputs, rates = DEFAULT_RATES, items = []) {
 }
 
 export const depositFromQuote = (quote, pct = 25) => Math.round((quote || 0) * pct) / 100;
+
+export function invoiceLineItems(q) {
+  const round2 = (n) => Math.round(n * 100) / 100;
+  const labor = round2(q.crewCharge + q.mileageOverage + q.cushion + (q.finalQuote - q.subtotal - q.cushion));
+  const lines = [{ name: "Local Moving Service — Crew & Truck", amount: labor }];
+  if (q.travelFee > 0) lines.push({ name: "Travel & Trip Fee", amount: round2(q.travelFee) });
+  if (q.stairs > 0) lines.push({ name: "Stair Carry", amount: round2(q.stairs) });
+  if (q.packing > 0) lines.push({ name: "Packing Service", amount: round2(q.packing) });
+  (q.itemLines || []).forEach((l) => lines.push({ name: l.qty > 1 ? `${l.name} × ${l.qty}` : l.name, amount: round2(l.amount) }));
+  return lines.filter((l) => l.amount > 0);
+}

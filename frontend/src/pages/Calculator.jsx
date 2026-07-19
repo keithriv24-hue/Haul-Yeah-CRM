@@ -7,8 +7,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { InstructionBanner, PageTitle, Private } from "@/components/Bits";
-import { computeQuote } from "@/lib/pricing";
-import { getRates, listCalcItemsApi } from "@/lib/api";
+import { computeQuote, invoiceLineItems } from "@/lib/pricing";
+import { getRates, listCalcItemsApi, saveQuoteBreakdownApi } from "@/lib/api";
 import { LF, f } from "@/lib/fields";
 import { PREFILL_BY_SIZE, QUOTE_COACH_LINE, CREW_GUIDE, quoteSaveFields } from "@/lib/quote";
 import { fmtDate, fmtMoney, fmtMoneyCents } from "@/lib/format";
@@ -179,6 +179,7 @@ export default function Calculator() {
     setSaving(true);
     try {
       await updateRecord("leads", lead.id, quoteSaveFields(lead, q, crew, hours));
+      saveQuoteBreakdownApi(lead.id, { lines: invoiceLineItems(q), finalQuote: q.finalQuote, deposit: q.deposit }).catch(() => {});
       toast.success(`Quote saved to ${f(lead, LF.name) || "lead"}. Status is now Quoted.`);
     } catch {}
     setSaving(false);

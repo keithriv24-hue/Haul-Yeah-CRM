@@ -6,9 +6,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { computeQuote } from "@/lib/pricing";
+import { computeQuote, invoiceLineItems } from "@/lib/pricing";
 import { fmtMoney } from "@/lib/format";
 import { useApp } from "@/context/AppContext";
+import { saveQuoteBreakdownApi } from "@/lib/api";
 import { LF, f } from "@/lib/fields";
 import { PREFILL_BY_SIZE, quoteSaveFields } from "@/lib/quote";
 import { QtyStepper, QuoteLines, useLivePricing } from "@/pages/Calculator";
@@ -45,6 +46,7 @@ export default function QuoteModal({ lead, open, onOpenChange }) {
     setSaving(true);
     try {
       await updateRecord("leads", lead.id, quoteSaveFields(lead, q, crew, hours));
+      saveQuoteBreakdownApi(lead.id, { lines: invoiceLineItems(q), finalQuote: q.finalQuote, deposit: q.deposit }).catch(() => {});
       toast.success("Quote saved. Lead is now Quoted.");
       onOpenChange(false);
     } catch {}

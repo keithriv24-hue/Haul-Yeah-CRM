@@ -1,0 +1,54 @@
+{
+  "summary": "Frontend E2E testing of Haul Yeah CRM new modules (jobs board, crew today, integrations card, tracking public page, review flow, clock-out review popup) — ALL requested user flows pass. Backend was pre-verified per main agent and not retested. Ran ~15 Playwright scenarios covering owner, crew and public (no-auth) surfaces plus regression on calculator and sales login.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/test_reports/owner_jobs.png",
+    "/app/test_reports/crew_today.png",
+    "/app/test_reports/crew_after_review.png",
+    "/app/test_reports/clock_flow.png",
+    "/app/test_reports/track_valid.png",
+    "/app/test_reports/calculator.png"
+  ],
+  "action_items": [
+    "(Data / non-blocking) Crew users Javante & Junior have NO phone numbers in the users collection. Because of this, the /today teammate row shows the name+position but no call/text icon links (frontend correctly hides ContactActions when phone is missing). The review request expected tel:/sms: links on the teammate row. Add crew phones via /crew or seed data so those icons appear."
+  ],
+  "critical_code_review_comments": [
+    "CrewToday.jsx sendReview('email') sets window.location.href to mailto: BEFORE awaiting sendReviewRequestApi — in real browsers this can pause JS/leave the page and the log call may or may not fire (in this test env it did fire and a new review row appeared, so the observed behavior matches the spec). Consider awaiting the API call first, then triggering the mailto, for reliability across browsers.",
+    "IntegrationsCard.jsx notification URL is bootstrapped from the current backend URL — showed 'https://moving-ops-1.preview.emergentagent.com/api/webhooks/square' rather than the production 'haulyeahadmin.com' URL. Not a bug in preview, just note that in production it needs to be verified/overridden.",
+    "JobsBoard.jsx PayRow generates data-testid via label.toLowerCase().replace(/[^a-z]+/g,'-') — 'Deposit Paid (25%)' becomes 'pay-row-deposit-paid-' (trailing dash), 'Paid in Full' becomes 'pay-row-paid-in-full'. Test works, but a slugify util that trims trailing dashes would be cleaner."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "not tested (pre-verified by main agent)",
+    "frontend": "100% (all 12 review-request scenarios passed)"
+  },
+  "test_credentials": "Owner HaulYeahOwner/HaulYeah2026!, Crew javante@haulyeahmoves.com/JavCrew2026!, Sales blank username + SellMoves2026!",
+  "seed_data_creation": "No new seed data created. During testing 1 extra review-request row was logged via the crew Email flow (INV-9042, email channel) — that is expected exercise of the flow and left in place; nothing else altered persistently (Junior/position and default_truck_pickup were both changed and restored to originals).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Test job INV-9042 tracking token in DB: c7593650d9d34ec2b5e65cb06423036a. Public /track/{token} works without auth (route defined outside AuthGate in App.js). Bosses bubble is rendered by Layout.jsx and appears on ALL crew pages incl. /today, /clock, /jobs (verified). OpenPhone remains not connected — SMS/Text buttons produce a friendly 503 toast ('OpenPhone is not connected. Add the API key and number in Settings → Integrations.') which is the EXPECTED correct behavior. Do NOT put anything in the Square access token secret input (Square is live).",
+  "detailed_test_results": {
+    "owner_jobs_board": "PASS — Jobs nav link present; /jobs shows job card 'Job #INV-9042'; deposit row shows green check + '$388 — paid Jun 20, 2026, 3:14 PM'; paid-in-full row red X + 'Not paid'; crew shows 'Javante (Driver), Junior (Lead)'; truck shows 'Truck 1'; three google.com/maps links (From/To/Truck pickup) all valid; NO square-sync-banner shown; review log has 1 pre-existing row (Javante Brown / email / John Smith / #INV-9042).",
+    "owner_assign_dialog": "PASS — Edit button opens assign-job-dialog; 3 crew checkboxes rendered, 2 pre-checked with position inputs (Driver, Lead); date=2026-07-19, time=09:00, pickup=114 Halsted St East Orange NJ, dropoff=88 Grove St Jersey City NJ, truck_pickup=3 Slater Dr Elizabeth NJ all prefilled; truck select has '+ Add new truck…' option confirmed; changed Junior Lead→Packer, Save & publish shows toast 'Saved. Assigned crew can see this job right now.', card updates to 'Junior (Packer)'; restored to Lead successfully.",
+    "owner_settings_integrations": "PASS — integrations-card visible; chips: Square connected, Square sync connected, OpenPhone not connected; Square token + webhook key inputs show placeholder '•••••••• saved — paste a new one to replace' (both isSet=true); notification URL prefilled; default truck pickup='3 Slater Dr, Elizabeth, NJ'; changed to '5 Test St, Newark, NJ' → Save → reload → persisted; restored to original; NO typing done in Square token input.",
+    "crew_today_page": "PASS — crew login lands on /today (default redirect); active-job-card shows Your Job Today / #INV-9042; my-position-chip='Your role: Driver'; start-time='Start: 9:00 AM'; truck='Truck: Truck 1'; teammate row shows 'Junior Santil / Lead' (see action_items — teammate has no phone so tel/sms icons are hidden — data issue); customer 'John Smith' with tel:+12015550123, sms:+12015550123, mailto:john.smith@example.com; maps-pickup, maps-dropoff, maps-truck-pickup all point to google.com/maps; NO '$' sign anywhere on crew page (verified via document.body.innerText scan).",
+    "bosses_contact_bubble": "PASS — owner-contacts-bubble visible on /today, /clock and /jobs (crew); opens owner-contacts-panel with Keith Rivera 201-247-8446 and Romeo Perry 862-224-6176, each with tel: and sms: links; reminder text 'If you text, start with your name and why you're reaching out.' present.",
+    "send_new_tracking_link": "PASS — button opens confirm-tracking-dialog; 'Yes, send it' triggers /api/... 503 (as expected) and shows red toast 'OpenPhone is not connected. Add the API key and number in Settings → Integrations.' — graceful, no crash.",
+    "review_section_sms": "PASS — textarea prefilled: 'Hi John, this is Javante with Haul Yeah Moving. Thanks for moving with us today! If we did a good job, would you leave us a quick review?' (contains 'John' and 'Javante'); 'Text it' produces same friendly 503 OpenPhone toast.",
+    "review_section_email": "PASS — 'Email it' click triggers mailto: navigation (browser stays on page in headless), and sendReviewRequestApi still logs the request — verified by owner /jobs review log gaining a new row (channel=email, John Smith, +12015550123, john.smith@example.com, #INV-9042) after crew clicked Email it.",
+    "clock_in_out_review_popup": "PASS — /clock crew page; clock-in-btn clicked → gps-consent-dialog appeared → agreed → clocked in (warning toast about no GPS since headless has none); clock-out-btn clicked → review-prompt-dialog appears with title 'Job done!' and body 'Nice work. Remember to ask the customer to leave a review...'; 'Ask for a review' button navigates to /today#review (URL confirmed).",
+    "public_tracking_valid_token": "PASS — /track/c7593650d9d34ec2b5e65cb06423036a loads WITHOUT login form; navy background page shows 'Job #INV-9042', date 'Sunday, July 19 · crew starts 9:00 AM', status 'Crew is en route — last updated 910 minutes ago.' (matches expected 'en route — last updated X minutes ago' branch); NO crew names (Javante/Junior absent), NO customer name (John Smith absent), NO '$' sign.",
+    "public_tracking_bad_token": "PASS — /track/badtoken123 shows friendly error 'This tracking link is no longer active. Reply to our text and we'll send a new one.'; NO login form appears.",
+    "regression_calculator_owner": "PASS — owner /calculator with 3 crew / 5.5 hrs / Truck / 24 miles → final quote = $1,350 (exact).",
+    "regression_leads_page": "PASS — owner /leads loads without crash; expected 'Airtable key needed' amber banner visible.",
+    "regression_sales_login": "PASS — sales login (blank username + SellMoves2026!) lands on /leads; sales calculator also yields $1,350 for the same inputs."
+  }
+}

@@ -14,7 +14,7 @@ import { Private, Money } from "@/components/Bits";
 import { LF, f } from "@/lib/fields";
 import { fmtMoney } from "@/lib/format";
 import { depositFromQuote } from "@/lib/pricing";
-import { getSquareStatusApi, sendSquareInvoiceApi, apiErrorMessage } from "@/lib/api";
+import { getSquareStatusApi, sendSquareInvoiceApi, getQuoteBreakdownApi, apiErrorMessage } from "@/lib/api";
 
 export default function SquareInvoiceModal({ lead, open, onOpenChange }) {
   const { updateRecord, loadSquareInvoices, rates } = useApp();
@@ -30,6 +30,7 @@ export default function SquareInvoiceModal({ lead, open, onOpenChange }) {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState(null);
+  const [breakdown, setBreakdown] = useState(null);
 
   useEffect(() => {
     if (open) {
@@ -37,8 +38,9 @@ export default function SquareInvoiceModal({ lead, open, onOpenChange }) {
       setChoice(quote ? "deposit" : "custom");
       setCustom("");
       getSquareStatusApi().then(setSquare).catch(() => setSquare({ configured: false }));
+      getQuoteBreakdownApi(lead.id).then((d) => setBreakdown(d.breakdown)).catch(() => setBreakdown(null));
     }
-  }, [open, quote]);
+  }, [open, quote, lead.id]);
 
   const amount = choice === "deposit" ? deposit : choice === "full" ? Number(quote) || 0 : Number(custom) || 0;
   const label = choice === "deposit" ? `${rates.depositPercent}% deposit` : choice === "full" ? "full quote" : "custom amount";
@@ -48,6 +50,7 @@ export default function SquareInvoiceModal({ lead, open, onOpenChange }) {
     setConfirmOpen(false);
     setSending(true);
     try {
+      const useLines = choice === "full" && breakdown?.lines?.length && Math.abs((breakdown.finalQuote || 0) - amount) < 0.01;
       const res = await sendSquareInvoiceApi({
         name,
         email,
@@ -55,6 +58,9 @@ export default function SquareInvoiceModal({ lead, open, onOpenChange }) {
         amount,
         description: `Haul Yeah Moving — ${label} for ${name}'s move`,
         lead_id: lead.id,
+        purpose: choice,
+        quote_total: Number(quote) || breakdown?.finalQuote || null,
+        ...(useLines ? { line_items: breakdown.lines } : {}),
       });
       setResult(res);
       loadSquareInvoices();

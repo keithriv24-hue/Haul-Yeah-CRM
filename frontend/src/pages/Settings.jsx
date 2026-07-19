@@ -37,6 +37,8 @@ const fmtStamp = (iso) =>
   iso ? `Last updated ${new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}` : "Using the starting value";
 const strMap = (vals) => Object.fromEntries(Object.entries(vals || {}).map(([k, v]) => [k, String(v)]));
 
+import { IntegrationsCard } from "@/components/IntegrationsCard";
+
 export default function Settings() {
   const { rates, saveRates, business, saveBusiness } = useApp();
   const [savedRates, setSavedRates] = useState(null);
@@ -270,6 +272,8 @@ export default function Settings() {
         />
         <p className="text-xs text-slate-500 mt-2">The "Ask for review" text on completed jobs uses this link.</p>
       </div>
+
+      <IntegrationsCard />
 
       <div className="fixed bottom-16 md:bottom-4 left-0 md:left-60 right-0 px-4 z-40">
         <div className="max-w-2xl mx-auto md:mx-0 bg-white border border-slate-200 rounded-lg shadow-lg p-3 flex items-center gap-3">

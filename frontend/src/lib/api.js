@@ -85,6 +85,18 @@ export const readAllNotificationsApi = () => axios.post(`${API}/notifications/re
 export const getCrewRatesApi = () => axios.get(`${API}/settings/crew-rates`).then((r) => r.data);
 export const saveCrewRatesApi = (rates) => axios.put(`${API}/settings/crew-rates`, rates).then((r) => r.data);
 export const laborReportApi = (params = {}) => axios.get(`${API}/reports/labor`, { params }).then((r) => r.data);
+export const getIntegrationsApi = () => axios.get(`${API}/settings/integrations`).then((r) => r.data);
+export const saveIntegrationsApi = (payload) => axios.put(`${API}/settings/integrations`, payload).then((r) => r.data);
+export const squareSyncStatusApi = () => axios.get(`${API}/square/sync-status`).then((r) => r.data);
+export const listJobsApi = () => axios.get(`${API}/jobs`).then((r) => r.data.jobs);
+export const patchJobApi = (id, payload) => axios.patch(`${API}/jobs/${id}`, payload).then((r) => r.data);
+export const crewActiveJobApi = () => axios.get(`${API}/crew/active-job`).then((r) => r.data);
+export const sendTrackingLinkApi = (jobId) => axios.post(`${API}/crew/jobs/${jobId}/tracking-link`).then((r) => r.data);
+export const sendReviewRequestApi = (jobId, payload) => axios.post(`${API}/crew/jobs/${jobId}/review-request`, payload).then((r) => r.data);
+export const listReviewRequestsApi = () => axios.get(`${API}/review-requests`).then((r) => r.data.requests);
+export const saveQuoteBreakdownApi = (leadId, breakdown) => axios.put(`${API}/quotes/${leadId}`, { breakdown }).then((r) => r.data);
+export const getQuoteBreakdownApi = (leadId) => axios.get(`${API}/quotes/${leadId}`).then((r) => r.data);
+export const trackApi = (token) => axios.get(`${API}/track/${token}`).then((r) => r.data);
 
 export const apiErrorMessage = (e) => {
   const detail = e?.response?.data?.detail;

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { AlarmClock, LogIn, LogOut, MapPin, Loader2 } from "lucide-react";
+import { AlarmClock, LogIn, LogOut, MapPin, Loader2, Star } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
@@ -27,7 +28,9 @@ export default function TimeClock() {
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState(false);
   const [consentOpen, setConsentOpen] = useState(false);
+  const [reviewOpen, setReviewOpen] = useState(false);
   const [now, setNow] = useState(Date.now());
+  const navigate = useNavigate();
 
   const load = useCallback(() => myTimeApi().then(setData).catch(() => setData({ entries: [], weekly_totals: {}, clocked_in: false })), []);
   useEffect(() => {
@@ -49,6 +52,7 @@ export default function TimeClock() {
         toast.success(res.job_name ? `Clocked in on "${res.job_name}" as ${res.position}.` : "Clocked in.");
       } else {
         toast.success(res.hours != null ? `Clocked out — ${res.hours} hours on the clock.` : "Clocked out.");
+        if (res.review_prompt) setReviewOpen(true);
       }
       if (!pos) toast.warning("Heads up: we couldn't read your location, so this punch has no GPS.");
       await load();
@@ -161,6 +165,25 @@ export default function TimeClock() {
             <AlertDialogCancel data-testid="gps-consent-cancel">Not now</AlertDialogCancel>
             <AlertDialogAction data-testid="gps-consent-agree-btn" onClick={agreeConsent} className="bg-[#E8743B] hover:bg-[#d4632e]">
               OK, clock me in
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={reviewOpen} onOpenChange={setReviewOpen}>
+        <AlertDialogContent data-testid="review-prompt-dialog">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="font-display flex items-center gap-2">
+              <Star className="w-5 h-5 text-[#E8743B]" /> Job done!
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Nice work. Remember to ask the customer to leave a review. You can send it right from the Today page.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="review-prompt-close">Not now</AlertDialogCancel>
+            <AlertDialogAction data-testid="review-prompt-open-btn" onClick={() => navigate("/today#review")} className="bg-[#E8743B] hover:bg-[#d4632e]">
+              Ask for a review
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

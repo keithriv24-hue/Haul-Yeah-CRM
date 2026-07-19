@@ -24,6 +24,9 @@ import Crew from "@/pages/Crew";
 import CrewJobs from "@/pages/CrewJobs";
 import TimeClock from "@/pages/TimeClock";
 import DaysOff from "@/pages/DaysOff";
+import CrewToday from "@/pages/CrewToday";
+import JobsBoard from "@/pages/JobsBoard";
+import Track from "@/pages/Track";
 import { UpdateOverlay } from "@/components/UpdateOverlay";
 
 function RoleRoutes() {
@@ -45,10 +48,11 @@ function RoleRoutes() {
     return (
       <Routes>
         <Route element={<Layout />}>
+          <Route path="/today" element={<CrewToday />} />
           <Route path="/jobs" element={<CrewJobs />} />
           <Route path="/clock" element={<TimeClock />} />
           <Route path="/days-off" element={<DaysOff />} />
-          <Route path="*" element={<Navigate to="/jobs" replace />} />
+          <Route path="*" element={<Navigate to="/today" replace />} />
         </Route>
       </Routes>
     );
@@ -75,6 +79,7 @@ function RoleRoutes() {
         <Route path="/contacts" element={<Contacts />} />
         <Route path="/projects" element={<Projects />} />
         <Route path="/crew" element={<Crew />} />
+        <Route path="/jobs" element={<JobsBoard />} />
         <Route path="/day-sheet" element={<DaySheet />} />
         <Route path="/tasks" element={<Tasks />} />
         <Route path="/blog" element={<Blog />} />
@@ -89,18 +94,27 @@ function RoleRoutes() {
   );
 }
 
+function AuthedApp() {
+  return (
+    <AuthGate>
+      <AppProvider>
+        <RoleRoutes />
+      </AppProvider>
+    </AuthGate>
+  );
+}
+
 function App() {
   return (
     <>
       <UpdateOverlay />
-      <AuthGate>
-        <AppProvider>
-          <BrowserRouter>
-            <RoleRoutes />
-          </BrowserRouter>
-          <Toaster position="top-center" richColors />
-        </AppProvider>
-      </AuthGate>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/track/:token" element={<Track />} />
+          <Route path="*" element={<AuthedApp />} />
+        </Routes>
+      </BrowserRouter>
+      <Toaster position="top-center" richColors />
     </>
   );
 }

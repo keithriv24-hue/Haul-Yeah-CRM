@@ -17,7 +17,7 @@ export default function useGpsPing(role) {
       }
     };
     ping();
-    const id = setInterval(ping, 4 * 60 * 1000);
+    const id = setInterval(ping, 45 * 1000);
     return () => {
       stop = true;
       clearInterval(id);

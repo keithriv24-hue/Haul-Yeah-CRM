@@ -4,11 +4,12 @@ import { toast } from "sonner";
 import {
   LayoutDashboard, Users, BookUser, Truck, KanbanSquare, PenLine, Receipt,
   CreditCard, Handshake, HelpCircle, Eye, EyeOff, RefreshCw, KeyRound, LogOut, Calculator, SlidersHorizontal, MessageSquareText, Video, UserRound,
-  HardHat, ClipboardList, AlarmClock, CalendarDays,
+  HardHat, ClipboardList, AlarmClock, CalendarDays, Briefcase, Sun,
 } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { useAuth } from "@/components/AuthGate";
 import { NotificationsBell } from "@/components/NotificationsBell";
+import { CrewContactsBubble } from "@/components/CrewContactsBubble";
 import useGpsPing from "@/lib/useGpsPing";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -21,6 +22,8 @@ const NAV = [
   { to: "/contacts", label: "Contacts", icon: BookUser, roles: ["owner"] },
   { to: "/projects", label: "Projects", icon: Truck, roles: ["owner", "employee"] },
   { to: "/crew", label: "Crew", icon: HardHat, roles: ["owner"] },
+  { to: "/jobs", label: "Jobs", icon: Briefcase, roles: ["owner"] },
+  { to: "/today", label: "Today", icon: Sun, roles: ["crew"] },
   { to: "/jobs", label: "My Jobs", icon: ClipboardList, roles: ["crew"] },
   { to: "/clock", label: "Time Clock", icon: AlarmClock, roles: ["crew"] },
   { to: "/days-off", label: "Days Off", icon: CalendarDays, roles: ["crew"] },
@@ -247,6 +250,8 @@ export default function Layout() {
           </button>
         </div>
       </nav>
+
+      {role === "crew" && <CrewContactsBubble />}
     </div>
   );
 }
