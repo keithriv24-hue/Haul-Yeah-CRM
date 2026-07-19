@@ -1,6 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { apiErrorMessage, createRecordApi, getHealth, getRates, getSchemaApi, listRecords, saveRatesApi, updateRecordApi } from "@/lib/api";
+import { apiErrorMessage, createRecordApi, deleteRecordApi, getHealth, getRates, getSchemaApi, listRecords, saveRatesApi, updateRecordApi } from "@/lib/api";
 import { DEFAULT_RATES } from "@/lib/pricing";
 import { useAuth } from "@/components/AuthGate";
 
@@ -138,12 +138,24 @@ export const AppProvider = ({ children }) => {
     }
   }, []);
 
+  const deleteRecord = useCallback(async (table, id) => {
+    const prevRecords = dataRef.current[table]?.records || [];
+    setData((d) => ({ ...d, [table]: { ...d[table], records: (d[table]?.records || []).filter((r) => r.id !== id) } }));
+    try {
+      await deleteRecordApi(table, id);
+    } catch (e) {
+      setData((d) => ({ ...d, [table]: { ...d[table], records: prevRecords } }));
+      toast.error(`Delete failed — record restored. ${apiErrorMessage(e)}`);
+      throw e;
+    }
+  }, []);
+
   const records = (table) => data[table]?.records || [];
   const tableState = (table) => data[table] || {};
 
   return (
     <AppContext.Provider
-      value={{ privacy, togglePrivacy, health, checkHealth, loadTable, refreshAll, refreshing, updateRecord, createRecord, records, tableState, rates, saveRates, schemas, loadSchema }}
+      value={{ privacy, togglePrivacy, health, checkHealth, loadTable, refreshAll, refreshing, updateRecord, createRecord, deleteRecord, records, tableState, rates, saveRates, schemas, loadSchema }}
     >
       {children}
     </AppContext.Provider>

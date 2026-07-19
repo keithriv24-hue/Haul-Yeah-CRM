@@ -29,6 +29,7 @@ export const listRecords = (table) => axios.get(`${API}/tables/${table}`).then((
 export const createRecordApi = (table, fields) => axios.post(`${API}/tables/${table}`, { fields }).then((r) => r.data);
 export const updateRecordApi = (table, id, fields) =>
   axios.patch(`${API}/tables/${table}/${id}`, { fields }).then((r) => r.data);
+export const deleteRecordApi = (table, id) => axios.delete(`${API}/tables/${table}/${id}`).then((r) => r.data);
 
 export const apiErrorMessage = (e) => {
   const detail = e?.response?.data?.detail;

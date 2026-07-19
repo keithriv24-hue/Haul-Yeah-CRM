@@ -11,6 +11,11 @@ export const PREFILL_BY_SIZE = {
 export const QUOTE_COACH_LINE =
   "Quote this as a range by phone — final price confirmed after access details are verified. Never promise the low number.";
 
+export const quoteSmsBody = (name, low, high, deposit) => {
+  const first = (name || "").trim().split(/\s+/)[0] || "there";
+  return `Hi ${first}, it's Haul Yeah Moving! Your move quote is ${fmtMoney(low)}–${fmtMoney(high)}. Final price is confirmed by phone. A ${fmtMoney(deposit)} deposit locks in your date. Want me to hold it?`;
+};
+
 export function quoteSaveFields(lead, q, crew, hours) {
   const oldNotes = f(lead, LF.notes) || "";
   const parts = [`${crew} crew × ${hours} hrs = ${fmtMoney(q.base)}`, `travel ${fmtMoney(q.travelFee)}`];

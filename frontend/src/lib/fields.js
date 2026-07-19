@@ -85,6 +85,15 @@ export const SF = {
 
 export const f = (record, fieldId) => record?.fields?.[fieldId];
 
+export const KNOWN_LEAD_FIELD_IDS = new Set(Object.values(LF));
+
+export const formatExtraValue = (v) => {
+  if (Array.isArray(v)) return v.map((x) => (typeof x === "object" ? x?.name || x?.url || "" : x)).filter(Boolean).join(", ");
+  if (typeof v === "boolean") return v ? "Yes" : "No";
+  if (typeof v === "object" && v !== null) return v.name || v.url || "";
+  return String(v);
+};
+
 export const LEAD_STATUSES = ["New", "Contacted", "Warm", "Hot", "Quoted", "Booked", "Lost", "Cold"];
 export const HOME_SIZES = ["Studio/1BR", "2BR", "3BR", "4BR+", "Labor-only (no truck)"];
 export const SPECIALTY_ITEMS = ["Piano", "Safe/vault", "Gym equipment", "Antiques/art", "Large sectional", "None"];

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { toast } from "sonner";
-import { Phone, Mail, Calculator, CreditCard, Truck, Plus, MapPin, CalendarDays, CalendarPlus, Home, Lightbulb, Package, StickyNote, Search } from "lucide-react";
+import { Phone, Mail, Calculator, CreditCard, Truck, Plus, MapPin, CalendarDays, CalendarPlus, Home, Lightbulb, Package, StickyNote, Search, MessageSquare, ChevronRight } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { useAuth } from "@/components/AuthGate";
 import { Button } from "@/components/ui/button";
@@ -8,14 +9,17 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { InstructionBanner, PageTitle, Private, Money, AgeTimer, EmptyState, LoadingRows } from "@/components/Bits";
+import { InstructionBanner, PageTitle, Private, Money, AgeTimer, EmptyState, LoadingRows, ConfirmDeleteButton } from "@/components/Bits";
 import QuoteModal from "@/components/QuoteModal";
 import DepositModal from "@/components/DepositModal";
 import LeadModal from "@/components/LeadModal";
-import { LF, PF, f, LEAD_STATUSES, STATUS_PILL, nextStepHint } from "@/lib/fields";
-import { fmtDate, gmailCompose, gmailSearch, calendarTemplate } from "@/lib/format";
+import { LF, f, LEAD_STATUSES, STATUS_PILL, nextStepHint, KNOWN_LEAD_FIELD_IDS, formatExtraValue } from "@/lib/fields";
+import { fmtDate, gmailCompose, gmailSearch, calendarTemplate, smsLink } from "@/lib/format";
+import { quoteSmsBody } from "@/lib/quote";
+import { lowFromHigh, depositFromQuote } from "@/lib/pricing";
+import { bookLeadAsJob } from "@/lib/leadActions";
 
-const AddNoteDialog = ({ lead, open, onOpenChange }) => {
+export const AddNoteDialog = ({ lead, open, onOpenChange }) => {
   const { updateRecord } = useApp();
   const [text, setText] = useState("");
   const [saving, setSaving] = useState(false);
@@ -53,19 +57,11 @@ const AddNoteDialog = ({ lead, open, onOpenChange }) => {
   );
 };
 
-const KNOWN_LEAD_FIELD_IDS = new Set(Object.values(LF));
-
-const formatExtraValue = (v) => {
-  if (Array.isArray(v)) return v.map((x) => (typeof x === "object" ? x?.name || x?.url || "" : x)).filter(Boolean).join(", ");
-  if (typeof v === "boolean") return v ? "Yes" : "No";
-  if (typeof v === "object" && v !== null) return v.name || v.url || "";
-  return String(v);
-};
-
 const LeadCard = ({ lead, onQuote, onDeposit, onNote }) => {
-  const { updateRecord, createRecord, schemas } = useApp();
+  const { updateRecord, createRecord, deleteRecord, schemas } = useApp();
   const { role } = useAuth();
   const isSales = role === "sales";
+  const isOwner = role === "owner";
   const [booking, setBooking] = useState(false);
 
   const extras = (schemas.leads || [])
@@ -85,17 +81,7 @@ const LeadCard = ({ lead, onQuote, onDeposit, onNote }) => {
   const bookAsJob = async () => {
     setBooking(true);
     try {
-      const fields = {
-        [PF.jobName]: `${name} — ${f(lead, LF.moveDate) ? fmtDate(f(lead, LF.moveDate)) : "date TBD"}`,
-        [PF.status]: "Pending Deposit",
-        [PF.lead]: [lead.id],
-      };
-      if (f(lead, LF.moveDate)) fields[PF.jobDate] = f(lead, LF.moveDate);
-      if (quote) fields[PF.quote] = quote;
-      if (f(lead, LF.from)) fields[PF.fromAddr] = f(lead, LF.from);
-      if (f(lead, LF.to)) fields[PF.toAddr] = f(lead, LF.to);
-      await createRecord("projects", fields);
-      await updateRecord("leads", lead.id, { [LF.status]: "Booked" });
+      await bookLeadAsJob({ createRecord, updateRecord }, lead);
       toast.success("Job created. Find it on the Projects page.");
     } catch {}
     setBooking(false);
@@ -106,7 +92,10 @@ const LeadCard = ({ lead, onQuote, onDeposit, onNote }) => {
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <Private className="font-display font-bold text-lg text-[#1B2A4A] truncate">{name}</Private>
+            <Link to={`/leads/${lead.id}`} data-testid="lead-open-link" className="group flex items-center gap-0.5 min-w-0">
+              <Private className="font-display font-bold text-lg text-[#1B2A4A] truncate group-hover:underline">{name}</Private>
+              <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-[#E8743B] shrink-0" />
+            </Link>
             {isSample && <span className="text-[10px] font-bold uppercase tracking-wide bg-slate-100 text-slate-500 border border-slate-300 rounded-full px-2 py-0.5">Sample</span>}
           </div>
           <div className="text-xs text-slate-500 mt-0.5 space-x-2">
@@ -180,7 +169,7 @@ const LeadCard = ({ lead, onQuote, onDeposit, onNote }) => {
         <span data-testid="lead-next-step">{nextStepHint(lead)}</span>
       </div>
 
-      <div className={`grid grid-cols-2 gap-1.5 ${isSales ? "sm:grid-cols-3" : "sm:grid-cols-4"}`}>
+      <div className={`grid grid-cols-2 gap-1.5 ${isSales ? "sm:grid-cols-4" : "sm:grid-cols-5"}`}>
         <Button data-testid="lead-call-btn" asChild variant="outline" size="sm" className="gap-1 text-xs" disabled={!phone}>
           <a href={phone ? `tel:${phone}` : undefined}><Phone className="w-3.5 h-3.5" /> Call</a>
         </Button>
@@ -211,6 +200,11 @@ const LeadCard = ({ lead, onQuote, onDeposit, onNote }) => {
         <Button data-testid="lead-quote-btn" variant="outline" size="sm" className="gap-1 text-xs" onClick={() => onQuote(lead)}>
           <Calculator className="w-3.5 h-3.5" /> Quote
         </Button>
+        <Button data-testid="lead-text-quote-btn" asChild variant="outline" size="sm" className="gap-1 text-xs" disabled={!phone || !quote}>
+          <a href={phone && quote ? smsLink(phone, quoteSmsBody(name, lowFromHigh(quote), quote, depositFromQuote(quote))) : undefined}>
+            <MessageSquare className="w-3.5 h-3.5" /> Text quote
+          </a>
+        </Button>
         <Button data-testid="lead-note-btn" variant="outline" size="sm" className="gap-1 text-xs" onClick={() => onNote(lead)}>
           <StickyNote className="w-3.5 h-3.5" /> Add note
         </Button>
@@ -229,6 +223,13 @@ const LeadCard = ({ lead, onQuote, onDeposit, onNote }) => {
               <Truck className="w-3.5 h-3.5" /> {status === "Booked" ? "Booked" : booking ? "Booking…" : "Book as job"}
             </Button>
           </>
+        )}
+        {isOwner && (
+          <ConfirmDeleteButton
+            what={`this lead`}
+            testId="lead-delete-btn"
+            onConfirm={() => deleteRecord("leads", lead.id).then(() => toast.success("Lead deleted.")).catch(() => {})}
+          />
         )}
       </div>
     </div>

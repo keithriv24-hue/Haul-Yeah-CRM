@@ -241,6 +241,19 @@ class TestRoles:
         r = requests.get(f"{BASE_URL}/api/airtable/verify", headers={"Authorization": f"Bearer {tok}"}, timeout=15)
         assert r.status_code == 403
 
+    def test_delete_is_owner_only(self):
+        for pw in (SALES_PW, EMPLOYEE_PW):
+            tok = _login(pw)["token"]
+            table = "leads" if pw == SALES_PW else "tasks"
+            r = requests.delete(f"{BASE_URL}/api/tables/{table}/recFAKE123", headers={"Authorization": f"Bearer {tok}"}, timeout=15)
+            assert r.status_code == 403, f"expected 403, got {r.status_code}"
+            assert r.json().get("detail") == "Only the owner can delete records."
+
+    def test_owner_delete_passes_role_check(self):
+        tok = _login(CORRECT_PW)["token"]
+        r = requests.delete(f"{BASE_URL}/api/tables/leads/recFAKE123", headers={"Authorization": f"Bearer {tok}"}, timeout=15)
+        assert r.status_code in (404, 422, 503), f"got {r.status_code}"
+
 
 class TestRoleSwitch:
     def test_owner_can_switch_to_sales_and_back(self):

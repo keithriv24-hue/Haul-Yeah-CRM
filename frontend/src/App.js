@@ -10,6 +10,7 @@ import Settings from "@/pages/Settings";
 import Layout from "@/components/Layout";
 import Dashboard from "@/pages/Dashboard";
 import Leads from "@/pages/Leads";
+import LeadDetail from "@/pages/LeadDetail";
 import Contacts from "@/pages/Contacts";
 import Projects from "@/pages/Projects";
 import Tasks from "@/pages/Tasks";
@@ -26,6 +27,7 @@ function RoleRoutes() {
       <Routes>
         <Route element={<Layout />}>
           <Route path="/leads" element={<Leads />} />
+          <Route path="/leads/:id" element={<LeadDetail />} />
           <Route path="/calculator" element={<Calculator />} />
           <Route path="/script" element={<Script />} />
           <Route path="*" element={<Navigate to="/leads" replace />} />
@@ -49,6 +51,7 @@ function RoleRoutes() {
       <Route element={<Layout />}>
         <Route path="/" element={<Dashboard />} />
         <Route path="/leads" element={<Leads />} />
+        <Route path="/leads/:id" element={<LeadDetail />} />
         <Route path="/calculator" element={<Calculator />} />
         <Route path="/contacts" element={<Contacts />} />
         <Route path="/projects" element={<Projects />} />

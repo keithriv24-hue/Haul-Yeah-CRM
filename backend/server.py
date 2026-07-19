@@ -398,6 +398,16 @@ async def update_record(table_key: str, record_id: str, payload: RecordPayload =
     return filter_record(data["records"][0], role, table_key)
 
 
+@api_router.delete("/tables/{table_key}/{record_id}")
+async def delete_record(table_key: str, record_id: str, role: str = Depends(require_auth)):
+    table_id = resolve_table(table_key)
+    check_table_access(role, table_key)
+    if role != "owner":
+        raise HTTPException(status_code=403, detail="Only the owner can delete records.")
+    await airtable_request("DELETE", table_id, path=f"/{record_id}")
+    return {"deleted": True, "id": record_id}
+
+
 app.include_router(auth_router)
 app.include_router(api_router)
 

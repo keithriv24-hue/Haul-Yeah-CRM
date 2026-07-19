@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { InstructionBanner, PageTitle, Private, EmptyState, LoadingRows } from "@/components/Bits";
+import { InstructionBanner, PageTitle, Private, EmptyState, LoadingRows, ConfirmDeleteButton } from "@/components/Bits";
 import { CF, f, CONTACT_TYPES } from "@/lib/fields";
 import { gmailCompose, gmailSearch } from "@/lib/format";
 
@@ -112,7 +112,7 @@ const ContactForm = ({ open, onOpenChange, contact }) => {
 };
 
 export default function Contacts() {
-  const { loadTable, records, tableState } = useApp();
+  const { loadTable, records, tableState, deleteRecord } = useApp();
   const [filter, setFilter] = useState("All");
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState(null);
@@ -179,7 +179,7 @@ export default function Contacts() {
                 {f(c, CF.company) && <div className="flex items-center gap-1.5"><Building2 className="w-3.5 h-3.5 text-slate-400" /> {f(c, CF.company)}</div>}
                 {f(c, CF.town) && <div className="flex items-center gap-1.5"><MapPin className="w-3.5 h-3.5 text-slate-400" /> {f(c, CF.town)}</div>}
               </div>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 mt-1">
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 mt-1">
                 <Button asChild variant="outline" size="sm" className="gap-1 text-xs" disabled={!f(c, CF.phone)} data-testid="contact-call-btn">
                   <a href={f(c, CF.phone) ? `tel:${f(c, CF.phone)}` : undefined}><Phone className="w-3.5 h-3.5" /> Call</a>
                 </Button>
@@ -192,6 +192,11 @@ export default function Contacts() {
                 <Button variant="outline" size="sm" className="gap-1 text-xs" onClick={() => { setEditing(c); setModalOpen(true); }} data-testid="contact-edit-btn">
                   <Pencil className="w-3.5 h-3.5" /> Edit
                 </Button>
+                <ConfirmDeleteButton
+                  what="this contact"
+                  testId="contact-delete-btn"
+                  onConfirm={() => deleteRecord("contacts", c.id).then(() => toast.success("Contact deleted.")).catch(() => {})}
+                />
               </div>
             </div>
           ))}

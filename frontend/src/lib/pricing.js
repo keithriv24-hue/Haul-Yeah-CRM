@@ -20,3 +20,5 @@ export function computeQuote({ crew, hours, travel, flights, piano }, rates = DE
 }
 
 export const depositFromQuote = (quoteHigh) => Math.round((quoteHigh || 0) * 0.25);
+
+export const lowFromHigh = (high) => Math.round((high || 0) / 1.1 / 50) * 50;

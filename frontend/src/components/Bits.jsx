@@ -1,9 +1,36 @@
 import React, { useEffect, useState } from "react";
-import { Info, Clock } from "lucide-react";
+import { Info, Clock, Trash2 } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { useAuth } from "@/components/AuthGate";
 import { fmtMoney, minutesSince, ageLabel } from "@/lib/format";
 import { STATUS_PILL } from "@/lib/fields";
+import { Button } from "@/components/ui/button";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
+  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+
+export const ConfirmDeleteButton = ({ what, onConfirm, testId, className = "" }) => (
+  <AlertDialog>
+    <AlertDialogTrigger asChild>
+      <Button data-testid={testId} variant="outline" size="sm" className={`gap-1 text-xs text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700 ${className}`}>
+        <Trash2 className="w-3.5 h-3.5" /> Delete
+      </Button>
+    </AlertDialogTrigger>
+    <AlertDialogContent data-testid="confirm-delete-dialog">
+      <AlertDialogHeader>
+        <AlertDialogTitle className="font-display">Delete {what}?</AlertDialogTitle>
+        <AlertDialogDescription>This removes it from Airtable for good. You can't undo this.</AlertDialogDescription>
+      </AlertDialogHeader>
+      <AlertDialogFooter>
+        <AlertDialogCancel data-testid="confirm-delete-cancel">Keep it</AlertDialogCancel>
+        <AlertDialogAction data-testid="confirm-delete-confirm" onClick={onConfirm} className="bg-red-600 hover:bg-red-700">
+          Yes, delete
+        </AlertDialogAction>
+      </AlertDialogFooter>
+    </AlertDialogContent>
+  </AlertDialog>
+);
 
 export const InstructionBanner = ({ children, testId = "instruction-banner" }) => (
   <div data-testid={testId} className="flex items-start gap-2 border border-[#1B2A4A]/15 bg-[#1B2A4A]/[0.04] text-[#1B2A4A] rounded-lg px-4 py-3 text-sm mb-6">

@@ -36,6 +36,10 @@ Full-stack internal CRM PWA for Haul Yeah Moving (weekend moving company, North 
 - [x] Quote rounding: computeQuote low & high now round to nearest $50 (deposit stays 25% of rounded high) — browser-verified ($975+$125 → $1,100–$1,200, deposit $300)
 - [x] Login password show/hide eye toggle (data-testid login-toggle-password-btn) — browser-verified
 - [x] Re-verified June 2026: global Privacy Mode (blur + localStorage hy_privacy) and To-Do kanban drag-and-drop implementations intact
+- [x] Lead Detail page (/leads/:id, owner + sales): full-page view with move details, extra Tally fields, quote box, full action set, and complete notes history timeline (newest first); lead card names link to it (data-testid lead-open-link)
+- [x] Delete records: DELETE /api/tables/{table}/{id} (owner-only, 403 otherwise — 34 pytest passing); Delete buttons with confirm dialog (ConfirmDeleteButton in Bits.jsx) on lead cards, contact cards, and lead detail; optimistic removal with rollback in AppContext.deleteRecord
+- [x] Text quote button on lead cards + detail: sms: deep link drafting "Hi {first}... quote $low–$high... $deposit locks your date" (low derived via lowFromHigh = round50(high/1.1))
+- [x] All Gmail links (compose + search) now open as contact@haulyeahmoves.com (authuser param / /u/{email}/ path) — SENDER_EMAIL in format.js
 
 ## Current status / blockers
 - AIRTABLE_API_KEY not yet added by user (secrets panel). All data routes return friendly 503 until then. Verify with GET /api/airtable/verify after key is added.
@@ -43,9 +47,9 @@ Full-stack internal CRM PWA for Haul Yeah Moving (weekend moving company, North 
 - Full end-to-end testing-agent run over Airtable data flows is pending the key.
 
 ## Backlog (prioritized)
-- P0: Verify Airtable connection once key is added; run full testing-agent pass over all data flows (leads CRUD, quote save, book-as-job, kanban drag, invoices mark-paid)
-- P1: Change-password affordance / logout button; delete-record support where useful; lead detail view with full notes history
-- P2: Google OAuth (Gmail/Calendar API) in v2; Square API deposits in v2; blog post publishing to a public site
+- P0: Verify Airtable connection once key is added; run full testing-agent pass over all data flows (leads CRUD incl. delete + detail page, quote save, text-quote link, book-as-job, kanban drag, invoices mark-paid)
+- P1: Lead detail polish (edit fields inline); delete support for other tables if useful
+- P2: Square API deposits in v2; blog post publishing to a public site
 
 ## Credentials
 See /app/memory/test_credentials.md (owner password, endpoints).

@@ -30,10 +30,14 @@ export const ageLabel = (mins) => {
   return `${Math.floor(mins / 1440)} days`;
 };
 
-export const gmailCompose = (to, subject = "", body = "") =>
-  `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(to || "")}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+export const SENDER_EMAIL = "contact@haulyeahmoves.com";
 
-export const gmailSearch = (query) => `https://mail.google.com/mail/#search/${encodeURIComponent(query || "")}`;
+export const gmailCompose = (to, subject = "", body = "") =>
+  `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(to || "")}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}&authuser=${encodeURIComponent(SENDER_EMAIL)}`;
+
+export const gmailSearch = (query) => `https://mail.google.com/mail/u/${SENDER_EMAIL}/#search/${encodeURIComponent(query || "")}`;
+
+export const smsLink = (phone, body) => `sms:${(phone || "").replace(/[^+\d]/g, "")}?&body=${encodeURIComponent(body)}`;
 
 export const calendarTemplate = (title, dateISO, details = "", guestEmail = "") => {
   const d = (dateISO || todayISO()).replace(/-/g, "");
