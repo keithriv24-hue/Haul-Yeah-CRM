@@ -9,9 +9,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { useApp } from "@/context/AppContext";
 import { createAssignmentApi, updateAssignmentApi, apiErrorMessage } from "@/lib/api";
-import { PF, f } from "@/lib/fields";
+import { PF, LF, f } from "@/lib/fields";
 
-const BLANK = { project_id: "", job_name: "", job_date: "", arrival_time: "", start_address: "", end_address: "", truck_id: "" };
+const BLANK = { project_id: "", job_name: "", job_date: "", arrival_time: "", start_address: "", end_address: "", truck_id: "", job_size: "" };
+const JOB_SIZES = ["Studio/1BR", "2BR", "3BR", "4BR+", "Office/Commercial", "Labor-only (no truck)"];
 
 export const AssignmentModal = ({ open, onOpenChange, initial, users, trucks, onSaved }) => {
   const { records, loadTable } = useApp();
@@ -27,6 +28,7 @@ export const AssignmentModal = ({ open, onOpenChange, initial, users, trucks, on
   useEffect(() => {
     if (!open) return;
     loadTable("projects");
+    loadTable("leads");
     if (initial) {
       setForm({
         project_id: initial.project_id || "",
@@ -36,6 +38,7 @@ export const AssignmentModal = ({ open, onOpenChange, initial, users, trucks, on
         start_address: initial.start_address || "",
         end_address: initial.end_address || "",
         truck_id: initial.truck_id || "",
+        job_size: initial.job_size || "",
       });
       setCrewSel(Object.fromEntries((initial.crew || []).map((c) => [c.user_id, c.position])));
     } else {
@@ -54,6 +57,9 @@ export const AssignmentModal = ({ open, onOpenChange, initial, users, trucks, on
     }
     const rec = projects.find((p) => p.id === id);
     if (!rec) return;
+    const leadIds = f(rec, PF.lead) || [];
+    const lead = records("leads").find((l) => leadIds.includes(l.id));
+    const homeSize = lead ? f(lead, LF.homeSize) : null;
     setForm((prev) => ({
       ...prev,
       project_id: id,
@@ -61,6 +67,7 @@ export const AssignmentModal = ({ open, onOpenChange, initial, users, trucks, on
       job_date: (f(rec, PF.jobDate) || prev.job_date || "").slice(0, 10),
       start_address: f(rec, PF.fromAddr) || prev.start_address,
       end_address: f(rec, PF.toAddr) || prev.end_address,
+      job_size: JOB_SIZES.includes(homeSize) ? homeSize : prev.job_size,
     }));
   };
 
@@ -137,6 +144,18 @@ export const AssignmentModal = ({ open, onOpenChange, initial, users, trucks, on
           <div>
             <Label>End address</Label>
             <Input data-testid="assignment-to-input" value={form.end_address} onChange={(e) => set("end_address")(e.target.value)} placeholder="456 Oak Ave, Newark NJ" />
+          </div>
+          <div>
+            <Label>Job size (goes on the time log)</Label>
+            <Select value={form.job_size || "none"} onValueChange={(v) => set("job_size")(v === "none" ? "" : v)}>
+              <SelectTrigger data-testid="assignment-size-select"><SelectValue placeholder="Pick a size" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">Not set</SelectItem>
+                {JOB_SIZES.map((s) => (
+                  <SelectItem key={s} value={s}>{s}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <div>
             <Label>Truck</Label>

@@ -1,15 +1,18 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { UserPlus, KeyRound, UserX, UserCheck, Truck, Plus, DollarSign } from "lucide-react";
+import { UserPlus, KeyRound, UserX, UserCheck, Truck, Plus, DollarSign, Pencil, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import {
-  listUsersApi, createUserApi, patchUserApi, listTrucksApi, createTruckApi, patchTruckApi,
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
+  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import {
+  listUsersApi, createUserApi, patchUserApi, listTrucksApi, createTruckApi, patchTruckApi, deleteTruckApi,
   getCrewRatesApi, saveCrewRatesApi, apiErrorMessage,
 } from "@/lib/api";
 
@@ -104,13 +107,57 @@ const ResetPasswordDialog = ({ user, onOpenChange, onSaved }) => {
   );
 };
 
+const EditTruckDialog = ({ truck, onOpenChange, onSaved }) => {
+  const [name, setName] = useState("");
+  const [plate, setPlate] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (truck) {
+      setName(truck.name || "");
+      setPlate(truck.plate || "");
+    }
+  }, [truck]);
+  const save = async () => {
+    setBusy(true);
+    try {
+      await patchTruckApi(truck.id, { name, plate });
+      toast.success("Truck updated.");
+      onOpenChange(null);
+      onSaved();
+    } catch (e) {
+      toast.error(apiErrorMessage(e));
+    }
+    setBusy(false);
+  };
+  return (
+    <Dialog open={!!truck} onOpenChange={() => onOpenChange(null)}>
+      <DialogContent data-testid="edit-truck-dialog">
+        <DialogHeader>
+          <DialogTitle className="font-display">Edit truck</DialogTitle>
+          <DialogDescription>The name is what shows on schedules and your Airtable time log.</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div><Label>Name</Label><Input data-testid="edit-truck-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Big Orange" /></div>
+          <div><Label>License plate</Label><Input data-testid="edit-truck-plate" value={plate} onChange={(e) => setPlate(e.target.value)} placeholder="XJT-4821" /></div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(null)}>Cancel</Button>
+          <Button data-testid="edit-truck-save" disabled={busy || !name.trim()} onClick={save} className="bg-[#E8743B] hover:bg-[#d4632e]">Save truck</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+};
+
 export const TeamTab = () => {
   const [users, setUsers] = useState([]);
   const [trucks, setTrucks] = useState([]);
   const [rates, setRates] = useState({ driver: 28, helper: 24 });
   const [addOpen, setAddOpen] = useState(false);
   const [resetUser, setResetUser] = useState(null);
+  const [editTruck, setEditTruck] = useState(null);
   const [newTruck, setNewTruck] = useState("");
+  const [newPlate, setNewPlate] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -139,17 +186,19 @@ export const TeamTab = () => {
   const addTruck = async () => {
     if (!newTruck.trim()) return;
     try {
-      await createTruckApi(newTruck.trim());
+      await createTruckApi({ name: newTruck.trim(), plate: newPlate.trim() });
       setNewTruck("");
+      setNewPlate("");
       load();
     } catch (e) {
       toast.error(apiErrorMessage(e));
     }
   };
 
-  const toggleTruck = async (t) => {
+  const removeTruck = async (t) => {
     try {
-      await patchTruckApi(t.id, { active: !t.active });
+      await deleteTruckApi(t.id);
+      toast.success(`${t.name} removed. Past jobs keep its name in their history.`);
       load();
     } catch (e) {
       toast.error(apiErrorMessage(e));
@@ -219,13 +268,36 @@ export const TeamTab = () => {
           <h2 className="font-bold text-[#1B2A4A] flex items-center gap-2 mb-3"><Truck className="w-4 h-4 text-[#E8743B]" /> Trucks</h2>
           <div className="space-y-2">
             {trucks.map((t) => (
-              <div key={t.id} data-testid="truck-row" className="flex items-center justify-between text-sm">
-                <span className={t.active ? "text-[#1B2A4A]" : "text-slate-400 line-through"}>{t.name}</span>
-                <Switch data-testid="truck-active-switch" checked={t.active} onCheckedChange={() => toggleTruck(t)} />
+              <div key={t.id} data-testid="truck-row" className="flex items-center gap-1 text-sm">
+                <div className="flex-1 min-w-0">
+                  <span className={t.active ? "text-[#1B2A4A] font-medium" : "text-slate-400 line-through"}>{t.name}</span>
+                  <span data-testid="truck-plate-label" className="text-xs text-slate-400 ml-2">{t.plate || "no plate"}</span>
+                </div>
+                <Button data-testid="edit-truck-btn" variant="ghost" size="sm" className="h-7 px-2" onClick={() => setEditTruck(t)}>
+                  <Pencil className="w-3.5 h-3.5" />
+                </Button>
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button data-testid="remove-truck-btn" variant="ghost" size="sm" className="h-7 px-2 text-red-600 hover:text-red-700">
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle className="font-display">Remove {t.name}?</AlertDialogTitle>
+                      <AlertDialogDescription>It can't be put on new jobs anymore. Past jobs keep its name in their history.</AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Keep it</AlertDialogCancel>
+                      <AlertDialogAction data-testid="confirm-remove-truck" onClick={() => removeTruck(t)} className="bg-red-600 hover:bg-red-700">Yes, remove</AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
               </div>
             ))}
             <div className="flex gap-2 pt-1">
-              <Input data-testid="new-truck-input" className="h-8" placeholder="New truck name" value={newTruck} onChange={(e) => setNewTruck(e.target.value)} />
+              <Input data-testid="new-truck-input" className="h-8" placeholder="Truck name" value={newTruck} onChange={(e) => setNewTruck(e.target.value)} />
+              <Input data-testid="new-truck-plate-input" className="h-8 w-24" placeholder="Plate" value={newPlate} onChange={(e) => setNewPlate(e.target.value)} />
               <Button data-testid="add-truck-btn" size="sm" variant="outline" onClick={addTruck}><Plus className="w-4 h-4" /></Button>
             </div>
           </div>
@@ -234,6 +306,7 @@ export const TeamTab = () => {
 
       <AddUserDialog open={addOpen} onOpenChange={setAddOpen} onSaved={load} />
       <ResetPasswordDialog user={resetUser} onOpenChange={setResetUser} onSaved={load} />
+      <EditTruckDialog truck={editTruck} onOpenChange={setEditTruck} onSaved={load} />
     </div>
   );
 };

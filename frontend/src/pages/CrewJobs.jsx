@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
+import { Checkbox } from "@/components/ui/checkbox";
 import { InstructionBanner } from "@/components/Bits";
 import { myJobsApi, setJobStatusApi, uploadJobPhotoApi, listJobPhotosApi, photoUrl, apiErrorMessage } from "@/lib/api";
 import { fmtDate, todayISO, mapsLink } from "@/lib/format";
@@ -19,6 +20,8 @@ const STATUS_STYLE = {
   "In Progress": "bg-indigo-100 text-indigo-800 border-indigo-300",
   Complete: "bg-emerald-100 text-emerald-800 border-emerald-300",
 };
+
+const DELAY_FACTORS = ["Stairs", "Long carry", "Elevator wait", "Customer not packed", "Heavy/specialty items", "Traffic", "Weather", "Customer added items", "None"];
 
 const PhotoSection = ({ jobId }) => {
   const [open, setOpen] = useState(false);
@@ -80,14 +83,22 @@ const JobCard = ({ job, onChanged }) => {
   const [busy, setBusy] = useState(false);
   const [completeOpen, setCompleteOpen] = useState(false);
   const [notes, setNotes] = useState("");
+  const [factors, setFactors] = useState([]);
+
+  const toggleFactor = (fct) =>
+    setFactors((cur) => {
+      if (cur.includes(fct)) return cur.filter((x) => x !== fct);
+      if (fct === "None") return ["None"];
+      return [...cur.filter((x) => x !== "None"), fct];
+    });
   const idx = STATUS_ORDER.indexOf(job.exec_status || "Assigned");
   const next = STATUS_ORDER[idx + 1];
   const NextIcon = next ? NEXT_ICON[next] : CheckCircle2;
 
-  const advance = async (status, extraNotes) => {
+  const advance = async (status, extraNotes, delayFactors) => {
     setBusy(true);
     try {
-      await setJobStatusApi(job.id, status, extraNotes);
+      await setJobStatusApi(job.id, status, extraNotes, delayFactors);
       toast.success(status === "Complete" ? "Job done — nice work!" : `Marked "${status}".`);
       setCompleteOpen(false);
       onChanged();

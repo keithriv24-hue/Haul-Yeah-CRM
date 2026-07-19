@@ -44,15 +44,18 @@ export const listUsersApi = () => axios.get(`${API}/users`).then((r) => r.data.u
 export const createUserApi = (u) => axios.post(`${API}/users`, u).then((r) => r.data);
 export const patchUserApi = (id, u) => axios.patch(`${API}/users/${id}`, u).then((r) => r.data);
 export const listTrucksApi = () => axios.get(`${API}/trucks`).then((r) => r.data.trucks);
-export const createTruckApi = (name) => axios.post(`${API}/trucks`, { name }).then((r) => r.data);
+export const createTruckApi = (t) => axios.post(`${API}/trucks`, t).then((r) => r.data);
 export const patchTruckApi = (id, t) => axios.patch(`${API}/trucks/${id}`, t).then((r) => r.data);
+export const deleteTruckApi = (id) => axios.delete(`${API}/trucks/${id}`).then((r) => r.data);
+export const calendarJobsApi = (month) => axios.get(`${API}/calendar/jobs`, { params: { month } }).then((r) => r.data);
+export const timelogStatusApi = () => axios.get(`${API}/timelog/status`).then((r) => r.data);
 export const listAssignmentsApi = (params = {}) => axios.get(`${API}/assignments`, { params }).then((r) => r.data.assignments);
 export const createAssignmentApi = (a) => axios.post(`${API}/assignments`, a).then((r) => r.data);
 export const updateAssignmentApi = (id, a) => axios.patch(`${API}/assignments/${id}`, a).then((r) => r.data);
 export const deleteAssignmentApi = (id) => axios.delete(`${API}/assignments/${id}`).then((r) => r.data);
 export const myJobsApi = () => axios.get(`${API}/crew/my-jobs`).then((r) => r.data.jobs);
-export const setJobStatusApi = (id, status, notes) =>
-  axios.post(`${API}/crew/jobs/${id}/status`, { status, notes }).then((r) => r.data);
+export const setJobStatusApi = (id, status, notes, delay_factors) =>
+  axios.post(`${API}/crew/jobs/${id}/status`, { status, notes, delay_factors }).then((r) => r.data);
 export const uploadJobPhotoApi = (id, file) => {
   const fd = new FormData();
   fd.append("file", file);

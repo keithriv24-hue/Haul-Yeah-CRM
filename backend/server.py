@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import bcrypt
 
@@ -832,6 +833,203 @@ def week_key(iso_ts: str) -> str:
     return f"{y}-W{w:02d}"
 
 
+# ------- Airtable "Job Time Log" mirror (CRM stays source of truth; never deletes Airtable records)
+
+TIMELOG_TABLE = "tbl6mv59JAOwUyI4Y"
+TL_ENTRY = "fld4JCy6E5QIGCEff"
+TL_JOB_DATE = "fldXZA65mkdSHAgjc"
+TL_CLOCK_IN = "flde2Su0f9dATc1Ql"
+TL_CLOCK_OUT = "flddYzKloZk6s8kSt"
+TL_CREW = "fldoE0yywtqOUjQ2i"
+TL_DRIVER = "fldh7dsS16LVAGiaE"
+TL_HELPERS = "fldUG4Lk8PXRz7xWx"
+TL_CREW_SIZE = "fldFS3A3c3gPTClVj"
+TL_TRUCK = "fldKEgVs6AZX0WSPR"
+TL_JOB_SIZE = "fldMqMgGkXeUaNUqa"
+TL_DELAY = "flddi4exe4gcay7lM"
+TL_NOTES = "fldcZhWqgiiR4odDI"
+TL_JOB_LINK = "fldqsqBRkDtUsCqbb"
+EASTERN = ZoneInfo("America/New_York")
+DELAY_FACTORS = ["Stairs", "Long carry", "Elevator wait", "Customer not packed", "Heavy/specialty items",
+                 "Traffic", "Weather", "Customer added items", "None"]
+JOB_SIZES = ["Studio/1BR", "2BR", "3BR", "4BR+", "Office/Commercial", "Labor-only (no truck)"]
+_timelog_lock = asyncio.Lock()
+
+
+def et_iso(iso_ts: str) -> str:
+    return datetime.fromisoformat(iso_ts).astimezone(EASTERN).isoformat()
+
+
+def timelog_entry_label(a: Dict[str, Any]) -> str:
+    try:
+        y, m, d = [int(x) for x in a["job_date"].split("-")]
+        short = f"{m}/{d}/{y % 100}"
+    except (ValueError, KeyError):
+        short = a.get("job_date", "")
+    return f"{a.get('job_name', '')} – {short}"
+
+
+async def find_timelog_project_id(a: Dict[str, Any]) -> Optional[str]:
+    if a.get("project_id"):
+        return a["project_id"]
+    try:
+        data = await airtable_request("GET", TABLES["projects"], params={"returnFieldsByFieldId": "true"})
+        for rec in data.get("records", []):
+            fields = rec.get("fields", {})
+            if (str(fields.get(PROJECT_NAME_FIELD) or "").strip().lower() == a.get("job_name", "").strip().lower()
+                    and str(fields.get(PROJECT_DATE_FIELD) or "")[:10] == a.get("job_date")):
+                return rec["id"]
+    except Exception:
+        pass
+    return None
+
+
+async def build_timelog_fields(a: Dict[str, Any], entries: List[Dict[str, Any]]) -> Dict[str, Any]:
+    ins = sorted(e["clock_in"]["at"] for e in entries if e.get("clock_in"))
+    open_left = [e for e in entries if not e.get("clock_out")]
+    outs = sorted(e["clock_out"]["at"] for e in entries if e.get("clock_out"))
+    crew = a.get("crew", [])
+    fields: Dict[str, Any] = {
+        TL_ENTRY: timelog_entry_label(a),
+        TL_JOB_DATE: a.get("job_date"),
+        TL_CLOCK_IN: et_iso(ins[0]),
+        TL_CREW: [c["name"] for c in crew],
+        TL_HELPERS: [c["name"] for c in crew if c.get("position") != "Driver"],
+        TL_CREW_SIZE: len(crew),
+    }
+    driver = next((c["name"] for c in crew if c.get("position") == "Driver"), None)
+    if driver:
+        fields[TL_DRIVER] = driver
+    if a.get("truck_name"):
+        fields[TL_TRUCK] = a["truck_name"]
+    if a.get("job_size"):
+        fields[TL_JOB_SIZE] = a["job_size"]
+    project_id = await find_timelog_project_id(a)
+    if project_id:
+        fields[TL_JOB_LINK] = [project_id]
+    if outs and not open_left:
+        fields[TL_CLOCK_OUT] = et_iso(outs[-1])
+    if a.get("delay_factors"):
+        fields[TL_DELAY] = a["delay_factors"]
+    if a.get("completion_notes"):
+        fields[TL_NOTES] = a["completion_notes"]
+    return fields
+
+
+async def find_existing_timelog(a: Dict[str, Any]) -> Optional[str]:
+    label = timelog_entry_label(a).replace('"', '\\"')
+    data = await airtable_request("GET", TIMELOG_TABLE,
+                                  params={"filterByFormula": f'{{Entry}}="{label}"', "maxRecords": 1})
+    recs = data.get("records", [])
+    return recs[0]["id"] if recs else None
+
+
+async def sync_timelog(assignment_id: str) -> bool:
+    async with _timelog_lock:
+        a = await mongo_db.assignments.find_one({"_id": assignment_id})
+        if not a:
+            return True
+        entries = await mongo_db.time_entries.find({"assignment_id": assignment_id}).to_list(50)
+        if not entries:
+            await mongo_db.assignments.update_one({"_id": assignment_id}, {"$unset": {"timelog_sync": ""}})
+            return True
+        try:
+            fields = await build_timelog_fields(a, entries)
+            rec_id = a.get("timelog_record_id") or await find_existing_timelog(a)
+            if rec_id:
+                patch_fields = {k: v for k, v in fields.items() if k != TL_CLOCK_IN}
+                await airtable_request("PATCH", TIMELOG_TABLE, f"/{rec_id}",
+                                       json_body={"fields": patch_fields, "typecast": True})
+            else:
+                created = await airtable_request("POST", TIMELOG_TABLE,
+                                                 json_body={"fields": fields, "typecast": True})
+                rec_id = created["id"]
+            await mongo_db.assignments.update_one({"_id": assignment_id}, {"$set": {
+                "timelog_record_id": rec_id,
+                "timelog_sync": {"status": "synced", "at": now_iso(), "error": None}}})
+            return True
+        except Exception as exc:
+            detail = getattr(exc, "detail", None)
+            msg = detail.get("message") if isinstance(detail, dict) else (str(detail) if detail else str(exc))
+            await mongo_db.assignments.update_one({"_id": assignment_id}, {"$set": {
+                "timelog_sync": {"status": "pending", "at": now_iso(), "error": str(msg)[:300]}}})
+            logger.warning("Time log sync pending for %s: %s", a.get("job_name"), msg)
+            return False
+
+
+async def queue_timelog_sync(assignment_id: Optional[str]):
+    if not assignment_id:
+        return
+    await mongo_db.assignments.update_one(
+        {"_id": assignment_id},
+        {"$set": {"timelog_sync.status": "pending", "timelog_sync.at": now_iso()}})
+    asyncio.create_task(sync_timelog(assignment_id))
+
+
+async def timelog_retry_loop():
+    while True:
+        await asyncio.sleep(90)
+        try:
+            docs = await mongo_db.assignments.find({"timelog_sync.status": "pending"}).to_list(50)
+            for d in docs:
+                await sync_timelog(d["_id"])
+        except Exception as exc:
+            logger.warning("Time log retry loop error: %s", exc)
+
+
+@api_router.get("/timelog/status")
+async def timelog_status(p: Dict[str, Any] = Depends(require_owner)):
+    pending = await mongo_db.assignments.find({"timelog_sync.status": "pending"}).to_list(100)
+    last = await mongo_db.assignments.find({"timelog_sync.status": "synced"}).sort("timelog_sync.at", -1).limit(1).to_list(1)
+    return {
+        "configured": bool(get_api_key()),
+        "pending": len(pending),
+        "pending_jobs": [{"job_name": d.get("job_name"), "job_date": d.get("job_date"),
+                          "error": (d.get("timelog_sync") or {}).get("error")} for d in pending],
+        "last_synced_at": ((last[0].get("timelog_sync") or {}).get("at")) if last else None,
+    }
+
+
+@api_router.get("/calendar/jobs")
+async def calendar_jobs(month: str, p: Dict[str, Any] = Depends(require_owner)):
+    if not re.fullmatch(r"\d{4}-\d{2}", month):
+        raise HTTPException(status_code=422, detail="month must look like 2026-07")
+    assignments = await mongo_db.assignments.find(
+        {"job_date": {"$gte": f"{month}-01", "$lte": f"{month}-31"}}).sort("job_date", 1).to_list(300)
+    ids = [a["_id"] for a in assignments]
+    entries = await mongo_db.time_entries.find({"assignment_id": {"$in": ids}}).to_list(1000)
+    by_assignment: Dict[str, List[Dict[str, Any]]] = {}
+    for e in entries:
+        by_assignment.setdefault(e["assignment_id"], []).append(e)
+    trucks = {t["_id"]: t for t in await mongo_db.trucks.find({}).to_list(100)}
+    days: Dict[str, List[Dict[str, Any]]] = {}
+    for a in assignments:
+        ent = by_assignment.get(a["_id"], [])
+        ins = sorted(e["clock_in"]["at"] for e in ent if e.get("clock_in"))
+        outs = sorted(e["clock_out"]["at"] for e in ent if e.get("clock_out"))
+        open_count = sum(1 for e in ent if not e.get("clock_out"))
+        worked_minutes = None
+        if ins and outs and not open_count:
+            try:
+                worked_minutes = int((datetime.fromisoformat(outs[-1]) - datetime.fromisoformat(ins[0])).total_seconds() // 60)
+            except ValueError:
+                worked_minutes = None
+        truck = trucks.get(a.get("truck_id") or "")
+        days.setdefault(a["job_date"], []).append({
+            "id": a["_id"], "job_name": a.get("job_name"), "job_size": a.get("job_size") or None,
+            "exec_status": a.get("exec_status"),
+            "crew": [{"name": c["name"], "position": c.get("position")} for c in a.get("crew", [])],
+            "crew_size": len(a.get("crew", [])),
+            "truck_name": a.get("truck_name"), "truck_plate": (truck or {}).get("plate") or None,
+            "delay_factors": a.get("delay_factors", []), "notes": a.get("completion_notes") or "",
+            "first_in": ins[0] if ins else None,
+            "last_out": outs[-1] if (outs and not open_count) else None,
+            "on_clock": open_count,
+            "worked_minutes": worked_minutes,
+        })
+    return {"month": month, "days": days}
+
+
 # ------- users management (owner)
 
 class UserCreatePayload(BaseModel):
@@ -921,25 +1119,28 @@ async def patch_user(user_id: str, payload: UserPatchPayload, p: Dict[str, Any] 
 
 class TruckPayload(BaseModel):
     name: str
+    plate: str = ""
 
 
 class TruckPatchPayload(BaseModel):
     name: Optional[str] = None
     active: Optional[bool] = None
+    plate: Optional[str] = None
 
 
 @api_router.get("/trucks")
 async def list_trucks(p: Dict[str, Any] = Depends(require_owner)):
     docs = await mongo_db.trucks.find({}).sort("name", 1).to_list(100)
-    return {"trucks": [{"id": t["_id"], "name": t["name"], "active": t.get("active", True)} for t in docs]}
+    return {"trucks": [{"id": t["_id"], "name": t["name"], "active": t.get("active", True),
+                        "plate": t.get("plate", "")} for t in docs]}
 
 
 @api_router.post("/trucks")
 async def create_truck(payload: TruckPayload, p: Dict[str, Any] = Depends(require_owner)):
-    doc = {"_id": str(uuid4()), "name": payload.name.strip(), "active": True}
+    doc = {"_id": str(uuid4()), "name": payload.name.strip(), "plate": payload.plate.strip(), "active": True}
     await mongo_db.trucks.insert_one(doc)
     await audit(p, "added truck", doc["name"])
-    return {"id": doc["_id"], "name": doc["name"], "active": True}
+    return {"id": doc["_id"], "name": doc["name"], "active": True, "plate": doc["plate"]}
 
 
 @api_router.patch("/trucks/{truck_id}")
@@ -952,11 +1153,23 @@ async def patch_truck(truck_id: str, payload: TruckPatchPayload, p: Dict[str, An
         updates["name"] = payload.name.strip()
     if payload.active is not None:
         updates["active"] = payload.active
+    if payload.plate is not None:
+        updates["plate"] = payload.plate.strip()
     if updates:
         await mongo_db.trucks.update_one({"_id": truck_id}, {"$set": updates})
         await audit(p, "edited truck", truck["name"], {"changes": updates})
     fresh = await mongo_db.trucks.find_one({"_id": truck_id})
-    return {"id": fresh["_id"], "name": fresh["name"], "active": fresh.get("active", True)}
+    return {"id": fresh["_id"], "name": fresh["name"], "active": fresh.get("active", True), "plate": fresh.get("plate", "")}
+
+
+@api_router.delete("/trucks/{truck_id}")
+async def delete_truck(truck_id: str, p: Dict[str, Any] = Depends(require_owner)):
+    truck = await mongo_db.trucks.find_one({"_id": truck_id})
+    if not truck:
+        raise HTTPException(status_code=404, detail="No such truck.")
+    await mongo_db.trucks.delete_one({"_id": truck_id})
+    await audit(p, "removed truck", truck["name"])
+    return {"deleted": True}
 
 
 # ------- assignments
@@ -974,6 +1187,7 @@ class AssignmentPayload(BaseModel):
     start_address: str = ""
     end_address: str = ""
     truck_id: Optional[str] = None
+    job_size: str = ""
     crew: List[CrewSlot] = []
     ignore_warnings: bool = False
 
@@ -1021,6 +1235,8 @@ async def list_assignments(start: Optional[str] = None, end: Optional[str] = Non
 async def create_assignment(payload: AssignmentPayload, p: Dict[str, Any] = Depends(require_owner)):
     if not payload.job_date:
         raise HTTPException(status_code=422, detail="Pick a job date.")
+    if payload.job_size and payload.job_size not in JOB_SIZES:
+        raise HTTPException(status_code=422, detail="Pick a real job size.")
     crew_ids = [c.user_id for c in payload.crew]
     for c in payload.crew:
         if c.position not in ("Driver", "Helper"):
@@ -1040,6 +1256,7 @@ async def create_assignment(payload: AssignmentPayload, p: Dict[str, Any] = Depe
         "job_date": payload.job_date, "arrival_time": payload.arrival_time,
         "start_address": payload.start_address.strip(), "end_address": payload.end_address.strip(),
         "truck_id": payload.truck_id, "truck_name": truck["name"] if truck else None,
+        "job_size": payload.job_size,
         "crew": [{"user_id": c.user_id, "name": users_by_id[c.user_id]["name"], "position": c.position} for c in payload.crew],
         "site_coords": site_coords, "exec_status": "Assigned", "status_history": [],
         "completion_notes": "", "review_prompted": False,
@@ -1062,6 +1279,8 @@ async def update_assignment(assignment_id: str, payload: AssignmentPayload,
     existing = await mongo_db.assignments.find_one({"_id": assignment_id})
     if not existing:
         raise HTTPException(status_code=404, detail="No such assignment.")
+    if payload.job_size and payload.job_size not in JOB_SIZES:
+        raise HTTPException(status_code=422, detail="Pick a real job size.")
     crew_ids = [c.user_id for c in payload.crew]
     users = await mongo_db.users.find({"_id": {"$in": crew_ids}, "active": True}).to_list(50)
     users_by_id = {u["_id"]: u for u in users}
@@ -1078,6 +1297,7 @@ async def update_assignment(assignment_id: str, payload: AssignmentPayload,
         "job_name": payload.job_name.strip(), "job_date": payload.job_date, "arrival_time": payload.arrival_time,
         "start_address": payload.start_address.strip(), "end_address": payload.end_address.strip(),
         "truck_id": payload.truck_id, "truck_name": truck["name"] if truck else None,
+        "job_size": payload.job_size,
         "crew": [{"user_id": c.user_id, "name": users_by_id[c.user_id]["name"], "position": c.position} for c in payload.crew],
         "site_coords": site_coords, "updated_at": now_iso(),
     }
@@ -1093,6 +1313,7 @@ async def update_assignment(assignment_id: str, payload: AssignmentPayload,
                      "assignment", {"assignment_id": assignment_id})
     await audit(p, "updated job assignment", updates["job_name"],
                 {"date": updates["job_date"], "crew": [f"{c['name']} ({c['position']})" for c in updates["crew"]]})
+    await queue_timelog_sync(assignment_id)
     fresh = await mongo_db.assignments.find_one({"_id": assignment_id})
     return {**_sanitize_assignment(fresh), "warnings": warnings}
 
@@ -1138,6 +1359,7 @@ async def my_jobs(p: Dict[str, Any] = Depends(require_crew)):
 class StatusPayload(BaseModel):
     status: str
     notes: Optional[str] = None
+    delay_factors: Optional[List[str]] = None
 
 
 @api_router.post("/crew/jobs/{assignment_id}/status")
@@ -1151,6 +1373,8 @@ async def set_job_status(assignment_id: str, payload: StatusPayload, p: Dict[str
     updates: Dict[str, Any] = {"exec_status": payload.status, "updated_at": now_iso()}
     if payload.status == "Complete" and payload.notes:
         updates["completion_notes"] = payload.notes.strip()
+    if payload.status == "Complete" and payload.delay_factors is not None:
+        updates["delay_factors"] = [d for d in payload.delay_factors if d in DELAY_FACTORS]
     await mongo_db.assignments.update_one({"_id": assignment_id},
                                           {"$set": updates, "$push": {"status_history": event}})
     if payload.status == "Complete" and not a.get("review_prompted"):
@@ -1159,6 +1383,8 @@ async def set_job_status(assignment_id: str, payload: StatusPayload, p: Dict[str
                      f"{p['name']} marked \"{a.get('job_name')}\" complete. Send the customer a review text from Projects.",
                      "job_complete", {"assignment_id": assignment_id, "project_id": a.get("project_id")})
     await audit(p, f"set job status to {payload.status}", a.get("job_name") or assignment_id)
+    if payload.status == "Complete":
+        await queue_timelog_sync(assignment_id)
     fresh = await mongo_db.assignments.find_one({"_id": assignment_id})
     return _crew_job_view(fresh, p["user_id"])
 
@@ -1314,6 +1540,7 @@ async def clock_in(payload: PunchPayload, p: Dict[str, Any] = Depends(require_cr
     if coords:
         await mongo_db.gps_pings.insert_one({"_id": str(uuid4()), "user_id": p["user_id"], "user_name": p["name"],
                                              "lat": payload.lat, "lng": payload.lng, "at": now.isoformat()})
+    await queue_timelog_sync(doc["assignment_id"])
     return {"entry_id": doc["_id"], "clocked_in_at": doc["clock_in"]["at"], "job_name": doc["job_name"],
             "position": position, "flags": doc["flags"]}
 
@@ -1333,6 +1560,7 @@ async def clock_out(payload: PunchPayload, p: Dict[str, Any] = Depends(require_c
         flags.append(f"long_shift_{hours:.1f}h")
     await mongo_db.time_entries.update_one({"_id": entry["_id"]},
                                            {"$set": {"clock_out": clock_out_data, "hours": hours, "flags": flags}})
+    await queue_timelog_sync(entry.get("assignment_id"))
     return {"entry_id": entry["_id"], "hours": hours, "flags": flags}
 
 
@@ -1435,6 +1663,7 @@ async def patch_time_entry(entry_id: str, payload: TimeEntryPatch, p: Dict[str, 
             updates["hours"] = entry_hours(merged)
         await mongo_db.time_entries.update_one({"_id": entry_id}, {"$set": updates})
         await audit(p, "edited time entry", f"{entry['user_name']} — {entry['clock_in']['at'][:10]}", {"changes": changes})
+        await queue_timelog_sync(entry.get("assignment_id"))
     fresh = await mongo_db.time_entries.find_one({"_id": entry_id})
     return {"id": fresh["_id"], "hours": fresh.get("hours"), "approved": fresh.get("approved", False),
             "edited": fresh.get("edited", False), "clock_in": fresh["clock_in"], "clock_out": fresh.get("clock_out")}
@@ -1627,7 +1856,7 @@ async def labor_report(start: Optional[str] = None, end: Optional[str] = None,
     revenue_by_project: Dict[str, float] = {}
     if get_api_key():
         try:
-            data = await airtable_request("GET", TABLES["projects"])
+            data = await airtable_request("GET", TABLES["projects"], params={"returnFieldsByFieldId": "true"})
             for rec in data.get("records", []):
                 fields = rec.get("fields", {})
                 revenue_by_project[rec["id"]] = float(fields.get(PROJECT_REVENUE_FIELD) or fields.get(PROJECT_QUOTE_FIELD) or 0)
@@ -1698,9 +1927,10 @@ async def seed_on_startup():
                     "must_change_password": s["role"] != "owner", "gps_consent_at": None, "created_at": now_iso()})
         if await mongo_db.trucks.count_documents({}) == 0:
             for i in range(1, 6):
-                await mongo_db.trucks.insert_one({"_id": str(uuid4()), "name": f"Truck {i}", "active": True})
+                await mongo_db.trucks.insert_one({"_id": str(uuid4()), "name": f"Truck {i}", "plate": "", "active": True})
     except Exception as exc:
         logger.error("Startup seeding failed: %s", exc)
+    asyncio.create_task(timelog_retry_loop())
 
 
 app.include_router(auth_router)

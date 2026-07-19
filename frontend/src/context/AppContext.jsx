@@ -57,9 +57,9 @@ export const AppProvider = ({ children }) => {
 
   useEffect(() => {
     checkHealth();
-    getRates().then(setRates).catch(() => {});
-    getBusinessApi().then(setBusiness).catch(() => {});
-  }, [checkHealth]);
+    if (role === "owner" || role === "sales") getRates().then(setRates).catch(() => {});
+    if (role === "owner") getBusinessApi().then(setBusiness).catch(() => {});
+  }, [checkHealth, role]);
 
   const saveRates = useCallback(async (newRates) => {
     const saved = await saveRatesApi(newRates);

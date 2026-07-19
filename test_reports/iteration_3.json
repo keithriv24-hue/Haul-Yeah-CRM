@@ -1,0 +1,49 @@
+{
+  "summary": "Iteration 3 — validated the new features layered on top of the crew module. NEW: Owner Dashboard Work calendar, Airtable Job Time Log auto-mirror with pending-queue behavior, truck management upgrade (name + plate + delete-with-confirm), assignment job_size dropdown, and console-noise fix for crew view. Wrote /app/backend/tests/test_new_features.py — 13/13 passed. E2E: owner login → set Truck 1 plate NJX-1234 → create QA Cal Move (3BR, Truck 1, Javante DRIVER + Junior HELPER, ignore warnings). Javante clocked in on the assignment, advanced En Route → Arrived → In Progress → opened Finish dialog → typed note → Mark complete → clocked out. Owner Dashboard calendar for today showed a dot on the day; clicking it rendered the QA Cal Move cal-job-card with Javante Brown DRIVER + Junior Santil HELPER chips, Size: 3BR, 2 crew, 'Truck 1 · NJX-1234', notes, and hours (0h 0m — punches were <1 min apart). Sync badge showed 'Airtable key missing' consistently (expected). Truck ADD (name+plate) → visible + in Assign dropdown → REMOVE opens confirm-remove-truck dialog → confirmed → gone + removed from dropdown + toast preserves history. Console 403 count while logged in as crew = 0 (the 8x-403 regression is fixed). Backend regression: 28/29 previous-suite tests still pass (the 1 known test_create_reset_deactivate_user duplicate-email idempotency artifact — pre-documented). Cleanup: QA Cal Move deleted, Truck 1 plate reset to empty, 2 stale TEST_QA_Truck_ZZ trucks removed, timelog pending count returned to 0. One CRITICAL frontend bug found: the Finish-job dialog does NOT render delay-factor checkboxes.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/timelog/status", "issue": "pending_jobs entries only include job_name/job_date/error — no assignment_id. Two jobs with the same job_name+date would be indistinguishable in the badge tooltip and telemetry. Suggest adding assignment_id to pending_jobs for observability."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "CrewJobs.jsx complete-job-dialog", "issue": "Delay-factor checkboxes are NOT rendered in the Finish-job dialog. Code declares DELAY_FACTORS, factors state, toggleFactor handler, and imports Checkbox — but the JSX in lines 152-166 renders only the notes Textarea + Mark complete. Also, the Mark-complete onClick calls advance('Complete', notes) without passing factors, so even if the user could toggle them, they would never be sent to the backend. Result: crew cannot record delay factors from the UI; the cal-delay-chip section on the owner calendar will always be empty. Playwright confirmed 0 elements matched [data-testid='delay-factor-option']. Backend accepts delay_factors correctly (verified with pytest), so this is purely a rendering bug.", "selector": "[data-testid='delay-factor-option']", "priority": "HIGH"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Owner Dashboard — console noise (owner view only)", "issues": ["When Airtable key is empty, the Dashboard fires periodic Airtable-proxy calls (via Squarish poller + tables refreshes) and the browser logs 10+ 'Failed to load resource: 503' messages. Crew view is now clean (0 x 403). Not a bug, just noise. Owner-side probes could also be role/health-gated to only fire when health.airtable_configured is true."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_new_features.py",
+    "/app/backend/tests/test_crew_module.py",
+    "/app/test_reports/pytest/new_features_iter3.xml",
+    "/app/test_reports/pytest/crew_regression_iter3.xml"
+  ],
+  "action_items": [
+    "HIGH — Fix CrewJobs.jsx Finish dialog: render the delay-factor checkboxes (data-testid='delay-factor-option') using the existing DELAY_FACTORS + toggleFactor + Checkbox, and change the Mark-complete onClick from advance('Complete', notes) to advance('Complete', notes, factors) so factors are actually sent to POST /api/crew/jobs/{id}/status. Also reset factors state when dialog closes.",
+    "LOW — Add assignment_id to /api/timelog/status pending_jobs response for better observability.",
+    "LOW — Role/health-gate the owner-side Airtable-proxy polls when health.airtable_configured is false to eliminate the 10x 503 console noise."
+  ],
+  "critical_code_review_comments": [
+    "CrewJobs.jsx line 152-166 — the Finish dialog is missing the checkbox render block. The imported Checkbox + DELAY_FACTORS + factors/toggleFactor are dead code. This is the root cause of the delay-factors-not-recorded bug.",
+    "server.py is now 1947 lines (up from 1717 last iteration). Still well past the 700-line split threshold. Consider splitting into modules (auth, users, trucks, assignments, timelog, calendar, crew, storage, business).",
+    "server.py /api/trucks endpoint DOES delete (mongo.delete_one), which is the desired semantics for the new Remove button — good. But note that the delete is hard: past assignments keep their frozen truck_name copy on the assignment doc (verified in test); however if any future code path relied on trucks.find({_id: X}) it would 404 for old truck ids.",
+    "server.py timelog_status doesn't include assignment_id in pending_jobs — see minor backend issue.",
+    "Timelog retry loop runs every ~60s; there is no exponential backoff/dead-letter — with empty AIRTABLE_API_KEY every pending row will be re-processed indefinitely. Fine for preview, but consider a max-attempts cap or 5xx-vs-4xx branching in production."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_new_features.py (new — 13 tests: trucks with plate/CRUD/DELETE 404, timelog/status configured=false + role guard, calendar/jobs + role guard + bad-month 422, assignment job_size on create/patch + calendar echo + JOB_SIZES validation, delay_factors persist through crew status flow + shown on calendar, pending queue grows after clock-in with 'Airtable' error + clears after assignment DELETE, deleted-truck history preserved on assignment)"
+  ],
+  "success_rate": {
+    "backend": "100% (13/13 new-features tests) + 28/29 crew_module regression (the known duplicate-email artifact is pre-documented)",
+    "frontend": "95% — all new-feature UI flows verified except the delay-factor checkboxes which are NOT rendered in the dialog (1 critical bug)"
+  },
+  "test_credentials": "Unchanged from iteration_2. Owner HaulYeahOwner/HaulYeah2026!, Javante javante@haulyeahmoves.com/JavCrew2026!, Junior junior@haulyeahmoves.com/JunCrew2026!.",
+  "seed_data_creation": "Created and cleaned up: QA Cal Move assignment (deleted), TEST_QA_Truck_Add + TEST_QA_Truck_ZZ trucks (deleted), Truck 1 plate temporarily NJX-1234 (reset to empty). One time entry punched by Javante remains in Time Clock recent-punches list (there is no DELETE endpoint for time entries — by design). Timelog pending count returned to 0 after assignment deletion (confirms 'pending doc deleted with the assignment').",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "The Airtable Job Time Log auto-mirror + retry queue is correctly plumbed at the backend and Mongo; sync sits at 'pending' with error mentioning Airtable key/api_key when AIRTABLE_API_KEY is empty — that is CORRECT. Owner Dashboard Work calendar + trucks-with-plate + assignment job_size + DELETE truck all work end-to-end (backend + frontend). The ONLY functional gap is the Finish-job dialog missing the delay-factor checkbox UI in /app/frontend/src/pages/CrewJobs.jsx (lines 152-166) — fix that and re-test the crew Finish flow + verify cal-delay-chip renders on the owner calendar. Backend already accepts delay_factors properly (verified).",
+  "rca_of_the_issue": "Root cause of the delay-factors bug: developer added the DELAY_FACTORS constant, factors state and toggleFactor handler + Checkbox import to CrewJobs.jsx JobCard, and wired the backend/data models (StatusPayload.delay_factors, calendar echo, delay-factor chips, DELAY_FACTORS whitelist), but forgot to render the actual checkbox UI inside <DialogContent data-testid='complete-job-dialog'>. Result: JSX only shows the Textarea + confirm button; the Mark-complete onClick calls advance('Complete', notes) instead of advance('Complete', notes, factors). Fix: after the <Textarea>, insert a small grid of <label><Checkbox data-testid='delay-factor-option' checked={factors.includes(fct)} onCheckedChange={() => toggleFactor(fct)}/> {fct}</label> for each DELAY_FACTORS entry, then change the onClick to advance('Complete', notes, factors) and reset factors + notes when the dialog closes."
+}

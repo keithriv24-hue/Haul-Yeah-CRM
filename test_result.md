@@ -192,3 +192,8 @@ test_plan:
 agent_communication:
   - agent: "main"
     message: "Crew module frontend complete. Credentials in /app/memory/test_credentials.md. CAUTION: Square is LIVE — do not create real invoices. Airtable is live production data — avoid deleting/patching real leads/projects; creating a Mongo assignment (not Airtable) is safe and deletable."
+
+# --- Session 3: Airtable Job Time Log sync + Work Calendar + Truck management ---
+# Backend: timelog sync engine (server.py ~line 838-1030): queue_timelog_sync marks assignments timelog_sync.status=pending then background sync; retry loop every 90s; /api/timelog/status (owner); /api/calendar/jobs?month=YYYY-MM (owner); trucks now have plate + DELETE /api/trucks/{id}; AssignmentPayload has job_size; StatusPayload has delay_factors.
+# Frontend: WorkCalendar.jsx on owner Dashboard (day view + sync badge); AssignmentModal job-size select w/ lead prefill; CrewJobs Finish dialog delay-factor checkboxes; TeamTab truck edit(plate)/remove.
+# Verified by main agent via curl: full punch->pending-queue->calendar pipeline + exact Airtable payload (field IDs, ET timestamps). AIRTABLE_API_KEY still EMPTY in preview so real Airtable writes untestable — queue holds punches (by design).

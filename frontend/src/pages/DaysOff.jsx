@@ -68,7 +68,7 @@ export default function DaysOff() {
                 data-date={dateStr}
                 onClick={() => toggle(dateStr)}
                 className={`aspect-square rounded-md text-sm font-semibold flex flex-col items-center justify-center transition-colors ${
-                  off ? "bg-red-100 text-red-700 border border-red-300" : "bg-slate-50 text-[#1B2A4A] border border-transparent hover:border-slate-300"
+                  off ? "bg-red-500 text-white border border-red-600 shadow-inner" : "bg-slate-50 text-[#1B2A4A] border border-transparent hover:border-slate-300"
                 } ${isToday ? "ring-2 ring-[#E8743B]" : ""}`}
               >
                 {d}
