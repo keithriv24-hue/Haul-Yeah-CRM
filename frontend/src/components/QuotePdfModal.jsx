@@ -37,17 +37,18 @@ export default function QuotePdfModal({ lead, open, onOpenChange }) {
   const buildSimple = async () => {
     setBuilding(true);
     try {
-      await saveQuoteBreakdownApi(lead.id, {
+      const r = await saveQuoteBreakdownApi(lead.id, {
         lines: [{ name: "Local Moving Service — flat rate", amount: Number(quote) }],
         finalQuote: Number(quote),
         deposit: depositFromQuote(quote, rates.depositPercent),
         customerName: name,
+        customerPhone: phone,
         fromAddress: f(lead, LF.from) || "",
         toAddress: f(lead, LF.to) || "",
         moveDate: f(lead, LF.moveDate) || "",
       });
       setData(await getQuoteBreakdownApi(lead.id));
-      toast.success("PDF is ready.");
+      toast.success(r.sms_sent ? "PDF ready — and texted to the customer." : "PDF is ready.");
     } catch (e) {
       toast.error(apiErrorMessage(e));
     }

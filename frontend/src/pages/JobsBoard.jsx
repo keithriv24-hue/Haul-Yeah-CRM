@@ -57,7 +57,7 @@ const AddrLink = ({ label, addr, testId }) =>
   );
 
 function AssignDialog({ job, users, trucks, onSaved, onClose, onTruckCreated }) {
-  const crewUsers = users.filter((u) => u.role === "crew");
+  const crewUsers = users.filter((u) => u.active !== false && (u.roles || [u.role]).includes("crew"));
   const [sel, setSel] = useState(() => (job.crew || []).map((c) => ({ user_id: c.user_id, position: c.position })));
   const [truckId, setTruckId] = useState(job.truck_id || "");
   const [newTruck, setNewTruck] = useState("");

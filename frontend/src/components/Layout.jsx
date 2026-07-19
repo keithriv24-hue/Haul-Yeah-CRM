@@ -51,8 +51,10 @@ const LiveIndicator = () => {
 
 export default function Layout() {
   const { privacy, togglePrivacy, refreshAll, refreshing, health } = useApp();
-  const { role, canSwitch, switchRole } = useAuth();
+  const { role, canSwitch, switchRole, user } = useAuth();
   const navItems = NAV.filter((n) => n.roles.includes(role || "owner"));
+  const multiRoles = (user?.roles || []).length > 1 ? user.roles : null;
+  const switchOptions = multiRoles || (canSwitch ? ["owner", "sales", "employee"] : null);
   useGpsPing(role);
 
   const handleSwitch = (r) => {
@@ -94,15 +96,15 @@ export default function Layout() {
           ))}
         </nav>
         <div className="border-t border-white/10 p-4 space-y-2">
-          {canSwitch ? (
-            <Select value={role || "owner"} onValueChange={handleSwitch}>
+          {switchOptions ? (
+            <Select value={role || switchOptions[0]} onValueChange={handleSwitch}>
               <SelectTrigger data-testid="role-switch-select" className="w-full h-8 text-xs font-bold uppercase tracking-wide text-white border-white/20 bg-white/10">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="owner">Owner view</SelectItem>
-                <SelectItem value="sales">Sales view</SelectItem>
-                <SelectItem value="employee">Crew view</SelectItem>
+                {switchOptions.map((r) => (
+                  <SelectItem key={r} value={r} data-testid={`switch-option-${r}`}>{ROLE_LABEL[r] || r} view</SelectItem>
+                ))}
               </SelectContent>
             </Select>
           ) : (

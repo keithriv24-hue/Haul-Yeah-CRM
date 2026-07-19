@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
@@ -23,17 +24,34 @@ const ROLE_BADGE = {
   crew: "bg-orange-100 text-orange-800 border-orange-300",
 };
 
+const RoleChecks = ({ roles, onToggle, idPrefix }) => (
+  <div>
+    <Label>Roles (pick all that apply)</Label>
+    <div className="space-y-1.5 mt-1">
+      {["crew", "sales", "owner"].map((r) => (
+        <label key={r} className="flex items-center gap-2 text-sm cursor-pointer">
+          <Checkbox data-testid={`${idPrefix}-role-${r}`} checked={roles.includes(r)} onCheckedChange={() => onToggle(r)} />
+          <span className="capitalize text-[#1B2A4A]">{r}</span>
+        </label>
+      ))}
+    </div>
+    <p className="text-[11px] text-slate-400 mt-1.5">Someone with Crew + Sales can flip between both views from the sidebar.</p>
+  </div>
+);
+
 const AddUserDialog = ({ open, onOpenChange, onSaved }) => {
-  const [form, setForm] = useState({ name: "", email: "", role: "crew", password: "" });
+  const [form, setForm] = useState({ name: "", email: "", roles: ["crew"], password: "" });
   const [busy, setBusy] = useState(false);
   const set = (k) => (v) => setForm((f) => ({ ...f, [k]: v }));
+  const toggleRole = (r) =>
+    setForm((f) => ({ ...f, roles: f.roles.includes(r) ? f.roles.filter((x) => x !== r) : [...f.roles, r] }));
 
   const save = async () => {
     setBusy(true);
     try {
-      await createUserApi(form);
+      await createUserApi({ name: form.name, email: form.email, password: form.password, roles: form.roles, role: form.roles[0] });
       toast.success(`${form.name} added. They'll set their own password on first login.`);
-      setForm({ name: "", email: "", role: "crew", password: "" });
+      setForm({ name: "", email: "", roles: ["crew"], password: "" });
       onOpenChange(false);
       onSaved();
     } catch (e) {
@@ -52,24 +70,50 @@ const AddUserDialog = ({ open, onOpenChange, onSaved }) => {
         <div className="space-y-3">
           <div><Label>Name</Label><Input data-testid="add-user-name" value={form.name} onChange={(e) => set("name")(e.target.value)} placeholder="First Last" /></div>
           <div><Label>Email (their login)</Label><Input data-testid="add-user-email" type="email" value={form.email} onChange={(e) => set("email")(e.target.value)} placeholder="name@haulyeahmoves.com" /></div>
-          <div>
-            <Label>Role</Label>
-            <Select value={form.role} onValueChange={set("role")}>
-              <SelectTrigger data-testid="add-user-role"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="crew">Crew</SelectItem>
-                <SelectItem value="sales">Sales</SelectItem>
-                <SelectItem value="owner">Owner</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+          <RoleChecks roles={form.roles} onToggle={toggleRole} idPrefix="add-user" />
           <div><Label>Starting password (8+ characters)</Label><Input data-testid="add-user-password" value={form.password} onChange={(e) => set("password")(e.target.value)} placeholder="e.g. HaulCrew2026!" /></div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button data-testid="add-user-save" disabled={busy || !form.name || !form.email || form.password.length < 8} onClick={save} className="bg-[#E8743B] hover:bg-[#d4632e]">
+          <Button data-testid="add-user-save" disabled={busy || !form.name || !form.email || form.password.length < 8 || form.roles.length === 0} onClick={save} className="bg-[#E8743B] hover:bg-[#d4632e]">
             Add them
           </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+};
+
+const EditRolesDialog = ({ user, onOpenChange, onSaved }) => {
+  const [roles, setRoles] = useState([]);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (user) setRoles(user.roles?.length ? user.roles : [user.role]);
+  }, [user]);
+  const toggleRole = (r) => setRoles((s) => (s.includes(r) ? s.filter((x) => x !== r) : [...s, r]));
+  const save = async () => {
+    setBusy(true);
+    try {
+      await patchUserApi(user.id, { roles });
+      toast.success(`${user.name}'s roles updated. It kicks in the next time they log in or switch views.`);
+      onOpenChange(null);
+      onSaved();
+    } catch (e) {
+      toast.error(apiErrorMessage(e));
+    }
+    setBusy(false);
+  };
+  return (
+    <Dialog open={!!user} onOpenChange={() => onOpenChange(null)}>
+      <DialogContent data-testid="edit-roles-dialog">
+        <DialogHeader>
+          <DialogTitle className="font-display">{user?.name}'s roles</DialogTitle>
+          <DialogDescription>Pick every hat they wear. Crew + Sales gives them a view switcher in their sidebar.</DialogDescription>
+        </DialogHeader>
+        <RoleChecks roles={roles} onToggle={toggleRole} idPrefix="edit-user" />
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(null)}>Cancel</Button>
+          <Button data-testid="edit-roles-save" disabled={busy || roles.length === 0} onClick={save} className="bg-[#E8743B] hover:bg-[#d4632e]">Save roles</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -156,6 +200,7 @@ export const TeamTab = () => {
   const [rates, setRates] = useState({ driver: 28, helper: 24 });
   const [addOpen, setAddOpen] = useState(false);
   const [resetUser, setResetUser] = useState(null);
+  const [rolesUser, setRolesUser] = useState(null);
   const [fileUser, setFileUser] = useState(null);
   const [editTruck, setEditTruck] = useState(null);
   const [newTruck, setNewTruck] = useState("");
@@ -232,9 +277,14 @@ export const TeamTab = () => {
                 <p className="font-semibold text-[#1B2A4A] text-sm">{u.name}</p>
                 <p className="text-xs text-slate-500">{u.email}</p>
               </div>
-              <Badge variant="outline" className={`text-[10px] ${ROLE_BADGE[u.role] || ""}`}>{u.role}</Badge>
+              {(u.roles?.length ? u.roles : [u.role]).map((r) => (
+                <Badge key={r} variant="outline" className={`text-[10px] ${ROLE_BADGE[r] || ""}`}>{r}</Badge>
+              ))}
               {!u.active && <Badge variant="outline" className="text-[10px] bg-red-50 text-red-600 border-red-200">off</Badge>}
               {u.must_change_password && u.active && <Badge variant="outline" className="text-[10px] bg-amber-50 text-amber-700 border-amber-200">temp password</Badge>}
+              <Button data-testid="edit-roles-btn" variant="outline" size="sm" className="gap-1 text-xs" onClick={() => setRolesUser(u)}>
+                <Pencil className="w-3.5 h-3.5" /> Roles
+              </Button>
               <Button data-testid="employee-file-btn" variant="outline" size="sm" className="gap-1 text-xs" onClick={() => setFileUser(u)}>
                 <IdCard className="w-3.5 h-3.5" /> File
               </Button>
@@ -310,6 +360,7 @@ export const TeamTab = () => {
       </div>
 
       <AddUserDialog open={addOpen} onOpenChange={setAddOpen} onSaved={load} />
+      <EditRolesDialog user={rolesUser} onOpenChange={setRolesUser} onSaved={load} />
       <ResetPasswordDialog user={resetUser} onOpenChange={setResetUser} onSaved={load} />
       <EmployeeFileDialog user={fileUser} onOpenChange={setFileUser} />
       <EditTruckDialog truck={editTruck} onOpenChange={setEditTruck} onSaved={load} />

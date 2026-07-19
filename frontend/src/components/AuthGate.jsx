@@ -223,9 +223,10 @@ export default function AuthGate({ children }) {
     const d = await switchRoleApi(targetRole);
     localStorage.setItem("hy_token", d.token);
     localStorage.setItem("hy_role", d.role);
-    localStorage.setItem("hy_can_switch", "1");
+    localStorage.setItem("hy_can_switch", d.can_switch ? "1" : "0");
     setRole(d.role);
-    setCanSwitch(true);
+    setCanSwitch(!!d.can_switch);
+    if (d.user) setUser(d.user);
     return d.role;
   };
 

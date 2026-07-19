@@ -48,8 +48,11 @@ export default function QuoteModal({ lead, open, onOpenChange }) {
       await updateRecord("leads", lead.id, quoteSaveFields(lead, q, crew, hours));
       saveQuoteBreakdownApi(lead.id, {
         lines: invoiceLineItems(q), finalQuote: q.finalQuote, deposit: q.deposit,
-        customerName: f(lead, LF.name) || "", fromAddress: f(lead, LF.from) || "",
-        toAddress: f(lead, LF.to) || "", moveDate: f(lead, LF.moveDate) || "",
+        customerName: f(lead, LF.name) || "", customerPhone: f(lead, LF.phone) || "",
+        fromAddress: f(lead, LF.from) || "", toAddress: f(lead, LF.to) || "", moveDate: f(lead, LF.moveDate) || "",
+      }).then((r) => {
+        if (r.sms_sent) toast.success("Quote PDF texted to the customer automatically.");
+        else if (r.sms_note && !r.sms_note.startsWith("Customer already")) toast.info(r.sms_note);
       }).catch(() => {});
       toast.success("Quote saved. Lead is now Quoted.");
       onOpenChange(false);

@@ -111,11 +111,11 @@ def make_token(role: str, owner_switch: bool = False) -> str:
     return jwt.encode(claims, os.environ["JWT_SECRET"], algorithm=JWT_ALGORITHM)
 
 
-def make_user_token(user: Dict[str, Any]) -> str:
+def make_user_token(user: Dict[str, Any], role: Optional[str] = None) -> str:
     claims = {
         "sub": user["email"],
         "uid": user["_id"],
-        "role": user["role"],
+        "role": role or user["role"],
         "type": "access",
         "exp": datetime.now(timezone.utc) + timedelta(days=30),
     }
@@ -147,13 +147,16 @@ async def principal_from_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         user = await mongo_db.users.find_one({"_id": uid})
         if not user or not user.get("active", True):
             raise HTTPException(status_code=401, detail="This account is turned off. Talk to the owner.")
-        return {"role": user["role"], "user_id": uid, "name": user.get("name", ""), "email": user.get("email", ""),
+        roles = user.get("roles") or ([user["role"]] if user.get("role") else ["crew"])
+        claimed = payload.get("role")
+        active = claimed if claimed in roles else user.get("role", roles[0])
+        return {"role": active, "roles": roles, "user_id": uid, "name": user.get("name", ""), "email": user.get("email", ""),
                 "is_user": True, "must_change_password": bool(user.get("must_change_password")),
                 "gps_consent_at": user.get("gps_consent_at")}
     role = payload.get("role") or payload.get("sub") or "owner"
     if role not in ALL_ROLES:
         raise HTTPException(status_code=401, detail="Invalid session. Log in again.")
-    return {"role": role, "user_id": None, "name": role.capitalize(), "email": None, "is_user": False,
+    return {"role": role, "roles": [role], "user_id": None, "name": role.capitalize(), "email": None, "is_user": False,
             "must_change_password": False, "gps_consent_at": None}
 
 
@@ -340,6 +343,7 @@ class LoginPayload(BaseModel):
 def _user_public(user: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "id": user["_id"], "name": user.get("name", ""), "email": user.get("email", ""), "role": user.get("role"),
+        "roles": user.get("roles") or ([user["role"]] if user.get("role") else []),
         "active": user.get("active", True), "must_change_password": bool(user.get("must_change_password")),
         "gps_consent": bool(user.get("gps_consent_at")), "created_at": user.get("created_at"),
     }
@@ -370,8 +374,10 @@ async def login(payload: LoginPayload, request: Request):
         if not user.get("active", True):
             raise HTTPException(status_code=403, detail="This account is turned off. Talk to the owner.")
         _login_attempts.pop(lock_key, None)
+        user_roles = user.get("roles") or [user["role"]]
         return {
-            "token": make_user_token(user), "role": user["role"], "can_switch": user["role"] == "owner",
+            "token": make_user_token(user), "role": user["role"],
+            "can_switch": user["role"] == "owner" or len(user_roles) > 1,
             "user": _user_public(user),
         }
 
@@ -396,6 +402,18 @@ class SwitchPayload(BaseModel):
 @auth_router.post("/switch-role")
 async def switch_role(payload: SwitchPayload, request: Request):
     token_payload = decode_token(request)
+    uid = token_payload.get("uid")
+    if uid:
+        user = await mongo_db.users.find_one({"_id": uid})
+        if not user or not user.get("active", True):
+            raise HTTPException(status_code=401, detail="This account is turned off. Talk to the owner.")
+        roles = user.get("roles") or [user.get("role")]
+        if "owner" in roles and payload.role in ROLES:
+            return {"token": make_token(payload.role, owner_switch=True), "role": payload.role, "can_switch": True}
+        if payload.role not in roles:
+            raise HTTPException(status_code=403, detail="You don't have that view.")
+        return {"token": make_user_token(user, role=payload.role), "role": payload.role,
+                "can_switch": len(roles) > 1, "user": _user_public(user)}
     current = token_payload.get("role") or "owner"
     if current != "owner" and not token_payload.get("owner_switch"):
         raise HTTPException(status_code=403, detail="Only the owner can switch accounts.")
@@ -407,7 +425,7 @@ async def switch_role(payload: SwitchPayload, request: Request):
 @auth_router.get("/me")
 async def me(request: Request):
     p = await current_principal(request)
-    can_switch = p["role"] == "owner" or bool(decode_token(request).get("owner_switch"))
+    can_switch = p["role"] == "owner" or bool(decode_token(request).get("owner_switch")) or len(p.get("roles") or []) > 1
     user = None
     if p["is_user"]:
         doc = await mongo_db.users.find_one({"_id": p["user_id"]})
@@ -1311,14 +1329,36 @@ class QuoteBreakdownPayload(BaseModel):
 
 
 @api_router.put("/quotes/{lead_id}")
-async def save_quote_breakdown(lead_id: str, payload: QuoteBreakdownPayload, role: str = Depends(require_auth)):
+async def save_quote_breakdown(lead_id: str, payload: QuoteBreakdownPayload, request: Request, role: str = Depends(require_auth)):
     if role not in ("owner", "sales"):
         raise HTTPException(status_code=403, detail="Your role can't save quotes.")
     doc = await mongo_db.lead_quotes.find_one({"_id": lead_id}) or {}
     token = doc.get("token") or uuid4().hex
     await mongo_db.lead_quotes.update_one(
         {"_id": lead_id}, {"$set": {"breakdown": payload.breakdown, "updated_at": now_iso(), "token": token}}, upsert=True)
-    return {"ok": True, "token": token}
+    sms_sent = False
+    sms_note = ""
+    phone = str(payload.breakdown.get("customerPhone") or "").strip()
+    final = payload.breakdown.get("finalQuote")
+    cfg = await openphone_config()
+    if not (cfg["api_key"] and cfg["number"]):
+        sms_note = "Auto-text skipped: OpenPhone isn't connected. Use the Quote PDF button to text it yourself."
+    elif not phone:
+        sms_note = "Auto-text skipped: this lead has no phone number."
+    elif (doc.get("pdf_sms") or {}).get("amount") == final:
+        sms_note = "Customer already got this exact quote by text."
+    else:
+        first = str(payload.breakdown.get("customerName") or "").split(" ")[0] or "there"
+        link = f"{_request_base(request)}/api/quote-pdf/{token}"
+        try:
+            await openphone_send_sms(
+                phone,
+                f"Hi {first}, here's your Haul Yeah Moving quote — one flat price, no surprises: {link} Reply here with any questions!")
+            sms_sent = True
+            await mongo_db.lead_quotes.update_one({"_id": lead_id}, {"$set": {"pdf_sms": {"sent_at": now_iso(), "amount": final}}})
+        except HTTPException as exc:
+            sms_note = exc.detail if isinstance(exc.detail, str) else "Auto-text failed."
+    return {"ok": True, "token": token, "sms_sent": sms_sent, "sms_note": sms_note}
 
 
 @api_router.get("/quotes/{lead_id}")
@@ -1945,7 +1985,8 @@ async def team_status(p: Dict[str, Any] = Depends(require_owner)):
 class UserCreatePayload(BaseModel):
     name: str
     email: str
-    role: str
+    role: str = "crew"
+    roles: Optional[List[str]] = None
     password: str
 
 
@@ -1953,6 +1994,7 @@ class UserPatchPayload(BaseModel):
     name: Optional[str] = None
     email: Optional[str] = None
     role: Optional[str] = None
+    roles: Optional[List[str]] = None
     active: Optional[bool] = None
     password: Optional[str] = None
 
@@ -1965,8 +2007,9 @@ async def list_users(p: Dict[str, Any] = Depends(require_owner)):
 
 @api_router.post("/users")
 async def create_user(payload: UserCreatePayload, p: Dict[str, Any] = Depends(require_owner)):
-    if payload.role not in ("crew", "sales", "owner"):
-        raise HTTPException(status_code=422, detail="Role must be crew, sales, or owner.")
+    roles = [r for r in (payload.roles or [payload.role]) if r]
+    if not roles or any(r not in ("crew", "sales", "owner") for r in roles):
+        raise HTTPException(status_code=422, detail="Roles must be crew, sales, or owner.")
     email = payload.email.strip().lower()
     if "@" not in email:
         raise HTTPException(status_code=422, detail="That email doesn't look right.")
@@ -1974,11 +2017,11 @@ async def create_user(payload: UserCreatePayload, p: Dict[str, Any] = Depends(re
         raise HTTPException(status_code=422, detail="The password needs at least 8 characters.")
     if await mongo_db.users.find_one({"email": email}):
         raise HTTPException(status_code=409, detail="A user with that email already exists.")
-    doc = {"_id": str(uuid4()), "name": payload.name.strip(), "email": email, "role": payload.role,
+    doc = {"_id": str(uuid4()), "name": payload.name.strip(), "email": email, "role": roles[0], "roles": roles,
            "password_hash": hash_password(payload.password), "active": True, "must_change_password": True,
            "gps_consent_at": None, "created_at": now_iso()}
     await mongo_db.users.insert_one(doc)
-    await audit(p, "created user", f"{doc['name']} ({email}, {payload.role})")
+    await audit(p, "created user", f"{doc['name']} ({email}, {'+'.join(roles)})")
     return _user_public(doc)
 
 
@@ -2001,10 +2044,18 @@ async def patch_user(user_id: str, payload: UserPatchPayload, p: Dict[str, Any] 
             raise HTTPException(status_code=409, detail="Another user already has that email.")
         updates["email"] = email
         changes.append("email")
-    if payload.role is not None:
+    if payload.roles is not None:
+        roles = [r for r in payload.roles if r]
+        if not roles or any(r not in ("crew", "sales", "owner") for r in roles):
+            raise HTTPException(status_code=422, detail="Roles must be crew, sales, or owner.")
+        updates["roles"] = roles
+        updates["role"] = roles[0]
+        changes.append(f"roles → {'+'.join(roles)}")
+    elif payload.role is not None:
         if payload.role not in ("crew", "sales", "owner"):
             raise HTTPException(status_code=422, detail="Role must be crew, sales, or owner.")
         updates["role"] = payload.role
+        updates["roles"] = [payload.role]
         changes.append(f"role → {payload.role}")
     if payload.active is not None:
         if p["user_id"] == user_id and payload.active is False:
