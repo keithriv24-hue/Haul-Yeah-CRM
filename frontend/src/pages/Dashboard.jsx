@@ -1,13 +1,25 @@
 import React, { useEffect } from "react";
 import { Link } from "react-router-dom";
 import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } from "recharts";
-import { Truck, AlertTriangle } from "lucide-react";
+import { Truck, AlertTriangle, Mail } from "lucide-react";
 import { useApp } from "@/context/AppContext";
+import { Button } from "@/components/ui/button";
 import { InstructionBanner, KpiCard, PageTitle, Private, Money, Pill, EmptyState, Pill as StatusPill } from "@/components/Bits";
 import { LF, PF, TF, IF, SF, f, LEAD_STATUS_COLORS, LEAD_STATUSES, needsFollowUp } from "@/lib/fields";
-import { fmtMoney, fmtDate, minutesSince, ageLabel, todayISO, isOverdue } from "@/lib/format";
+import { fmtMoney, fmtDate, minutesSince, ageLabel, todayISO, isOverdue, gmailCompose } from "@/lib/format";
 
 const num = (v) => Number(v) || 0;
+
+const isoLocal = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+const lastWeekendISO = () => {
+  const now = new Date();
+  const sat = new Date(now);
+  sat.setDate(now.getDate() - ((now.getDay() + 1) % 7));
+  const sun = new Date(sat);
+  sun.setDate(sat.getDate() + 1);
+  return { satISO: isoLocal(sat), sunISO: isoLocal(sun) };
+};
 
 export default function Dashboard() {
   const { loadTable, records } = useApp();
@@ -55,9 +67,51 @@ export default function Dashboard() {
     .filter((t) => f(t, TF.priority) === "High" && f(t, TF.status) !== "Done")
     .slice(0, 5);
 
+  const buildRecap = () => {
+    const { satISO, sunISO } = lastWeekendISO();
+    const weekendJobs = projects.filter((p) => {
+      const d = (f(p, PF.jobDate) || "").slice(0, 10);
+      return d === satISO || d === sunISO;
+    });
+    const weekendRev = weekendJobs.reduce((s, p) => s + (num(f(p, PF.finalRevenue)) || num(f(p, PF.quote))), 0);
+    return [
+      `Haul Yeah Moving — Weekly Recap (${fmtDate(isoLocal(new Date()))})`,
+      "",
+      `LAST WEEKEND'S JOBS (${fmtDate(satISO)} & ${fmtDate(sunISO)}):`,
+      ...(weekendJobs.length
+        ? weekendJobs.map((p) => `- ${f(p, PF.jobName) || "Job"} — ${f(p, PF.status) || "?"} — ${fmtMoney(num(f(p, PF.finalRevenue)) || num(f(p, PF.quote)) || null)}`)
+        : ["- No jobs on the books last weekend."]),
+      `Weekend revenue: ${fmtMoney(weekendRev)}`,
+      "",
+      "MONEY:",
+      `- Collected (paid invoices): ${fmtMoney(collected)}`,
+      `- Still owed to us: ${fmtMoney(outstanding)}`,
+      "",
+      "LEADS:",
+      `- ${openLeads.length} open leads worth about ${fmtMoney(pipeline)}`,
+      `- ${callbacks.length} need a call back`,
+      "",
+      "Sent from the Haul Yeah CRM.",
+    ].join("\n");
+  };
+
   return (
     <div data-testid="dashboard-page">
-      <PageTitle title="Dashboard" subtitle="Weekend moves, flat price, no surprises." />
+      <PageTitle
+        title="Dashboard"
+        subtitle="Weekend moves, flat price, no surprises."
+        action={
+          <Button asChild variant="outline" className="gap-1.5" data-testid="weekly-recap-btn">
+            <a
+              href={gmailCompose("", `Haul Yeah weekly recap — ${new Date().toLocaleDateString("en-US")}`, buildRecap())}
+              target="_blank"
+              rel="noreferrer"
+            >
+              <Mail className="w-4 h-4" /> Weekly recap
+            </a>
+          </Button>
+        }
+      />
       <InstructionBanner>Here's today at a glance. Call any New lead before the timer turns red.</InstructionBanner>
 
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 mb-8">
@@ -69,14 +123,20 @@ export default function Dashboard() {
           alert={newAlert}
           sub={newLeads.length ? `Oldest has waited ${ageLabel(oldestNewMins)}` : "All caught up"}
         />
-        <KpiCard
-          testId="kpi-callbacks"
-          label="Call-backs due"
-          value={String(callbacks.length)}
-          isPrivate={false}
-          alert={callbacks.length > 0}
-          sub={callbacks.length ? "Quoted leads gone quiet 2+ days" : "No one waiting on you"}
-        />
+        <Link
+          to={"/leads?filter=" + encodeURIComponent("Call back")}
+          data-testid="kpi-callbacks-link"
+          className="block transition-transform hover:-translate-y-0.5"
+        >
+          <KpiCard
+            testId="kpi-callbacks"
+            label="Call-backs due"
+            value={String(callbacks.length)}
+            isPrivate={false}
+            alert={callbacks.length > 0}
+            sub={callbacks.length ? "Tap to see who's waiting" : "No one waiting on you"}
+          />
+        </Link>
         <KpiCard testId="kpi-open-leads" label="Open leads" value={String(openLeads.length)} isPrivate={false} sub="Still in play" />
         <KpiCard testId="kpi-pipeline" label="Pipeline value" value={fmtMoney(pipeline)} sub="Quotes still open" />
         <KpiCard testId="kpi-booked" label="Booked revenue" value={fmtMoney(booked)} sub="Jobs on the books" />

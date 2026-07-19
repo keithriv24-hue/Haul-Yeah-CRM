@@ -45,6 +45,8 @@ Full-stack internal CRM PWA for Haul Yeah Moving (weekend moving company, North 
 - [x] Review request text: owner-only "Ask for review" button on Completed jobs (Projects) drafting an SMS to the linked lead's phone; Google review link stored via GET/PUT /api/settings/business (Mongo, PUT owner-only) with a Settings box — 36 pytest + browser-verified persistence
 - [x] Call-backs due Dashboard KPI (kpi-callbacks, red alert when > 0) counting needsFollowUp leads — browser-verified
 - [x] Review tracking: clicking "Ask for review" appends "Review asked {date}." to project notes; button flips to emerald "Review asked ✓" (regex on notes), tapping again re-texts
+- [x] Callback list: Call-backs KPI is a Link to /leads?filter=Call back; Leads filter now lives in the URL (useSearchParams) with a red "Call back (n)" chip filtering needsFollowUp leads — browser-verified navigation + chip selection
+- [x] Weekly recap: "Weekly recap" button on Dashboard opens Gmail compose (from contact@haulyeahmoves.com) with a plain-text summary: last weekend's jobs (Sat+Sun by jobDate) + revenue, collected, owed, open leads + pipeline, call-backs due — browser-verified body content
 
 ## Current status / blockers
 - AIRTABLE_API_KEY not yet added by user (secrets panel). All data routes return friendly 503 until then. Verify with GET /api/airtable/verify after key is added.

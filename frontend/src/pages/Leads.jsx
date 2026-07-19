@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { Phone, Mail, Calculator, CreditCard, Truck, Plus, MapPin, CalendarDays, CalendarPlus, Home, Lightbulb, Package, StickyNote, Search, MessageSquare, ChevronRight } from "lucide-react";
 import { useApp } from "@/context/AppContext";
@@ -239,7 +239,9 @@ const LeadCard = ({ lead, onQuote, onDeposit, onNote }) => {
 
 export default function Leads() {
   const { loadTable, loadSchema, records, tableState } = useApp();
-  const [filter, setFilter] = useState("All");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const filter = searchParams.get("filter") || "All";
+  const setFilter = (v) => setSearchParams(v === "All" ? {} : { filter: v });
   const [quoteLead, setQuoteLead] = useState(null);
   const [depositLead, setDepositLead] = useState(null);
   const [noteLead, setNoteLead] = useState(null);
@@ -251,7 +253,8 @@ export default function Leads() {
   }, [loadTable, loadSchema]);
 
   const all = [...records("leads")].sort((a, b) => (b.createdTime || "").localeCompare(a.createdTime || ""));
-  const leads = filter === "All" ? all : all.filter((l) => f(l, LF.status) === filter);
+  const callbackCount = all.filter(needsFollowUp).length;
+  const leads = filter === "All" ? all : filter === "Call back" ? all.filter(needsFollowUp) : all.filter((l) => f(l, LF.status) === filter);
   const { loading, error } = tableState("leads");
 
   return (
@@ -268,16 +271,22 @@ export default function Leads() {
       <InstructionBanner>Call New leads fast — under 5 minutes wins the job. Use the buttons on each card to call, quote, and book.</InstructionBanner>
 
       <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1 mb-5">
-        {["All", ...LEAD_STATUSES].map((s) => (
+        {["All", "Call back", ...LEAD_STATUSES].map((s) => (
           <button
             key={s}
-            data-testid={`lead-filter-${s.toLowerCase()}`}
+            data-testid={`lead-filter-${s.toLowerCase().replace(/\s+/g, "-")}`}
             onClick={() => setFilter(s)}
             className={`shrink-0 rounded-full border px-3.5 py-1.5 text-xs font-semibold transition-colors ${
-              filter === s ? "bg-[#1B2A4A] text-white border-[#1B2A4A]" : "bg-white text-slate-600 border-slate-300 hover:border-[#1B2A4A]"
+              filter === s
+                ? s === "Call back"
+                  ? "bg-red-600 text-white border-red-600"
+                  : "bg-[#1B2A4A] text-white border-[#1B2A4A]"
+                : s === "Call back" && callbackCount > 0
+                ? "bg-red-50 text-red-600 border-red-300 hover:border-red-500"
+                : "bg-white text-slate-600 border-slate-300 hover:border-[#1B2A4A]"
             }`}
           >
-            {s} {s !== "All" && `(${all.filter((l) => f(l, LF.status) === s).length})`}
+            {s} {s === "Call back" ? `(${callbackCount})` : s !== "All" && `(${all.filter((l) => f(l, LF.status) === s).length})`}
           </button>
         ))}
       </div>
