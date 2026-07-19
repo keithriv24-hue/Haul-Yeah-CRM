@@ -32,6 +32,10 @@ Full-stack internal CRM PWA for Haul Yeah Moving (weekend moving company, North 
 - [x] Calendar section on Projects page (owner: all non-cancelled jobs; crew: Scheduled + In Progress only) — month grid with job pills, month nav
 - [x] Google Calendar sync: OAuth connect (owner only, /api/oauth/calendar/login|callback|status|disconnect), POST /api/calendar/sync pushes all non-cancelled jobs as all-day events with dedup map in Mongo; needs GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET/PUBLIC_BASE_URL env — 34 pytest + browser verified (awaiting user's Google credentials)
 - [x] Tally form fields on lead cards: GET /api/schema/{table} fetches live field names via Airtable Meta API (10-min cache, role-filtered); lead cards auto-render every unmapped field (Stairs, Elevators, etc.) with real labels — requires token scope schema.bases:read — 37 pytest passing
+- [x] Gmail deep links complete (June 2026): Contacts already had compose + "Mail log" (Gmail search); added matching "Mail log" button to every lead card (searches by email, falls back to name). Browser-verified button pattern on Contacts; Leads verified in code (table empty pending Airtable key)
+- [x] Quote rounding: computeQuote low & high now round to nearest $50 (deposit stays 25% of rounded high) — browser-verified ($975+$125 → $1,100–$1,200, deposit $300)
+- [x] Login password show/hide eye toggle (data-testid login-toggle-password-btn) — browser-verified
+- [x] Re-verified June 2026: global Privacy Mode (blur + localStorage hy_privacy) and To-Do kanban drag-and-drop implementations intact
 
 ## Current status / blockers
 - AIRTABLE_API_KEY not yet added by user (secrets panel). All data routes return friendly 503 until then. Verify with GET /api/airtable/verify after key is added.

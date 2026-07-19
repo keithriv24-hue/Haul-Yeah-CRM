@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
-import { Lock, LogIn } from "lucide-react";
+import { Lock, LogIn, Eye, EyeOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { loginApi, authMe, switchRoleApi, apiErrorMessage } from "@/lib/api";
@@ -12,6 +12,7 @@ export default function AuthGate({ children }) {
   const [role, setRole] = useState(() => localStorage.getItem("hy_role"));
   const [canSwitch, setCanSwitch] = useState(() => localStorage.getItem("hy_can_switch") === "1");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -78,13 +79,22 @@ export default function AuthGate({ children }) {
             <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
             <Input
               data-testid="login-password-input"
-              type="password"
+              type={showPassword ? "text" : "password"}
               autoFocus
-              className="pl-9"
+              className="pl-9 pr-10"
               placeholder="Owner password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
             />
+            <button
+              type="button"
+              data-testid="login-toggle-password-btn"
+              aria-label={showPassword ? "Hide password" : "Show password"}
+              onClick={() => setShowPassword((s) => !s)}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-[#1B2A4A] transition-colors"
+            >
+              {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            </button>
           </div>
           {error && <p data-testid="login-error" className="text-sm text-red-600 mb-3">{error}</p>}
           <Button data-testid="login-submit-button" type="submit" disabled={busy || !password} className="w-full gap-2 bg-[#E8743B] hover:bg-[#d4632e]">

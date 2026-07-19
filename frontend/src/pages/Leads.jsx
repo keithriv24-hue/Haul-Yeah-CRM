@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Phone, Mail, Calculator, CreditCard, Truck, Plus, MapPin, CalendarDays, CalendarPlus, Home, Lightbulb, Package, StickyNote } from "lucide-react";
+import { Phone, Mail, Calculator, CreditCard, Truck, Plus, MapPin, CalendarDays, CalendarPlus, Home, Lightbulb, Package, StickyNote, Search } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { useAuth } from "@/components/AuthGate";
 import { Button } from "@/components/ui/button";
@@ -13,7 +13,7 @@ import QuoteModal from "@/components/QuoteModal";
 import DepositModal from "@/components/DepositModal";
 import LeadModal from "@/components/LeadModal";
 import { LF, PF, f, LEAD_STATUSES, STATUS_PILL, nextStepHint } from "@/lib/fields";
-import { fmtDate, gmailCompose, calendarTemplate } from "@/lib/format";
+import { fmtDate, gmailCompose, gmailSearch, calendarTemplate } from "@/lib/format";
 
 const AddNoteDialog = ({ lead, open, onOpenChange }) => {
   const { updateRecord } = useApp();
@@ -180,13 +180,18 @@ const LeadCard = ({ lead, onQuote, onDeposit, onNote }) => {
         <span data-testid="lead-next-step">{nextStepHint(lead)}</span>
       </div>
 
-      <div className={`grid grid-cols-2 gap-1.5 ${isSales ? "sm:grid-cols-5" : "sm:grid-cols-4"}`}>
+      <div className={`grid grid-cols-2 gap-1.5 ${isSales ? "sm:grid-cols-3" : "sm:grid-cols-4"}`}>
         <Button data-testid="lead-call-btn" asChild variant="outline" size="sm" className="gap-1 text-xs" disabled={!phone}>
           <a href={phone ? `tel:${phone}` : undefined}><Phone className="w-3.5 h-3.5" /> Call</a>
         </Button>
         <Button data-testid="lead-email-btn" asChild variant="outline" size="sm" className="gap-1 text-xs">
           <a href={gmailCompose(email, "Your move with Haul Yeah Moving")} target="_blank" rel="noreferrer">
             <Mail className="w-3.5 h-3.5" /> Email
+          </a>
+        </Button>
+        <Button data-testid="lead-gmail-search-btn" asChild variant="outline" size="sm" className="gap-1 text-xs">
+          <a href={gmailSearch(email || name)} target="_blank" rel="noreferrer">
+            <Search className="w-3.5 h-3.5" /> Mail log
           </a>
         </Button>
         <Button data-testid="lead-calendar-btn" asChild variant="outline" size="sm" className="gap-1 text-xs">

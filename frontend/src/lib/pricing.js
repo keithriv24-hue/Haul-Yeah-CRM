@@ -12,8 +12,9 @@ export function computeQuote({ crew, hours, travel, flights, piano }, rates = DE
   const travelFee = travel === "labor" ? rates.travelLabor : rates.travelTruck;
   const stairs = (flights || 0) * rates.stairFlight;
   const pianoFee = piano === "upright" ? rates.pianoUpright : piano === "grand" ? rates.pianoGrand : 0;
-  const low = base + travelFee + stairs + pianoFee;
-  const high = Math.round(low * 1.1);
+  const round50 = (n) => Math.round(n / 50) * 50;
+  const low = round50(base + travelFee + stairs + pianoFee);
+  const high = round50((base + travelFee + stairs + pianoFee) * 1.1);
   const deposit = Math.round(high * 0.25);
   return { base, travelFee, stairs, pianoFee, low, high, deposit };
 }
