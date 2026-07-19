@@ -44,6 +44,16 @@ export const reviewSmsBody = (name, link) => {
   return `Hi ${first}, thanks for moving with Haul Yeah Moving! If we did a good job, a quick Google review would mean a lot to our small crew.${link ? ` Here's the link: ${link}` : ""} Thank you!`;
 };
 
+export const winBackSmsBody = (name) => {
+  const first = (name || "").trim().split(/\s+/)[0] || "there";
+  return `Hi ${first}, it's Haul Yeah Moving! We quoted your move a while back — still need a hand? Weekend slots are filling up and we're happy to refresh your quote. Text back and we'll grab you a date.`;
+};
+
+export const payNudgeSmsBody = (name, amount, url) => {
+  const first = (name || "").trim().split(/\s+/)[0] || "there";
+  return `Hi ${first}, friendly nudge from Haul Yeah Moving — your invoice for ${fmtMoney(amount)} is still open.${url ? ` Pay here: ${url}` : ""} Thanks so much!`;
+};
+
 export const calendarTemplate = (title, dateISO, details = "", guestEmail = "") => {
   const d = (dateISO || todayISO()).replace(/-/g, "");
   let url = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(title)}&dates=${d}/${d}&details=${encodeURIComponent(details)}`;

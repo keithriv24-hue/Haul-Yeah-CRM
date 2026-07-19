@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Plus, CheckCircle2 } from "lucide-react";
+import { Plus, CheckCircle2, MessageSquare } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,8 +9,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { InstructionBanner, PageTitle, Private, Money, KpiCard, EmptyState, LoadingRows } from "@/components/Bits";
-import { IF, f, INVOICE_STATUSES, PAYMENT_METHODS, STATUS_PILL } from "@/lib/fields";
-import { fmtDate, fmtMoney, todayISO } from "@/lib/format";
+import { IF, CF, LF, f, INVOICE_STATUSES, PAYMENT_METHODS, STATUS_PILL } from "@/lib/fields";
+import { fmtDate, fmtMoney, todayISO, smsLink, payNudgeSmsBody } from "@/lib/format";
 
 const blank = { number: "", customer: "", amount: "", status: "Draft", issueDate: todayISO(), dueDate: "", payMethod: "Square", notes: "" };
 const num = (v) => Number(v) || 0;
@@ -23,7 +23,19 @@ export default function Invoices() {
 
   useEffect(() => {
     loadTable("invoices");
+    loadTable("contacts");
+    loadTable("leads");
   }, [loadTable]);
+
+  const phoneForCustomer = (name) => {
+    const norm = (s) => (s || "").trim().toLowerCase();
+    const target = norm(name);
+    if (!target) return null;
+    const c = records("contacts").find((r) => norm(f(r, CF.name)) === target);
+    if (c && f(c, CF.phone)) return f(c, CF.phone);
+    const l = records("leads").find((r) => norm(f(r, LF.name)) === target);
+    return (l && f(l, LF.phone)) || null;
+  };
 
   const invoices = [...records("invoices")].sort((a, b) => (f(b, IF.issueDate) || "").localeCompare(f(a, IF.issueDate) || ""));
   const { loading, error } = tableState("invoices");
@@ -124,11 +136,31 @@ export default function Invoices() {
                     <TableCell className="hidden sm:table-cell text-xs text-slate-500">{fmtDate(f(inv, IF.dueDate))}</TableCell>
                     <TableCell className="hidden md:table-cell text-xs text-slate-500">{f(inv, IF.payMethod) || "—"}</TableCell>
                     <TableCell>
-                      {status !== "Paid" && (
-                        <Button data-testid="mark-paid-btn" size="sm" variant="outline" className="gap-1 text-xs text-emerald-700 border-emerald-300 hover:bg-emerald-50" onClick={() => markPaid(inv)}>
-                          <CheckCircle2 className="w-3.5 h-3.5" /> Mark paid
-                        </Button>
-                      )}
+                      <div className="flex gap-1.5">
+                        {status !== "Paid" && (
+                          <Button data-testid="mark-paid-btn" size="sm" variant="outline" className="gap-1 text-xs text-emerald-700 border-emerald-300 hover:bg-emerald-50" onClick={() => markPaid(inv)}>
+                            <CheckCircle2 className="w-3.5 h-3.5" /> Mark paid
+                          </Button>
+                        )}
+                        {["Sent", "Overdue"].includes(status) && (() => {
+                          const custPhone = phoneForCustomer(f(inv, IF.customer));
+                          return (
+                            <Button
+                              data-testid="invoice-nudge-btn"
+                              asChild
+                              size="sm"
+                              variant="outline"
+                              className="gap-1 text-xs text-amber-700 border-amber-300 hover:bg-amber-50"
+                              disabled={!custPhone}
+                              title={custPhone ? "Text them a payment nudge" : "No phone found for this customer in Contacts or Leads"}
+                            >
+                              <a href={custPhone ? smsLink(custPhone, payNudgeSmsBody(f(inv, IF.customer), f(inv, IF.amount), null)) : undefined}>
+                                <MessageSquare className="w-3.5 h-3.5" /> Text nudge
+                              </a>
+                            </Button>
+                          );
+                        })()}
+                      </div>
                     </TableCell>
                   </TableRow>
                 );

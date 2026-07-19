@@ -55,6 +55,8 @@ Full-stack internal CRM PWA for Haul Yeah Moving (weekend moving company, North 
 - [x] Square LIVE (production): user supplied production token + location L15944ZHWTJ8R ("Haul Yeah Moving", ACTIVE — verified via /v2/locations); SQUARE_ENVIRONMENT=production; sandbox invoice docs cleared from Mongo. Real invoices now send to real customers
 - [x] Paid auto-update: when status refresh finds an invoice newly PAID, backend PATCHes the lead's Deposit Paid checkbox (fld7BsZG5A6S1oh7Z) in Airtable (once per invoice via deposit_synced flag; 404s throttle checked_at); frontend loadSquareInvoices also flips depositPaid locally for synced PAID leads — 39 pytest passing
 - [x] Money-landed banner + cha-ching: AppContext polls /api/square/invoices every 60s (owner only); newly-PAID invoices (tracked in localStorage hy_paid_seen, baseline-inits silently on first run) trigger playChaChing (/chaching.wav — synthesized coin+bell), a toast, and a dismissible emerald "Money landed!" banner on Dashboard — browser-verified via seeded Mongo doc (then cleaned)
+- [x] Win-back texts: "Win back" sms button (winBackSmsBody) on Lost/Cold lead cards + detail; stamps "Win-back text sent {date}." note on tap
+- [x] Payment nudge texts: "Nudge pay" sms button on lead cards + detail when latest Square invoice is UNPAID/PARTIALLY_PAID/SCHEDULED (includes pay link, stamps note); Invoices page rows (Sent/Overdue) get "Text nudge" with phone looked up by customer-name match in Contacts→Leads (disabled + tooltip if no match) — pages render clean, sms bodies in format.js
 
 ## Current status / blockers
 - AIRTABLE_API_KEY not yet added by user (secrets panel). All data routes return friendly 503 until then. Verify with GET /api/airtable/verify after key is added.

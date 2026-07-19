@@ -3,7 +3,7 @@ import { useParams, useNavigate, Link } from "react-router-dom";
 import { toast } from "sonner";
 import {
   Phone, Mail, Calculator, CreditCard, Truck, MapPin, CalendarDays, CalendarPlus, Home, Lightbulb,
-  Package, StickyNote, Search, MessageSquare, ArrowLeft, History, Pencil, Save, X, FileText,
+  Package, StickyNote, Search, MessageSquare, ArrowLeft, History, Pencil, Save, X, FileText, Undo2, BellRing,
 } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { useAuth } from "@/components/AuthGate";
@@ -17,7 +17,7 @@ import DepositModal from "@/components/DepositModal";
 import SquareInvoiceModal from "@/components/SquareInvoiceModal";
 import { AddNoteDialog } from "@/pages/Leads";
 import { LF, f, LEAD_STATUSES, STATUS_PILL, nextStepHint, KNOWN_LEAD_FIELD_IDS, formatExtraValue, needsFollowUp, quietDays, HOME_SIZES } from "@/lib/fields";
-import { fmtDate, gmailCompose, gmailSearch, calendarTemplate, smsLink } from "@/lib/format";
+import { fmtDate, gmailCompose, gmailSearch, calendarTemplate, smsLink, winBackSmsBody, payNudgeSmsBody } from "@/lib/format";
 import { quoteSmsBody } from "@/lib/quote";
 import { lowFromHigh, depositFromQuote } from "@/lib/pricing";
 import { bookLeadAsJob } from "@/lib/leadActions";
@@ -72,6 +72,13 @@ export default function LeadDetail() {
   const quote = f(lead, LF.quote);
   const status = f(lead, LF.status) || "New";
   const depositPaid = !!f(lead, LF.depositPaid);
+  const latestInvoice = isOwner ? invoicesForLead(lead.id)[0] : null;
+  const unpaidInvoice = latestInvoice && ["UNPAID", "PARTIALLY_PAID", "SCHEDULED"].includes(latestInvoice.status) ? latestInvoice : null;
+
+  const stampNote = (line) => {
+    const old = f(lead, LF.notes) || "";
+    updateRecord("leads", lead.id, { [LF.notes]: old ? `${old}\n${line}` : line }).catch(() => {});
+  };
 
   const extras = (schemas.leads || [])
     .filter((fd) => !KNOWN_LEAD_FIELD_IDS.has(fd.id))
@@ -290,6 +297,26 @@ export default function LeadDetail() {
               <Button data-testid="lead-detail-note-btn" variant="outline" size="sm" className="gap-1 text-xs" onClick={() => setNoteOpen(true)}>
                 <StickyNote className="w-3.5 h-3.5" /> Add note
               </Button>
+              {["Lost", "Cold"].includes(status) && (
+                <Button data-testid="lead-detail-winback-btn" asChild variant="outline" size="sm" className="gap-1 text-xs border-sky-300 text-sky-700 hover:bg-sky-50 hover:text-sky-800" disabled={!phone}>
+                  <a
+                    href={phone ? smsLink(phone, winBackSmsBody(name)) : undefined}
+                    onClick={() => stampNote(`Win-back text sent ${new Date().toLocaleDateString("en-US")}.`)}
+                  >
+                    <Undo2 className="w-3.5 h-3.5" /> Win back
+                  </a>
+                </Button>
+              )}
+              {unpaidInvoice && (
+                <Button data-testid="lead-detail-nudge-btn" asChild variant="outline" size="sm" className="gap-1 text-xs border-amber-300 text-amber-700 hover:bg-amber-50 hover:text-amber-800" disabled={!phone}>
+                  <a
+                    href={phone ? smsLink(phone, payNudgeSmsBody(name, unpaidInvoice.amount, unpaidInvoice.public_url)) : undefined}
+                    onClick={() => stampNote(`Payment nudge text sent ${new Date().toLocaleDateString("en-US")}.`)}
+                  >
+                    <BellRing className="w-3.5 h-3.5" /> Nudge pay
+                  </a>
+                </Button>
+              )}
               {!isSales && (
                 <>
                   <Button data-testid="lead-detail-deposit-btn" variant="outline" size="sm" className="gap-1 text-xs" onClick={() => setDepositOpen(true)} disabled={!quote}>
