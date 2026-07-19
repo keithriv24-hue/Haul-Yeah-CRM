@@ -1,19 +1,24 @@
 import asyncio
+import csv
 import hmac
+import io
 import logging
+import math
 import os
 import re
 import time
 from collections import deque
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 from uuid import uuid4
+
+import bcrypt
 
 import httpx
 import jwt
 from dotenv import load_dotenv
-from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel
 from starlette.middleware.cors import CORSMiddleware
@@ -49,6 +54,7 @@ JWT_ALGORITHM = "HS256"
 _login_attempts: Dict[str, Dict[str, float]] = {}
 
 ROLES = ("owner", "sales", "employee")
+ALL_ROLES = ("owner", "sales", "employee", "crew")
 ROLE_ENV = {"owner": "APP_PASSWORD", "sales": "SALES_PASSWORD", "employee": "EMPLOYEE_PASSWORD"}
 ROLE_TABLES = {
     "owner": set(TABLES),
@@ -68,6 +74,7 @@ PROJECT_TO_FIELD = "fldnFH0mMdyQ84hTV"
 PROJECT_TRUCK_FIELD = "fldhQpzJrqDE6tPAg"
 BLOCKED_FIELDS = {
     ("employee", "projects"): {PROJECT_QUOTE_FIELD, PROJECT_DEPOSIT_FIELD, PROJECT_REVENUE_FIELD},
+    ("sales", "projects"): {PROJECT_REVENUE_FIELD, PROJECT_DEPOSIT_FIELD},
 }
 DRIVER_RATE = 28
 HELPER_RATE = 24
@@ -96,16 +103,87 @@ def make_token(role: str, owner_switch: bool = False) -> str:
     return jwt.encode(claims, os.environ["JWT_SECRET"], algorithm=JWT_ALGORITHM)
 
 
+def make_user_token(user: Dict[str, Any]) -> str:
+    claims = {
+        "sub": user["email"],
+        "uid": user["_id"],
+        "role": user["role"],
+        "type": "access",
+        "exp": datetime.now(timezone.utc) + timedelta(days=30),
+    }
+    return jwt.encode(claims, os.environ["JWT_SECRET"], algorithm=JWT_ALGORITHM)
+
+
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def verify_password(plain: str, hashed: str) -> bool:
+    try:
+        return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
+    except ValueError:
+        return False
+
+
 def require_auth(request: Request) -> str:
     payload = decode_token(request)
     role = payload.get("role") or payload.get("sub") or "owner"
-    if role not in ROLES:
+    if role not in ALL_ROLES:
         raise HTTPException(status_code=401, detail="Invalid session. Log in again.")
     return role
 
 
-def check_table_access(role: str, table_key: str):
-    if table_key not in ROLE_TABLES.get(role, set()):
+async def principal_from_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    uid = payload.get("uid")
+    if uid:
+        user = await mongo_db.users.find_one({"_id": uid})
+        if not user or not user.get("active", True):
+            raise HTTPException(status_code=401, detail="This account is turned off. Talk to the owner.")
+        return {"role": user["role"], "user_id": uid, "name": user.get("name", ""), "email": user.get("email", ""),
+                "is_user": True, "must_change_password": bool(user.get("must_change_password")),
+                "gps_consent_at": user.get("gps_consent_at")}
+    role = payload.get("role") or payload.get("sub") or "owner"
+    if role not in ALL_ROLES:
+        raise HTTPException(status_code=401, detail="Invalid session. Log in again.")
+    return {"role": role, "user_id": None, "name": role.capitalize(), "email": None, "is_user": False,
+            "must_change_password": False, "gps_consent_at": None}
+
+
+async def current_principal(request: Request) -> Dict[str, Any]:
+    return await principal_from_payload(decode_token(request))
+
+
+async def principal_from_token_string(token: str) -> Dict[str, Any]:
+    try:
+        payload = jwt.decode(token, os.environ["JWT_SECRET"], algorithms=[JWT_ALGORITHM])
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid session. Log in again.")
+    if payload.get("type") != "access":
+        raise HTTPException(status_code=401, detail="Invalid token type")
+    return await principal_from_payload(payload)
+
+
+async def require_owner(request: Request) -> Dict[str, Any]:
+    p = await current_principal(request)
+    if p["role"] != "owner":
+        raise HTTPException(status_code=403, detail="Only the owner can do this.")
+    return p
+
+
+async def require_crew(request: Request) -> Dict[str, Any]:
+    p = await current_principal(request)
+    if p["role"] != "crew" or not p["user_id"]:
+        raise HTTPException(status_code=403, detail="Only crew accounts can do this.")
+    return p
+
+
+async def check_table_access(role: str, table_key: str):
+    allowed = set(ROLE_TABLES.get(role, set()))
+    if role == "sales":
+        doc = await mongo_db.settings.find_one({"_id": "sales_access"}) or {}
+        if doc.get("booking_calendar"):
+            allowed.add("projects")
+    if table_key not in allowed:
         raise HTTPException(status_code=403, detail="Your role can't open this.")
 
 
@@ -240,15 +318,47 @@ auth_router = APIRouter(prefix="/api/auth")
 
 class LoginPayload(BaseModel):
     password: str
+    email: Optional[str] = None
+
+
+def _user_public(user: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "id": user["_id"], "name": user.get("name", ""), "email": user.get("email", ""), "role": user.get("role"),
+        "active": user.get("active", True), "must_change_password": bool(user.get("must_change_password")),
+        "gps_consent": bool(user.get("gps_consent_at")), "created_at": user.get("created_at"),
+    }
 
 
 @auth_router.post("/login")
 async def login(payload: LoginPayload, request: Request):
     ip = request.client.host if request.client else "unknown"
     now = time.time()
-    rec = _login_attempts.get(ip, {})
+    lock_key = f"{ip}:{(payload.email or '').strip().lower()}"
+    rec = _login_attempts.get(lock_key, {})
     if rec.get("locked_until", 0) > now:
         raise HTTPException(status_code=429, detail="Too many tries. Wait 15 minutes and try again.")
+
+    def fail(msg: str):
+        r = _login_attempts.setdefault(lock_key, {"count": 0})
+        r["count"] = r.get("count", 0) + 1
+        if r["count"] >= 5:
+            r["locked_until"] = now + 900
+            r["count"] = 0
+        raise HTTPException(status_code=401, detail=msg)
+
+    email = (payload.email or "").strip().lower()
+    if email:
+        user = await mongo_db.users.find_one({"email": email})
+        if not user or not verify_password(payload.password, user.get("password_hash", "")):
+            fail("Wrong email or password. Try again.")
+        if not user.get("active", True):
+            raise HTTPException(status_code=403, detail="This account is turned off. Talk to the owner.")
+        _login_attempts.pop(lock_key, None)
+        return {
+            "token": make_user_token(user), "role": user["role"], "can_switch": user["role"] == "owner",
+            "user": _user_public(user),
+        }
+
     if not any(os.environ.get(v) for v in ROLE_ENV.values()):
         raise HTTPException(status_code=503, detail="No login passwords are set on the server.")
     role = None
@@ -258,14 +368,9 @@ async def login(payload: LoginPayload, request: Request):
             role = r
             break
     if role is None:
-        rec = _login_attempts.setdefault(ip, {"count": 0})
-        rec["count"] = rec.get("count", 0) + 1
-        if rec["count"] >= 5:
-            rec["locked_until"] = now + 900
-            rec["count"] = 0
-        raise HTTPException(status_code=401, detail="Wrong password. Try again.")
-    _login_attempts.pop(ip, None)
-    return {"token": make_token(role), "role": role, "can_switch": role == "owner"}
+        fail("Wrong password. Try again.")
+    _login_attempts.pop(lock_key, None)
+    return {"token": make_token(role), "role": role, "can_switch": role == "owner", "user": None}
 
 
 class SwitchPayload(BaseModel):
@@ -285,12 +390,45 @@ async def switch_role(payload: SwitchPayload, request: Request):
 
 @auth_router.get("/me")
 async def me(request: Request):
-    payload = decode_token(request)
-    role = payload.get("role") or payload.get("sub") or "owner"
-    if role not in ROLES:
-        raise HTTPException(status_code=401, detail="Invalid session. Log in again.")
-    can_switch = role == "owner" or bool(payload.get("owner_switch"))
-    return {"ok": True, "role": role, "can_switch": can_switch}
+    p = await current_principal(request)
+    can_switch = p["role"] == "owner" or bool(decode_token(request).get("owner_switch"))
+    user = None
+    if p["is_user"]:
+        doc = await mongo_db.users.find_one({"_id": p["user_id"]})
+        user = _user_public(doc) if doc else None
+    return {"ok": True, "role": p["role"], "can_switch": can_switch, "user": user}
+
+
+class ChangePasswordPayload(BaseModel):
+    current_password: str
+    new_password: str
+
+
+@auth_router.post("/change-password")
+async def change_password(payload: ChangePasswordPayload, request: Request):
+    p = await current_principal(request)
+    if not p["is_user"]:
+        raise HTTPException(status_code=403, detail="Shared-password logins can't change passwords here.")
+    if len(payload.new_password) < 8:
+        raise HTTPException(status_code=422, detail="The new password needs at least 8 characters.")
+    user = await mongo_db.users.find_one({"_id": p["user_id"]})
+    if not user or not verify_password(payload.current_password, user.get("password_hash", "")):
+        raise HTTPException(status_code=401, detail="Your current password is wrong.")
+    await mongo_db.users.update_one(
+        {"_id": p["user_id"]},
+        {"$set": {"password_hash": hash_password(payload.new_password), "must_change_password": False}})
+    await audit(p, "changed their password", p["email"] or "")
+    return {"ok": True}
+
+
+@auth_router.post("/consent")
+async def gps_consent(request: Request):
+    p = await current_principal(request)
+    if not p["is_user"]:
+        raise HTTPException(status_code=403, detail="Only user accounts can consent.")
+    await mongo_db.users.update_one(
+        {"_id": p["user_id"]}, {"$set": {"gps_consent_at": datetime.now(timezone.utc).isoformat()}})
+    return {"ok": True}
 
 
 @api_router.get("/")
@@ -305,6 +443,8 @@ async def health():
 
 @api_router.get("/settings/rates")
 async def get_rates(role: str = Depends(require_auth)):
+    if role not in ("owner", "sales"):
+        raise HTTPException(status_code=403, detail="Your role can't open this.")
     doc = await mongo_db.settings.find_one({"_id": "calculator_rates"}) or {}
     return {**DEFAULT_RATES, **{k: v for k, v in doc.items() if k in DEFAULT_RATES}}
 
@@ -326,6 +466,8 @@ class BusinessPayload(BaseModel):
 
 @api_router.get("/settings/business")
 async def get_business(role: str = Depends(require_auth)):
+    if role != "owner":
+        raise HTTPException(status_code=403, detail="Your role can't open this.")
     doc = await mongo_db.settings.find_one({"_id": "business"}) or {}
     return {"reviewLink": doc.get("reviewLink", "")}
 
@@ -401,6 +543,8 @@ class SquareInvoicePayload(BaseModel):
 
 @api_router.get("/square/status")
 async def square_status(role: str = Depends(require_auth)):
+    if role != "owner":
+        raise HTTPException(status_code=403, detail="Only the owner can see this.")
     return {"configured": square_configured(), "environment": os.environ.get("SQUARE_ENVIRONMENT", "sandbox").strip().lower()}
 
 
@@ -537,7 +681,7 @@ _schema_cache: Dict[str, Dict[str, Any]] = {}
 @api_router.get("/schema/{table_key}")
 async def get_table_schema(table_key: str, role: str = Depends(require_auth)):
     table_id = resolve_table(table_key)
-    check_table_access(role, table_key)
+    await check_table_access(role, table_key)
     cached = _schema_cache.get(table_key)
     if cached and time.time() - cached["at"] < 600:
         fields = cached["fields"]
@@ -570,7 +714,7 @@ async def get_table_schema(table_key: str, role: str = Depends(require_auth)):
 @api_router.get("/tables/{table_key}")
 async def list_records(table_key: str, role: str = Depends(require_auth)):
     table_id = resolve_table(table_key)
-    check_table_access(role, table_key)
+    await check_table_access(role, table_key)
     records = []
     offset = None
     while True:
@@ -588,7 +732,7 @@ async def list_records(table_key: str, role: str = Depends(require_auth)):
 @api_router.post("/tables/{table_key}")
 async def create_record(table_key: str, payload: RecordPayload = Body(...), role: str = Depends(require_auth)):
     table_id = resolve_table(table_key)
-    check_table_access(role, table_key)
+    await check_table_access(role, table_key)
     body = {"records": [{"fields": clean_write_fields(payload.fields, role, table_key)}], "typecast": True}
     data = await airtable_request("POST", table_id, json_body=body)
     return filter_record(data["records"][0], role, table_key)
@@ -597,7 +741,7 @@ async def create_record(table_key: str, payload: RecordPayload = Body(...), role
 @api_router.patch("/tables/{table_key}/{record_id}")
 async def update_record(table_key: str, record_id: str, payload: RecordPayload = Body(...), role: str = Depends(require_auth)):
     table_id = resolve_table(table_key)
-    check_table_access(role, table_key)
+    await check_table_access(role, table_key)
     body = {"records": [{"id": record_id, "fields": clean_write_fields(payload.fields, role, table_key)}], "typecast": True}
     data = await airtable_request("PATCH", table_id, json_body=body)
     return filter_record(data["records"][0], role, table_key)
@@ -606,14 +750,959 @@ async def update_record(table_key: str, record_id: str, payload: RecordPayload =
 @api_router.delete("/tables/{table_key}/{record_id}")
 async def delete_record(table_key: str, record_id: str, role: str = Depends(require_auth)):
     table_id = resolve_table(table_key)
-    check_table_access(role, table_key)
+    await check_table_access(role, table_key)
     if role != "owner":
         raise HTTPException(status_code=403, detail="Only the owner can delete records.")
     await airtable_request("DELETE", table_id, path=f"/{record_id}")
     return {"deleted": True, "id": record_id}
 
 
+# ---------------------------------------------------------------- crew module
+
+dl_router = APIRouter(prefix="/api")
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+async def audit(actor: Dict[str, Any], action: str, target: str, details: Optional[Dict[str, Any]] = None):
+    await mongo_db.audit_log.insert_one({
+        "_id": str(uuid4()), "at": now_iso(), "actor": actor.get("name") or actor.get("role") or "unknown",
+        "actor_id": actor.get("user_id"), "action": action, "target": target, "details": details or {},
+    })
+
+
+async def notify(user_id: Optional[str], role: Optional[str], title: str, body: str, ntype: str = "info",
+                 data: Optional[Dict[str, Any]] = None):
+    await mongo_db.notifications.insert_one({
+        "_id": str(uuid4()), "user_id": user_id, "role": role, "type": ntype, "title": title, "body": body,
+        "data": data or {}, "read": False, "created_at": now_iso(),
+    })
+
+
+async def geocode(address: str) -> Optional[Dict[str, float]]:
+    if not address:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            r = await client.get("https://nominatim.openstreetmap.org/search",
+                                 params={"q": address, "format": "json", "limit": 1},
+                                 headers={"User-Agent": "HaulYeahCRM/1.0 (contact@haulyeahmoves.com)"})
+        results = r.json()
+        if results:
+            return {"lat": float(results[0]["lat"]), "lng": float(results[0]["lon"])}
+    except Exception:
+        pass
+    return None
+
+
+def haversine_miles(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    rlat1, rlat2 = math.radians(lat1), math.radians(lat2)
+    dlat, dlng = math.radians(lat2 - lat1), math.radians(lng2 - lng1)
+    a = math.sin(dlat / 2) ** 2 + math.cos(rlat1) * math.cos(rlat2) * math.sin(dlng / 2) ** 2
+    return 3958.8 * 2 * math.asin(math.sqrt(a))
+
+
+async def get_crew_rates() -> Dict[str, float]:
+    doc = await mongo_db.settings.find_one({"_id": "crew_rates"}) or {}
+    return {"driver": float(doc.get("driver", 28)), "helper": float(doc.get("helper", 24))}
+
+
+def position_rate(position: str, rates: Dict[str, float]) -> float:
+    return rates["driver"] if (position or "").lower() == "driver" else rates["helper"]
+
+
+def entry_hours(entry: Dict[str, Any]) -> Optional[float]:
+    if not entry.get("clock_out"):
+        return None
+    try:
+        start = datetime.fromisoformat(entry["clock_in"]["at"])
+        end = datetime.fromisoformat(entry["clock_out"]["at"])
+        return max(0.0, round((end - start).total_seconds() / 3600, 2))
+    except (KeyError, ValueError, TypeError):
+        return None
+
+
+def week_key(iso_ts: str) -> str:
+    try:
+        d = datetime.fromisoformat(iso_ts)
+    except ValueError:
+        return "unknown"
+    y, w, _ = d.isocalendar()
+    return f"{y}-W{w:02d}"
+
+
+# ------- users management (owner)
+
+class UserCreatePayload(BaseModel):
+    name: str
+    email: str
+    role: str
+    password: str
+
+
+class UserPatchPayload(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+    role: Optional[str] = None
+    active: Optional[bool] = None
+    password: Optional[str] = None
+
+
+@api_router.get("/users")
+async def list_users(p: Dict[str, Any] = Depends(require_owner)):
+    docs = await mongo_db.users.find({}).sort("created_at", 1).to_list(200)
+    return {"users": [_user_public(u) for u in docs]}
+
+
+@api_router.post("/users")
+async def create_user(payload: UserCreatePayload, p: Dict[str, Any] = Depends(require_owner)):
+    if payload.role not in ("crew", "sales", "owner"):
+        raise HTTPException(status_code=422, detail="Role must be crew, sales, or owner.")
+    email = payload.email.strip().lower()
+    if "@" not in email:
+        raise HTTPException(status_code=422, detail="That email doesn't look right.")
+    if len(payload.password) < 8:
+        raise HTTPException(status_code=422, detail="The password needs at least 8 characters.")
+    if await mongo_db.users.find_one({"email": email}):
+        raise HTTPException(status_code=409, detail="A user with that email already exists.")
+    doc = {"_id": str(uuid4()), "name": payload.name.strip(), "email": email, "role": payload.role,
+           "password_hash": hash_password(payload.password), "active": True, "must_change_password": True,
+           "gps_consent_at": None, "created_at": now_iso()}
+    await mongo_db.users.insert_one(doc)
+    await audit(p, "created user", f"{doc['name']} ({email}, {payload.role})")
+    return _user_public(doc)
+
+
+@api_router.patch("/users/{user_id}")
+async def patch_user(user_id: str, payload: UserPatchPayload, p: Dict[str, Any] = Depends(require_owner)):
+    user = await mongo_db.users.find_one({"_id": user_id})
+    if not user:
+        raise HTTPException(status_code=404, detail="No such user.")
+    updates: Dict[str, Any] = {}
+    changes = []
+    if payload.name is not None and payload.name.strip():
+        updates["name"] = payload.name.strip()
+        changes.append("name")
+    if payload.email is not None:
+        email = payload.email.strip().lower()
+        if "@" not in email:
+            raise HTTPException(status_code=422, detail="That email doesn't look right.")
+        clash = await mongo_db.users.find_one({"email": email, "_id": {"$ne": user_id}})
+        if clash:
+            raise HTTPException(status_code=409, detail="Another user already has that email.")
+        updates["email"] = email
+        changes.append("email")
+    if payload.role is not None:
+        if payload.role not in ("crew", "sales", "owner"):
+            raise HTTPException(status_code=422, detail="Role must be crew, sales, or owner.")
+        updates["role"] = payload.role
+        changes.append(f"role → {payload.role}")
+    if payload.active is not None:
+        if p["user_id"] == user_id and payload.active is False:
+            raise HTTPException(status_code=422, detail="You can't deactivate your own account.")
+        updates["active"] = payload.active
+        changes.append("deactivated" if not payload.active else "reactivated")
+    if payload.password is not None:
+        if len(payload.password) < 8:
+            raise HTTPException(status_code=422, detail="The password needs at least 8 characters.")
+        updates["password_hash"] = hash_password(payload.password)
+        updates["must_change_password"] = True
+        changes.append("password reset")
+    if not updates:
+        return _user_public(user)
+    await mongo_db.users.update_one({"_id": user_id}, {"$set": updates})
+    await audit(p, "edited user", f"{user.get('name')} ({user.get('email')})", {"changes": changes})
+    fresh = await mongo_db.users.find_one({"_id": user_id})
+    return _user_public(fresh)
+
+
+# ------- trucks (owner)
+
+class TruckPayload(BaseModel):
+    name: str
+
+
+class TruckPatchPayload(BaseModel):
+    name: Optional[str] = None
+    active: Optional[bool] = None
+
+
+@api_router.get("/trucks")
+async def list_trucks(p: Dict[str, Any] = Depends(require_owner)):
+    docs = await mongo_db.trucks.find({}).sort("name", 1).to_list(100)
+    return {"trucks": [{"id": t["_id"], "name": t["name"], "active": t.get("active", True)} for t in docs]}
+
+
+@api_router.post("/trucks")
+async def create_truck(payload: TruckPayload, p: Dict[str, Any] = Depends(require_owner)):
+    doc = {"_id": str(uuid4()), "name": payload.name.strip(), "active": True}
+    await mongo_db.trucks.insert_one(doc)
+    await audit(p, "added truck", doc["name"])
+    return {"id": doc["_id"], "name": doc["name"], "active": True}
+
+
+@api_router.patch("/trucks/{truck_id}")
+async def patch_truck(truck_id: str, payload: TruckPatchPayload, p: Dict[str, Any] = Depends(require_owner)):
+    truck = await mongo_db.trucks.find_one({"_id": truck_id})
+    if not truck:
+        raise HTTPException(status_code=404, detail="No such truck.")
+    updates = {}
+    if payload.name is not None and payload.name.strip():
+        updates["name"] = payload.name.strip()
+    if payload.active is not None:
+        updates["active"] = payload.active
+    if updates:
+        await mongo_db.trucks.update_one({"_id": truck_id}, {"$set": updates})
+        await audit(p, "edited truck", truck["name"], {"changes": updates})
+    fresh = await mongo_db.trucks.find_one({"_id": truck_id})
+    return {"id": fresh["_id"], "name": fresh["name"], "active": fresh.get("active", True)}
+
+
+# ------- assignments
+
+class CrewSlot(BaseModel):
+    user_id: str
+    position: str
+
+
+class AssignmentPayload(BaseModel):
+    project_id: Optional[str] = None
+    job_name: str
+    job_date: str
+    arrival_time: str = ""
+    start_address: str = ""
+    end_address: str = ""
+    truck_id: Optional[str] = None
+    crew: List[CrewSlot] = []
+    ignore_warnings: bool = False
+
+
+async def assignment_warnings(job_date: str, crew_ids: List[str], truck_id: Optional[str],
+                              exclude_id: Optional[str] = None) -> List[str]:
+    warnings = []
+    q: Dict[str, Any] = {"job_date": job_date}
+    if exclude_id:
+        q["_id"] = {"$ne": exclude_id}
+    others = await mongo_db.assignments.find(q).to_list(100)
+    for other in others:
+        other_crew = {c["user_id"]: c["name"] for c in other.get("crew", [])}
+        for uid in crew_ids:
+            if uid in other_crew:
+                warnings.append(f"{other_crew[uid]} is already on \"{other.get('job_name')}\" that day.")
+        if truck_id and other.get("truck_id") == truck_id:
+            warnings.append(f"Truck {other.get('truck_name')} is already on \"{other.get('job_name')}\" that day.")
+    avail = await mongo_db.availability.find({"date": job_date, "available": False,
+                                              "user_id": {"$in": crew_ids}}).to_list(50)
+    for a in avail:
+        warnings.append(f"{a.get('name')} marked themselves UNAVAILABLE on {job_date}.")
+    return warnings
+
+
+def _sanitize_assignment(a: Dict[str, Any]) -> Dict[str, Any]:
+    return {**{k: v for k, v in a.items() if k != "_id"}, "id": a["_id"]}
+
+
+@api_router.get("/assignments")
+async def list_assignments(start: Optional[str] = None, end: Optional[str] = None,
+                           p: Dict[str, Any] = Depends(require_owner)):
+    q: Dict[str, Any] = {}
+    if start or end:
+        q["job_date"] = {}
+        if start:
+            q["job_date"]["$gte"] = start
+        if end:
+            q["job_date"]["$lte"] = end
+    docs = await mongo_db.assignments.find(q).sort("job_date", 1).to_list(300)
+    return {"assignments": [_sanitize_assignment(a) for a in docs]}
+
+
+@api_router.post("/assignments")
+async def create_assignment(payload: AssignmentPayload, p: Dict[str, Any] = Depends(require_owner)):
+    if not payload.job_date:
+        raise HTTPException(status_code=422, detail="Pick a job date.")
+    crew_ids = [c.user_id for c in payload.crew]
+    for c in payload.crew:
+        if c.position not in ("Driver", "Helper"):
+            raise HTTPException(status_code=422, detail="Positions must be Driver or Helper.")
+    users = await mongo_db.users.find({"_id": {"$in": crew_ids}, "active": True}).to_list(50)
+    users_by_id = {u["_id"]: u for u in users}
+    missing = [uid for uid in crew_ids if uid not in users_by_id]
+    if missing:
+        raise HTTPException(status_code=422, detail="One of those crew members doesn't exist or is deactivated.")
+    warnings = await assignment_warnings(payload.job_date, crew_ids, payload.truck_id)
+    if warnings and not payload.ignore_warnings:
+        raise HTTPException(status_code=409, detail={"error": "conflicts", "warnings": warnings})
+    truck = await mongo_db.trucks.find_one({"_id": payload.truck_id}) if payload.truck_id else None
+    site_coords = await geocode(payload.start_address)
+    doc = {
+        "_id": str(uuid4()), "project_id": payload.project_id, "job_name": payload.job_name.strip(),
+        "job_date": payload.job_date, "arrival_time": payload.arrival_time,
+        "start_address": payload.start_address.strip(), "end_address": payload.end_address.strip(),
+        "truck_id": payload.truck_id, "truck_name": truck["name"] if truck else None,
+        "crew": [{"user_id": c.user_id, "name": users_by_id[c.user_id]["name"], "position": c.position} for c in payload.crew],
+        "site_coords": site_coords, "exec_status": "Assigned", "status_history": [],
+        "completion_notes": "", "review_prompted": False,
+        "created_at": now_iso(), "updated_at": now_iso(),
+    }
+    await mongo_db.assignments.insert_one(doc)
+    for c in doc["crew"]:
+        await notify(c["user_id"], None, "New job assigned",
+                     f"{doc['job_name']} on {doc['job_date']}{' at ' + doc['arrival_time'] if doc['arrival_time'] else ''} — you're the {c['position']}.",
+                     "assignment", {"assignment_id": doc["_id"]})
+    await audit(p, "assigned crew to job", doc["job_name"],
+                {"date": doc["job_date"], "crew": [f"{c['name']} ({c['position']})" for c in doc["crew"]],
+                 "truck": doc["truck_name"]})
+    return {**_sanitize_assignment(doc), "warnings": warnings}
+
+
+@api_router.patch("/assignments/{assignment_id}")
+async def update_assignment(assignment_id: str, payload: AssignmentPayload,
+                            p: Dict[str, Any] = Depends(require_owner)):
+    existing = await mongo_db.assignments.find_one({"_id": assignment_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="No such assignment.")
+    crew_ids = [c.user_id for c in payload.crew]
+    users = await mongo_db.users.find({"_id": {"$in": crew_ids}, "active": True}).to_list(50)
+    users_by_id = {u["_id"]: u for u in users}
+    if any(uid not in users_by_id for uid in crew_ids):
+        raise HTTPException(status_code=422, detail="One of those crew members doesn't exist or is deactivated.")
+    warnings = await assignment_warnings(payload.job_date, crew_ids, payload.truck_id, exclude_id=assignment_id)
+    if warnings and not payload.ignore_warnings:
+        raise HTTPException(status_code=409, detail={"error": "conflicts", "warnings": warnings})
+    truck = await mongo_db.trucks.find_one({"_id": payload.truck_id}) if payload.truck_id else None
+    site_coords = existing.get("site_coords")
+    if payload.start_address.strip() != existing.get("start_address"):
+        site_coords = await geocode(payload.start_address)
+    updates = {
+        "job_name": payload.job_name.strip(), "job_date": payload.job_date, "arrival_time": payload.arrival_time,
+        "start_address": payload.start_address.strip(), "end_address": payload.end_address.strip(),
+        "truck_id": payload.truck_id, "truck_name": truck["name"] if truck else None,
+        "crew": [{"user_id": c.user_id, "name": users_by_id[c.user_id]["name"], "position": c.position} for c in payload.crew],
+        "site_coords": site_coords, "updated_at": now_iso(),
+    }
+    old_ids = {c["user_id"] for c in existing.get("crew", [])}
+    await mongo_db.assignments.update_one({"_id": assignment_id}, {"$set": updates})
+    for c in updates["crew"]:
+        if c["user_id"] not in old_ids:
+            await notify(c["user_id"], None, "New job assigned",
+                         f"{updates['job_name']} on {updates['job_date']} — you're the {c['position']}.",
+                         "assignment", {"assignment_id": assignment_id})
+    for uid in old_ids - {c["user_id"] for c in updates["crew"]}:
+        await notify(uid, None, "Taken off a job", f"You're no longer on {existing.get('job_name')} ({existing.get('job_date')}).",
+                     "assignment", {"assignment_id": assignment_id})
+    await audit(p, "updated job assignment", updates["job_name"],
+                {"date": updates["job_date"], "crew": [f"{c['name']} ({c['position']})" for c in updates["crew"]]})
+    fresh = await mongo_db.assignments.find_one({"_id": assignment_id})
+    return {**_sanitize_assignment(fresh), "warnings": warnings}
+
+
+@api_router.delete("/assignments/{assignment_id}")
+async def delete_assignment(assignment_id: str, p: Dict[str, Any] = Depends(require_owner)):
+    existing = await mongo_db.assignments.find_one({"_id": assignment_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="No such assignment.")
+    await mongo_db.assignments.delete_one({"_id": assignment_id})
+    for c in existing.get("crew", []):
+        await notify(c["user_id"], None, "Job removed",
+                     f"{existing.get('job_name')} on {existing.get('job_date')} was taken off your schedule.",
+                     "assignment", {})
+    await audit(p, "deleted job assignment", existing.get("job_name") or assignment_id)
+    return {"deleted": True}
+
+
+# ------- crew: my jobs + execution workflow
+
+EXEC_STATUSES = ["Assigned", "En Route", "Arrived", "In Progress", "Complete"]
+
+
+def _crew_job_view(a: Dict[str, Any], user_id: str) -> Dict[str, Any]:
+    mine = next((c for c in a.get("crew", []) if c["user_id"] == user_id), {})
+    return {
+        "id": a["_id"], "job_name": a.get("job_name"), "job_date": a.get("job_date"),
+        "arrival_time": a.get("arrival_time"), "start_address": a.get("start_address"),
+        "truck_name": a.get("truck_name"), "my_position": mine.get("position"),
+        "exec_status": a.get("exec_status"), "status_history": a.get("status_history", []),
+        "completion_notes": a.get("completion_notes", ""),
+    }
+
+
+@api_router.get("/crew/my-jobs")
+async def my_jobs(p: Dict[str, Any] = Depends(require_crew)):
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=14)).date().isoformat()
+    docs = await mongo_db.assignments.find(
+        {"crew.user_id": p["user_id"], "job_date": {"$gte": cutoff}}).sort("job_date", 1).to_list(100)
+    return {"jobs": [_crew_job_view(a, p["user_id"]) for a in docs]}
+
+
+class StatusPayload(BaseModel):
+    status: str
+    notes: Optional[str] = None
+
+
+@api_router.post("/crew/jobs/{assignment_id}/status")
+async def set_job_status(assignment_id: str, payload: StatusPayload, p: Dict[str, Any] = Depends(require_crew)):
+    if payload.status not in EXEC_STATUSES[1:]:
+        raise HTTPException(status_code=422, detail="Unknown status.")
+    a = await mongo_db.assignments.find_one({"_id": assignment_id, "crew.user_id": p["user_id"]})
+    if not a:
+        raise HTTPException(status_code=404, detail="That job isn't on your schedule.")
+    event = {"status": payload.status, "at": now_iso(), "by": p["name"], "by_id": p["user_id"]}
+    updates: Dict[str, Any] = {"exec_status": payload.status, "updated_at": now_iso()}
+    if payload.status == "Complete" and payload.notes:
+        updates["completion_notes"] = payload.notes.strip()
+    await mongo_db.assignments.update_one({"_id": assignment_id},
+                                          {"$set": updates, "$push": {"status_history": event}})
+    if payload.status == "Complete" and not a.get("review_prompted"):
+        await mongo_db.assignments.update_one({"_id": assignment_id}, {"$set": {"review_prompted": True}})
+        await notify(None, "owner", "Job complete — ask for a review",
+                     f"{p['name']} marked \"{a.get('job_name')}\" complete. Send the customer a review text from Projects.",
+                     "job_complete", {"assignment_id": assignment_id, "project_id": a.get("project_id")})
+    await audit(p, f"set job status to {payload.status}", a.get("job_name") or assignment_id)
+    fresh = await mongo_db.assignments.find_one({"_id": assignment_id})
+    return _crew_job_view(fresh, p["user_id"])
+
+
+# ------- photos (object storage)
+
+STORAGE_URL = "https://integrations.emergentagent.com/objstore/api/v1/storage"
+_storage_key: Optional[str] = None
+
+
+async def get_storage_key() -> str:
+    global _storage_key
+    if _storage_key:
+        return _storage_key
+    emergent_key = os.environ.get("EMERGENT_LLM_KEY", "").strip()
+    if not emergent_key:
+        raise HTTPException(status_code=503, detail="Photo storage isn't set up (EMERGENT_LLM_KEY missing).")
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        r = await client.post(f"{STORAGE_URL}/init", json={"emergent_key": emergent_key})
+    if r.status_code >= 300:
+        raise HTTPException(status_code=502, detail="Photo storage didn't respond. Try again.")
+    _storage_key = r.json()["storage_key"]
+    return _storage_key
+
+
+@api_router.post("/crew/jobs/{assignment_id}/photos")
+async def upload_job_photo(assignment_id: str, request: Request, file: UploadFile = File(...)):
+    p = await current_principal(request)
+    a = await mongo_db.assignments.find_one({"_id": assignment_id})
+    if not a:
+        raise HTTPException(status_code=404, detail="No such job.")
+    is_mine = any(c["user_id"] == p["user_id"] for c in a.get("crew", []))
+    if p["role"] != "owner" and not is_mine:
+        raise HTTPException(status_code=403, detail="That job isn't on your schedule.")
+    if not (file.content_type or "").startswith("image/"):
+        raise HTTPException(status_code=422, detail="Only photos can be uploaded here.")
+    data = await file.read()
+    if len(data) > 15 * 1024 * 1024:
+        raise HTTPException(status_code=422, detail="That photo is too big (15 MB max).")
+    ext = (file.filename or "photo.jpg").rsplit(".", 1)[-1].lower() if "." in (file.filename or "") else "jpg"
+    path = f"haulyeah-crm/jobs/{assignment_id}/{uuid4()}.{ext}"
+    key = await get_storage_key()
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        r = await client.put(f"{STORAGE_URL}/objects/{path}",
+                             headers={"X-Storage-Key": key, "Content-Type": file.content_type or "image/jpeg"},
+                             content=data)
+    if r.status_code >= 300:
+        raise HTTPException(status_code=502, detail="The photo didn't upload. Try again.")
+    stored = r.json()
+    doc = {"_id": str(uuid4()), "assignment_id": assignment_id, "user_id": p["user_id"], "user_name": p["name"],
+           "storage_path": stored["path"], "content_type": file.content_type or "image/jpeg",
+           "filename": file.filename, "size": stored.get("size", len(data)), "created_at": now_iso()}
+    await mongo_db.job_photos.insert_one(doc)
+    await audit(p, "uploaded a job photo", a.get("job_name") or assignment_id)
+    return {"id": doc["_id"], "created_at": doc["created_at"]}
+
+
+@api_router.get("/jobs/{assignment_id}/photos")
+async def list_job_photos(assignment_id: str, request: Request):
+    p = await current_principal(request)
+    a = await mongo_db.assignments.find_one({"_id": assignment_id})
+    if not a:
+        raise HTTPException(status_code=404, detail="No such job.")
+    is_mine = any(c["user_id"] == p["user_id"] for c in a.get("crew", []))
+    if p["role"] != "owner" and not is_mine:
+        raise HTTPException(status_code=403, detail="That job isn't on your schedule.")
+    docs = await mongo_db.job_photos.find({"assignment_id": assignment_id}).sort("created_at", 1).to_list(50)
+    return {"photos": [{"id": d["_id"], "by": d.get("user_name"), "created_at": d["created_at"]} for d in docs]}
+
+
+@dl_router.get("/photos/{photo_id}")
+async def serve_photo(photo_id: str, request: Request, auth: Optional[str] = None):
+    if auth:
+        p = await principal_from_token_string(auth)
+    else:
+        p = await current_principal(request)
+    doc = await mongo_db.job_photos.find_one({"_id": photo_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="No such photo.")
+    if p["role"] != "owner":
+        a = await mongo_db.assignments.find_one({"_id": doc["assignment_id"]})
+        if not a or not any(c["user_id"] == p["user_id"] for c in a.get("crew", [])):
+            raise HTTPException(status_code=403, detail="Not yours to see.")
+    key = await get_storage_key()
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        r = await client.get(f"{STORAGE_URL}/objects/{doc['storage_path']}", headers={"X-Storage-Key": key})
+    if r.status_code >= 300:
+        raise HTTPException(status_code=404, detail="Photo file missing.")
+    return Response(content=r.content, media_type=doc.get("content_type", "image/jpeg"))
+
+
+# ------- time clock
+
+class PunchPayload(BaseModel):
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+    accuracy: Optional[float] = None
+
+
+async def _todays_assignment(user_id: str) -> Optional[Dict[str, Any]]:
+    today = datetime.now(timezone.utc).date().isoformat()
+    return await mongo_db.assignments.find_one({"crew.user_id": user_id, "job_date": today})
+
+
+def _punch_flags(punch_at: datetime, coords: Optional[Dict[str, float]], assignment: Optional[Dict[str, Any]],
+                 kind: str) -> List[str]:
+    flags = []
+    if not coords:
+        flags.append(f"no_gps_{kind}")
+    if assignment:
+        site = assignment.get("site_coords")
+        if coords and site:
+            dist = haversine_miles(coords["lat"], coords["lng"], site["lat"], site["lng"])
+            if dist > 0.75:
+                flags.append(f"far_from_site_{kind} ({dist:.1f} mi)")
+        arrival = assignment.get("arrival_time")
+        if arrival and kind == "in":
+            try:
+                hh, mm = [int(x) for x in arrival.split(":")]
+                sched = datetime.fromisoformat(f"{assignment['job_date']}T{hh:02d}:{mm:02d}:00+00:00")
+                delta_h = (punch_at - sched).total_seconds() / 3600
+                if delta_h < -2:
+                    flags.append(f"clocked_in_{abs(delta_h):.1f}h_early")
+                elif delta_h > 6:
+                    flags.append(f"clocked_in_{delta_h:.1f}h_late")
+            except (ValueError, KeyError):
+                pass
+    return flags
+
+
+@api_router.post("/crew/clock-in")
+async def clock_in(payload: PunchPayload, p: Dict[str, Any] = Depends(require_crew)):
+    open_entry = await mongo_db.time_entries.find_one({"user_id": p["user_id"], "clock_out": None})
+    if open_entry:
+        raise HTTPException(status_code=409, detail="You're already clocked in.")
+    now = datetime.now(timezone.utc)
+    coords = {"lat": payload.lat, "lng": payload.lng} if payload.lat is not None and payload.lng is not None else None
+    assignment = await _todays_assignment(p["user_id"])
+    position = "Helper"
+    if assignment:
+        mine = next((c for c in assignment.get("crew", []) if c["user_id"] == p["user_id"]), None)
+        if mine:
+            position = mine.get("position") or "Helper"
+    doc = {
+        "_id": str(uuid4()), "user_id": p["user_id"], "user_name": p["name"],
+        "clock_in": {"at": now.isoformat(), "lat": payload.lat, "lng": payload.lng, "accuracy": payload.accuracy},
+        "clock_out": None, "assignment_id": assignment["_id"] if assignment else None,
+        "job_name": assignment.get("job_name") if assignment else None, "position": position,
+        "hours": None, "flags": _punch_flags(now, coords, assignment, "in"),
+        "approved": False, "edited": False, "created_at": now.isoformat(),
+    }
+    await mongo_db.time_entries.insert_one(doc)
+    if coords:
+        await mongo_db.gps_pings.insert_one({"_id": str(uuid4()), "user_id": p["user_id"], "user_name": p["name"],
+                                             "lat": payload.lat, "lng": payload.lng, "at": now.isoformat()})
+    return {"entry_id": doc["_id"], "clocked_in_at": doc["clock_in"]["at"], "job_name": doc["job_name"],
+            "position": position, "flags": doc["flags"]}
+
+
+@api_router.post("/crew/clock-out")
+async def clock_out(payload: PunchPayload, p: Dict[str, Any] = Depends(require_crew)):
+    entry = await mongo_db.time_entries.find_one({"user_id": p["user_id"], "clock_out": None})
+    if not entry:
+        raise HTTPException(status_code=409, detail="You're not clocked in.")
+    now = datetime.now(timezone.utc)
+    coords = {"lat": payload.lat, "lng": payload.lng} if payload.lat is not None and payload.lng is not None else None
+    assignment = await mongo_db.assignments.find_one({"_id": entry.get("assignment_id")}) if entry.get("assignment_id") else None
+    flags = list(entry.get("flags", [])) + _punch_flags(now, coords, assignment, "out")
+    clock_out_data = {"at": now.isoformat(), "lat": payload.lat, "lng": payload.lng, "accuracy": payload.accuracy}
+    hours = entry_hours({**entry, "clock_out": clock_out_data})
+    if hours is not None and hours > 14:
+        flags.append(f"long_shift_{hours:.1f}h")
+    await mongo_db.time_entries.update_one({"_id": entry["_id"]},
+                                           {"$set": {"clock_out": clock_out_data, "hours": hours, "flags": flags}})
+    return {"entry_id": entry["_id"], "hours": hours, "flags": flags}
+
+
+@api_router.post("/crew/ping")
+async def gps_ping(payload: PunchPayload, p: Dict[str, Any] = Depends(require_crew)):
+    open_entry = await mongo_db.time_entries.find_one({"user_id": p["user_id"], "clock_out": None})
+    if not open_entry:
+        raise HTTPException(status_code=409, detail="Not clocked in — location isn't tracked.")
+    if payload.lat is None or payload.lng is None:
+        raise HTTPException(status_code=422, detail="No location in that ping.")
+    await mongo_db.gps_pings.insert_one({"_id": str(uuid4()), "user_id": p["user_id"], "user_name": p["name"],
+                                         "lat": payload.lat, "lng": payload.lng, "at": now_iso()})
+    return {"ok": True}
+
+
+@api_router.get("/crew/my-time")
+async def my_time(p: Dict[str, Any] = Depends(require_crew)):
+    docs = await mongo_db.time_entries.find({"user_id": p["user_id"]}).sort("created_at", -1).to_list(200)
+    weeks: Dict[str, float] = {}
+    for e in docs:
+        h = e.get("hours")
+        if h:
+            wk = week_key(e["clock_in"]["at"])
+            weeks[wk] = round(weeks.get(wk, 0) + h, 2)
+    open_entry = next((e for e in docs if not e.get("clock_out")), None)
+    return {
+        "entries": [{"id": e["_id"], "clock_in": e["clock_in"], "clock_out": e.get("clock_out"),
+                     "hours": e.get("hours"), "job_name": e.get("job_name"), "position": e.get("position"),
+                     "approved": e.get("approved", False)} for e in docs],
+        "weekly_totals": weeks,
+        "clocked_in": bool(open_entry),
+        "open_entry": {"id": open_entry["_id"], "clocked_in_at": open_entry["clock_in"]["at"],
+                       "job_name": open_entry.get("job_name")} if open_entry else None,
+    }
+
+
+# ------- owner: timeclock management, live map
+
+class TimeEntryPatch(BaseModel):
+    clock_in_at: Optional[str] = None
+    clock_out_at: Optional[str] = None
+    position: Optional[str] = None
+    approved: Optional[bool] = None
+
+
+@api_router.get("/timeclock")
+async def list_time_entries(start: Optional[str] = None, end: Optional[str] = None,
+                            p: Dict[str, Any] = Depends(require_owner)):
+    q: Dict[str, Any] = {}
+    if start:
+        q.setdefault("created_at", {})["$gte"] = start
+    if end:
+        q.setdefault("created_at", {})["$lte"] = end + "T23:59:59+00:00"
+    docs = await mongo_db.time_entries.find(q).sort("created_at", -1).to_list(500)
+    rates = await get_crew_rates()
+    out = []
+    for e in docs:
+        h = e.get("hours")
+        rate = position_rate(e.get("position", "Helper"), rates)
+        out.append({"id": e["_id"], "user_id": e["user_id"], "user_name": e["user_name"],
+                    "clock_in": e["clock_in"], "clock_out": e.get("clock_out"), "hours": h,
+                    "job_name": e.get("job_name"), "position": e.get("position"), "rate": rate,
+                    "pay": round(h * rate, 2) if h else None, "flags": e.get("flags", []),
+                    "approved": e.get("approved", False), "edited": e.get("edited", False)})
+    return {"entries": out}
+
+
+@api_router.patch("/timeclock/{entry_id}")
+async def patch_time_entry(entry_id: str, payload: TimeEntryPatch, p: Dict[str, Any] = Depends(require_owner)):
+    entry = await mongo_db.time_entries.find_one({"_id": entry_id})
+    if not entry:
+        raise HTTPException(status_code=404, detail="No such time entry.")
+    updates: Dict[str, Any] = {}
+    changes = []
+    if payload.clock_in_at:
+        try:
+            datetime.fromisoformat(payload.clock_in_at)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="Bad clock-in time format.")
+        updates["clock_in"] = {**entry["clock_in"], "at": payload.clock_in_at}
+        changes.append("clock-in time")
+    if payload.clock_out_at:
+        try:
+            datetime.fromisoformat(payload.clock_out_at)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="Bad clock-out time format.")
+        updates["clock_out"] = {**(entry.get("clock_out") or {}), "at": payload.clock_out_at}
+        changes.append("clock-out time")
+    if payload.position in ("Driver", "Helper"):
+        updates["position"] = payload.position
+        changes.append(f"position → {payload.position}")
+    if payload.approved is not None:
+        updates["approved"] = payload.approved
+        changes.append("approved" if payload.approved else "unapproved")
+    if changes and (payload.clock_in_at or payload.clock_out_at):
+        updates["edited"] = True
+    if updates:
+        merged = {**entry, **updates}
+        if merged.get("clock_out"):
+            updates["hours"] = entry_hours(merged)
+        await mongo_db.time_entries.update_one({"_id": entry_id}, {"$set": updates})
+        await audit(p, "edited time entry", f"{entry['user_name']} — {entry['clock_in']['at'][:10]}", {"changes": changes})
+    fresh = await mongo_db.time_entries.find_one({"_id": entry_id})
+    return {"id": fresh["_id"], "hours": fresh.get("hours"), "approved": fresh.get("approved", False),
+            "edited": fresh.get("edited", False), "clock_in": fresh["clock_in"], "clock_out": fresh.get("clock_out")}
+
+
+@dl_router.get("/timeclock/export")
+async def export_timesheet(start: Optional[str] = None, end: Optional[str] = None, auth: Optional[str] = None,
+                           request: Request = None):
+    if auth:
+        p = await principal_from_token_string(auth)
+    else:
+        p = await current_principal(request)
+    if p["role"] != "owner":
+        raise HTTPException(status_code=403, detail="Only the owner can export timesheets.")
+    q: Dict[str, Any] = {}
+    if start:
+        q.setdefault("created_at", {})["$gte"] = start
+    if end:
+        q.setdefault("created_at", {})["$lte"] = end + "T23:59:59+00:00"
+    docs = await mongo_db.time_entries.find(q).sort([("user_name", 1), ("created_at", 1)]).to_list(1000)
+    rates = await get_crew_rates()
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["Crew member", "Date", "Clock in", "Clock out", "Hours", "Position", "Rate", "Pay",
+                     "Job", "Week", "Approved", "Edited", "Flags"])
+    totals: Dict[str, Dict[str, float]] = {}
+    for e in docs:
+        h = e.get("hours") or 0
+        rate = position_rate(e.get("position", "Helper"), rates)
+        pay = round(h * rate, 2)
+        wk = week_key(e["clock_in"]["at"])
+        writer.writerow([e["user_name"], e["clock_in"]["at"][:10], e["clock_in"]["at"][11:16],
+                         (e.get("clock_out") or {}).get("at", "")[11:16], h, e.get("position", ""), rate, pay,
+                         e.get("job_name") or "", wk, "yes" if e.get("approved") else "no",
+                         "yes" if e.get("edited") else "no", "; ".join(e.get("flags", []))])
+        key = f"{e['user_name']}|{wk}"
+        t = totals.setdefault(key, {"hours": 0, "pay": 0})
+        t["hours"] = round(t["hours"] + h, 2)
+        t["pay"] = round(t["pay"] + pay, 2)
+    writer.writerow([])
+    writer.writerow(["WEEKLY TOTALS"])
+    writer.writerow(["Crew member", "Week", "Total hours", "Total pay"])
+    for key in sorted(totals):
+        name, wk = key.split("|")
+        writer.writerow([name, wk, totals[key]["hours"], totals[key]["pay"]])
+    filename = f"haulyeah-timesheet-{start or 'all'}-to-{end or 'now'}.csv"
+    return Response(content=buf.getvalue(), media_type="text/csv",
+                    headers={"Content-Disposition": f"attachment; filename={filename}"})
+
+
+@api_router.get("/gps/live")
+async def gps_live(p: Dict[str, Any] = Depends(require_owner)):
+    open_entries = await mongo_db.time_entries.find({"clock_out": None}).to_list(50)
+    out = []
+    for e in open_entries:
+        ping = await mongo_db.gps_pings.find({"user_id": e["user_id"]}).sort("at", -1).limit(1).to_list(1)
+        loc = ping[0] if ping else None
+        out.append({"user_id": e["user_id"], "name": e["user_name"], "job_name": e.get("job_name"),
+                    "clocked_in_at": e["clock_in"]["at"],
+                    "lat": loc["lat"] if loc else None, "lng": loc["lng"] if loc else None,
+                    "last_ping": loc["at"] if loc else None})
+    return {"crew": out}
+
+
+# ------- availability
+
+class AvailabilityPayload(BaseModel):
+    date: str
+    available: bool
+
+
+@api_router.get("/crew/availability")
+async def my_availability(p: Dict[str, Any] = Depends(require_crew)):
+    docs = await mongo_db.availability.find({"user_id": p["user_id"]}).to_list(200)
+    return {"availability": {d["date"]: d["available"] for d in docs}}
+
+
+@api_router.post("/crew/availability")
+async def set_availability(payload: AvailabilityPayload, p: Dict[str, Any] = Depends(require_crew)):
+    await mongo_db.availability.update_one(
+        {"_id": f"{p['user_id']}:{payload.date}"},
+        {"$set": {"user_id": p["user_id"], "name": p["name"], "date": payload.date,
+                  "available": payload.available, "updated_at": now_iso()}},
+        upsert=True)
+    return {"ok": True, "date": payload.date, "available": payload.available}
+
+
+@api_router.get("/availability")
+async def all_availability(start: Optional[str] = None, end: Optional[str] = None,
+                           p: Dict[str, Any] = Depends(require_owner)):
+    q: Dict[str, Any] = {}
+    if start or end:
+        q["date"] = {}
+        if start:
+            q["date"]["$gte"] = start
+        if end:
+            q["date"]["$lte"] = end
+    docs = await mongo_db.availability.find(q).to_list(500)
+    return {"availability": [{"user_id": d["user_id"], "name": d.get("name"), "date": d["date"],
+                              "available": d["available"]} for d in docs]}
+
+
+# ------- notifications
+
+@api_router.get("/notifications")
+async def list_notifications(request: Request):
+    p = await current_principal(request)
+    q: Dict[str, Any] = {"$or": [{"user_id": p["user_id"]}]} if p["user_id"] else {"$or": []}
+    if p["role"] == "owner":
+        q["$or"].append({"role": "owner"})
+    if not q["$or"]:
+        return {"notifications": [], "unread": 0}
+    docs = await mongo_db.notifications.find(q).sort("created_at", -1).to_list(50)
+    unread = sum(1 for d in docs if not d.get("read"))
+    return {"notifications": [{"id": d["_id"], "title": d["title"], "body": d["body"], "type": d.get("type"),
+                               "data": d.get("data", {}), "read": d.get("read", False),
+                               "created_at": d["created_at"]} for d in docs],
+            "unread": unread}
+
+
+@api_router.post("/notifications/read-all")
+async def read_all_notifications(request: Request):
+    p = await current_principal(request)
+    ors = []
+    if p["user_id"]:
+        ors.append({"user_id": p["user_id"]})
+    if p["role"] == "owner":
+        ors.append({"role": "owner"})
+    if ors:
+        await mongo_db.notifications.update_many({"$or": ors}, {"$set": {"read": True}})
+    return {"ok": True}
+
+
+# ------- crew rates + sales access settings
+
+class CrewRatesPayload(BaseModel):
+    driver: float
+    helper: float
+
+
+@api_router.get("/settings/crew-rates")
+async def crew_rates(p: Dict[str, Any] = Depends(require_owner)):
+    return await get_crew_rates()
+
+
+@api_router.put("/settings/crew-rates")
+async def save_crew_rates(payload: CrewRatesPayload, p: Dict[str, Any] = Depends(require_owner)):
+    if payload.driver < 0 or payload.helper < 0:
+        raise HTTPException(status_code=422, detail="Rates can't be negative.")
+    await mongo_db.settings.update_one({"_id": "crew_rates"},
+                                       {"$set": {"driver": payload.driver, "helper": payload.helper}}, upsert=True)
+    await audit(p, "changed crew pay rates", f"Driver ${payload.driver}/hr, Helper ${payload.helper}/hr")
+    return {"driver": payload.driver, "helper": payload.helper}
+
+
+class SalesAccessPayload(BaseModel):
+    booking_calendar: bool = False
+    calculator: bool = True
+    script: bool = True
+
+
+@api_router.get("/settings/sales-access")
+async def get_sales_access(role: str = Depends(require_auth)):
+    doc = await mongo_db.settings.find_one({"_id": "sales_access"}) or {}
+    return {"booking_calendar": bool(doc.get("booking_calendar", False)),
+            "calculator": bool(doc.get("calculator", True)), "script": bool(doc.get("script", True))}
+
+
+@api_router.put("/settings/sales-access")
+async def save_sales_access(payload: SalesAccessPayload, p: Dict[str, Any] = Depends(require_owner)):
+    await mongo_db.settings.update_one({"_id": "sales_access"}, {"$set": payload.model_dump()}, upsert=True)
+    await audit(p, "changed sales role access", str(payload.model_dump()))
+    return payload.model_dump()
+
+
+# ------- reports + audit (owner)
+
+@api_router.get("/reports/labor")
+async def labor_report(start: Optional[str] = None, end: Optional[str] = None,
+                       p: Dict[str, Any] = Depends(require_owner)):
+    if not start:
+        start = (datetime.now(timezone.utc) - timedelta(days=28)).date().isoformat()
+    if not end:
+        end = datetime.now(timezone.utc).date().isoformat()
+    entries = await mongo_db.time_entries.find(
+        {"created_at": {"$gte": start, "$lte": end + "T23:59:59+00:00"}}).to_list(1000)
+    assignments = await mongo_db.assignments.find({"job_date": {"$gte": start, "$lte": end}}).to_list(300)
+    rates = await get_crew_rates()
+
+    revenue_by_project: Dict[str, float] = {}
+    if get_api_key():
+        try:
+            data = await airtable_request("GET", TABLES["projects"])
+            for rec in data.get("records", []):
+                fields = rec.get("fields", {})
+                revenue_by_project[rec["id"]] = float(fields.get(PROJECT_REVENUE_FIELD) or fields.get(PROJECT_QUOTE_FIELD) or 0)
+        except HTTPException:
+            pass
+
+    by_assignment: Dict[str, Dict[str, float]] = {}
+    total_hours = 0.0
+    total_cost = 0.0
+    for e in entries:
+        h = e.get("hours") or 0
+        if not h:
+            continue
+        cost = h * position_rate(e.get("position", "Helper"), rates)
+        total_hours = round(total_hours + h, 2)
+        total_cost = round(total_cost + cost, 2)
+        aid = e.get("assignment_id") or "unassigned"
+        agg = by_assignment.setdefault(aid, {"hours": 0, "cost": 0})
+        agg["hours"] = round(agg["hours"] + h, 2)
+        agg["cost"] = round(agg["cost"] + cost, 2)
+
+    jobs = []
+    for a in assignments:
+        agg = by_assignment.get(a["_id"], {"hours": 0, "cost": 0})
+        revenue = revenue_by_project.get(a.get("project_id") or "", 0)
+        jobs.append({"assignment_id": a["_id"], "job_name": a.get("job_name"), "job_date": a.get("job_date"),
+                     "exec_status": a.get("exec_status"), "hours": agg["hours"], "labor_cost": agg["cost"],
+                     "revenue": revenue or None,
+                     "margin": round(revenue - agg["cost"], 2) if revenue else None})
+    unassigned = by_assignment.get("unassigned", {"hours": 0, "cost": 0})
+    completed = sum(1 for a in assignments if a.get("exec_status") == "Complete")
+    return {"start": start, "end": end, "jobs": jobs, "unassigned_hours": unassigned["hours"],
+            "unassigned_cost": unassigned["cost"], "totals": {"jobs_completed": completed,
+                                                              "total_hours": total_hours,
+                                                              "total_labor_cost": total_cost}}
+
+
+@api_router.get("/audit")
+async def audit_log(limit: int = 200, p: Dict[str, Any] = Depends(require_owner)):
+    docs = await mongo_db.audit_log.find({}).sort("at", -1).to_list(min(limit, 500))
+    return {"entries": [{"at": d["at"], "actor": d["actor"], "action": d["action"], "target": d.get("target"),
+                         "details": d.get("details", {})} for d in docs]}
+
+
+# ------- startup seeding
+
+@app.on_event("startup")
+async def seed_on_startup():
+    try:
+        await mongo_db.users.create_index("email", unique=True)
+        owner_email = os.environ.get("OWNER_EMAIL", "keithriv24@gmail.com").strip().lower()
+        owner_pw = os.environ.get("APP_PASSWORD", "")
+        seeds = [
+            {"name": "Keith (Owner)", "email": owner_email, "role": "owner", "password": owner_pw},
+            {"name": "Javante Brown", "email": "javante@haulyeahmoves.com", "role": "crew", "password": "HaulCrew2026!"},
+            {"name": "Junior Santil", "email": "junior@haulyeahmoves.com", "role": "crew", "password": "HaulCrew2026!"},
+        ]
+        for s in seeds:
+            if not s["password"]:
+                continue
+            existing = await mongo_db.users.find_one({"email": s["email"]})
+            if existing is None:
+                await mongo_db.users.insert_one({
+                    "_id": str(uuid4()), "name": s["name"], "email": s["email"], "role": s["role"],
+                    "password_hash": hash_password(s["password"]), "active": True,
+                    "must_change_password": s["role"] != "owner", "gps_consent_at": None, "created_at": now_iso()})
+        if await mongo_db.trucks.count_documents({}) == 0:
+            for i in range(1, 6):
+                await mongo_db.trucks.insert_one({"_id": str(uuid4()), "name": f"Truck {i}", "active": True})
+    except Exception as exc:
+        logger.error("Startup seeding failed: %s", exc)
+
+
 app.include_router(auth_router)
+app.include_router(dl_router)
 app.include_router(api_router)
 
 app.add_middleware(
