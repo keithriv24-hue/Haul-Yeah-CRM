@@ -102,8 +102,9 @@ export default function Settings() {
 
   const validate = () => {
     for (const { key, label, min = 0, max } of FIELDS) {
-      const n = Number(form[key]);
-      if (Number.isNaN(n) || n < min || n > max) {
+      const raw = String(form[key] ?? "").trim();
+      const n = Number(raw);
+      if (raw === "" || Number.isNaN(n) || n < min || n > max) {
         toast.error(`${label} must be a number between ${min} and ${max}.`);
         return false;
       }
@@ -115,7 +116,7 @@ export default function Settings() {
         return false;
       }
       const p = Number(d.price);
-      if (d.name.trim() && (Number.isNaN(p) || p < 0 || p > 100000)) {
+      if (d.name.trim() && (String(d.price).trim() === "" || Number.isNaN(p) || p < 0 || p > 100000)) {
         toast.error(`"${d.name}" needs a price between $0 and $100,000.`);
         return false;
       }

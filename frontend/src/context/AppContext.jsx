@@ -46,6 +46,8 @@ export const AppProvider = ({ children }) => {
     });
   };
 
+  const healthPromiseRef = useRef(null);
+
   const checkHealth = useCallback(async () => {
     try {
       const h = await getHealth();
@@ -56,6 +58,16 @@ export const AppProvider = ({ children }) => {
       return { airtable_configured: false };
     }
   }, []);
+
+  const ensureHealth = useCallback(async () => {
+    if (healthRef.current?.airtable_configured != null) return healthRef.current;
+    if (!healthPromiseRef.current) {
+      healthPromiseRef.current = checkHealth().finally(() => {
+        healthPromiseRef.current = null;
+      });
+    }
+    return healthPromiseRef.current;
+  }, [checkHealth]);
 
   useEffect(() => {
     checkHealth();
@@ -143,19 +155,25 @@ export const AppProvider = ({ children }) => {
   const loadSchema = useCallback(async (table) => {
     if (schemaRequested.current.has(table)) return;
     schemaRequested.current.add(table);
+    const h = await ensureHealth();
+    if (h?.airtable_configured === false) {
+      schemaRequested.current.delete(table);
+      return;
+    }
     try {
       const d = await getSchemaApi(table);
       setSchemas((s) => ({ ...s, [table]: d.fields }));
     } catch {
       schemaRequested.current.delete(table);
     }
-  }, []);
+  }, [ensureHealth]);
 
   const loadTable = useCallback(async (table, force = false) => {
     const existing = dataRef.current[table];
     if (existing?.records && !force) return existing.records;
     if (existing?.loading && !force) return null;
-    if (healthRef.current?.airtable_configured === false && !force) {
+    const h = healthRef.current?.airtable_configured == null ? await ensureHealth() : healthRef.current;
+    if (h?.airtable_configured === false && !force) {
       setData((d) => ({ ...d, [table]: { ...d[table], loading: false, error: "Airtable key is not set yet." } }));
       return null;
     }
@@ -171,7 +189,7 @@ export const AppProvider = ({ children }) => {
       setData((d) => ({ ...d, [table]: { ...d[table], loading: false, error: msg } }));
       return null;
     }
-  }, []);
+  }, [ensureHealth]);
 
   const refreshAll = useCallback(async () => {
     setRefreshing(true);
