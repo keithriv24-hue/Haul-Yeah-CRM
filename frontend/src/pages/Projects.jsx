@@ -9,7 +9,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { InstructionBanner, PageTitle, Private, Money, EmptyState, LoadingRows } from "@/components/Bits";
 import { PF, LF, f, PROJECT_STATUSES, TRUCKS, STATUS_PILL } from "@/lib/fields";
-import { fmtDate, fmtMoney, calendarTemplate, smsLink, reviewSmsBody } from "@/lib/format";
+import { fmtDate, fmtMoney, calendarTemplate, smsLink, reviewSmsBody, mapsLink } from "@/lib/format";
 import { useAuth } from "@/components/AuthGate";
 import JobsCalendar from "@/components/JobsCalendar";
 
@@ -130,8 +130,34 @@ const ProjectCard = ({ project }) => {
               </label>
             )}
             <div className="text-xs text-slate-600 space-y-1">
-              <div>From: <Private>{f(project, PF.fromAddr) || "—"}</Private></div>
-              <div>To: <Private>{f(project, PF.toAddr) || "—"}</Private></div>
+              <div>
+                From:{" "}
+                {f(project, PF.fromAddr) ? (
+                  <a
+                    data-testid="project-from-map-link"
+                    href={mapsLink(f(project, PF.fromAddr))}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-[#1B2A4A] font-semibold underline decoration-dotted underline-offset-2 hover:text-[#E8743B]"
+                  >
+                    <Private>{f(project, PF.fromAddr)}</Private>
+                  </a>
+                ) : ("—")}
+              </div>
+              <div>
+                To:{" "}
+                {f(project, PF.toAddr) ? (
+                  <a
+                    data-testid="project-to-map-link"
+                    href={mapsLink(f(project, PF.toAddr))}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-[#1B2A4A] font-semibold underline decoration-dotted underline-offset-2 hover:text-[#E8743B]"
+                  >
+                    <Private>{f(project, PF.toAddr)}</Private>
+                  </a>
+                ) : ("—")}
+              </div>
               {f(project, PF.notes) && <div className="whitespace-pre-wrap">Notes: {f(project, PF.notes)}</div>}
             </div>
             <Button asChild variant="outline" size="sm" className="gap-1 text-xs" data-testid="project-calendar-btn">

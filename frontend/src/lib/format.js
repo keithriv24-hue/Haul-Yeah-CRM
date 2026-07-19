@@ -54,6 +54,8 @@ export const payNudgeSmsBody = (name, amount, url) => {
   return `Hi ${first}, friendly nudge from Haul Yeah Moving — your invoice for ${fmtMoney(amount)} is still open.${url ? ` Pay here: ${url}` : ""} Thanks so much!`;
 };
 
+export const mapsLink = (address) => `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(address)}`;
+
 export const calendarTemplate = (title, dateISO, details = "", guestEmail = "") => {
   const d = (dateISO || todayISO()).replace(/-/g, "");
   let url = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(title)}&dates=${d}/${d}&details=${encodeURIComponent(details)}`;

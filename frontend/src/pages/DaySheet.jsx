@@ -6,13 +6,25 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { EmptyState, LoadingRows, Pill } from "@/components/Bits";
 import { PF, f } from "@/lib/fields";
-import { fmtDate, todayISO } from "@/lib/format";
+import { fmtDate, todayISO, mapsLink } from "@/lib/format";
 
-const Row = ({ icon: Icon, label, value }) => (
+const Row = ({ icon: Icon, label, value, href, testId }) => (
   <div className="flex items-start gap-2 text-sm">
     <Icon className="w-4 h-4 text-slate-400 mt-0.5 shrink-0 print:text-black" />
     <span className="text-slate-500 shrink-0 print:text-black">{label}:</span>
-    <span className="font-semibold text-[#1B2A4A] min-w-0 break-words print:text-black">{value}</span>
+    {href ? (
+      <a
+        data-testid={testId}
+        href={href}
+        target="_blank"
+        rel="noreferrer"
+        className="font-semibold text-[#1B2A4A] min-w-0 break-words underline decoration-dotted underline-offset-2 hover:text-[#E8743B] print:text-black print:no-underline"
+      >
+        {value}
+      </a>
+    ) : (
+      <span className="font-semibold text-[#1B2A4A] min-w-0 break-words print:text-black">{value}</span>
+    )}
   </div>
 );
 
@@ -75,8 +87,8 @@ export default function DaySheet() {
                   <Pill value={f(p, PF.status) || "—"} />
                 </div>
                 <div className="grid sm:grid-cols-2 gap-x-6 gap-y-2">
-                  <Row icon={MapPin} label="From" value={f(p, PF.fromAddr) || "—"} />
-                  <Row icon={MapPin} label="To" value={f(p, PF.toAddr) || "—"} />
+                  <Row icon={MapPin} label="From" value={f(p, PF.fromAddr) || "—"} href={f(p, PF.fromAddr) ? mapsLink(f(p, PF.fromAddr)) : null} testId="day-sheet-from-link" />
+                  <Row icon={MapPin} label="To" value={f(p, PF.toAddr) || "—"} href={f(p, PF.toAddr) ? mapsLink(f(p, PF.toAddr)) : null} testId="day-sheet-to-link" />
                   <Row icon={Truck} label="Truck" value={f(p, PF.truck) || "—"} />
                   <Row icon={Users} label="Crew" value={f(p, PF.crewSize) ? `${f(p, PF.crewSize)} movers` : "—"} />
                   <Row icon={Clock} label="Est. hours" value={f(p, PF.estHours) ? `${f(p, PF.estHours)} hrs` : "—"} />
