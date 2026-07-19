@@ -3,7 +3,7 @@ import { NavLink, Outlet } from "react-router-dom";
 import { toast } from "sonner";
 import {
   LayoutDashboard, Users, BookUser, Truck, KanbanSquare, PenLine, Receipt,
-  CreditCard, Handshake, HelpCircle, Eye, EyeOff, RefreshCw, KeyRound, LogOut, Calculator, SlidersHorizontal, MessageSquareText, Video,
+  CreditCard, Handshake, HelpCircle, Eye, EyeOff, RefreshCw, KeyRound, LogOut, Calculator, SlidersHorizontal, MessageSquareText, Video, UserRound,
 } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { useAuth } from "@/components/AuthGate";
@@ -50,6 +50,13 @@ export default function Layout() {
       .catch(() => toast.error("Could not switch accounts. Try again."));
   };
 
+  const logout = () => {
+    localStorage.removeItem("hy_token");
+    localStorage.removeItem("hy_role");
+    localStorage.removeItem("hy_can_switch");
+    window.dispatchEvent(new Event("hy-logout"));
+  };
+
   return (
     <div className="min-h-screen bg-[#F2F4F8]">
       <aside className="hidden md:flex fixed inset-y-0 left-0 w-60 flex-col bg-[#1B2A4A] text-white z-50">
@@ -78,6 +85,58 @@ export default function Layout() {
             </NavLink>
           ))}
         </nav>
+        <div className="border-t border-white/10 p-4 space-y-2">
+          {canSwitch ? (
+            <Select value={role || "owner"} onValueChange={handleSwitch}>
+              <SelectTrigger data-testid="role-switch-select" className="w-full h-8 text-xs font-bold uppercase tracking-wide text-white border-white/20 bg-white/10">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="owner">Owner view</SelectItem>
+                <SelectItem value="sales">Sales view</SelectItem>
+                <SelectItem value="employee">Crew view</SelectItem>
+              </SelectContent>
+            </Select>
+          ) : (
+            <span data-testid="role-chip" className="flex items-center justify-center text-xs font-bold uppercase tracking-wide bg-white/10 text-white border border-white/20 rounded-full px-2.5 py-1">
+              {ROLE_LABEL[role] || "Owner"} account
+            </span>
+          )}
+          {role !== "employee" && (
+            <Button
+              data-testid="privacy-toggle-btn"
+              size="sm"
+              onClick={togglePrivacy}
+              className={`w-full gap-1.5 ${privacy ? "bg-[#E8743B] hover:bg-[#d4632e] text-white" : "bg-white/10 hover:bg-white/20 text-white"}`}
+            >
+              {privacy ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              {privacy ? "Privacy on" : "Privacy off"}
+            </Button>
+          )}
+          <div className="grid grid-cols-2 gap-2">
+            <Button
+              data-testid="refresh-data-btn"
+              variant="outline"
+              size="sm"
+              onClick={refreshAll}
+              disabled={refreshing}
+              className="gap-1.5 bg-transparent border-white/20 text-white hover:bg-white/10 hover:text-white"
+            >
+              <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
+              Refresh
+            </Button>
+            <Button
+              data-testid="logout-btn"
+              variant="outline"
+              size="sm"
+              onClick={logout}
+              className="gap-1.5 bg-transparent border-white/20 text-white hover:bg-white/10 hover:text-white"
+            >
+              <LogOut className="w-4 h-4" />
+              Log out
+            </Button>
+          </div>
+        </div>
       </aside>
 
       <div className="md:pl-60">
@@ -88,66 +147,12 @@ export default function Layout() {
             </div>
             <div className="hidden md:block" />
             <div className="flex items-center gap-2">
-              {canSwitch ? (
-                <Select value={role || "owner"} onValueChange={handleSwitch}>
-                  <SelectTrigger data-testid="role-switch-select" className="w-[130px] h-8 text-xs font-bold uppercase tracking-wide text-[#1B2A4A] border-[#1B2A4A]/20 bg-[#1B2A4A]/5">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="owner">Owner view</SelectItem>
-                    <SelectItem value="sales">Sales view</SelectItem>
-                    <SelectItem value="employee">Crew view</SelectItem>
-                  </SelectContent>
-                </Select>
-              ) : (
-                <span data-testid="role-chip" className="inline-flex items-center text-xs font-bold uppercase tracking-wide bg-[#1B2A4A]/5 text-[#1B2A4A] border border-[#1B2A4A]/20 rounded-full px-2.5 py-1">
-                  {ROLE_LABEL[role] || "Owner"}
-                </span>
-              )}
               <LiveIndicator />
               <Button data-testid="new-meet-btn" asChild variant="outline" size="sm" className="gap-1.5">
                 <a href="https://meet.google.com/new" target="_blank" rel="noreferrer">
                   <Video className="w-4 h-4" />
                   <span className="hidden sm:inline">New Meet</span>
                 </a>
-              </Button>
-              <Button
-                data-testid="refresh-data-btn"
-                variant="outline"
-                size="sm"
-                onClick={refreshAll}
-                disabled={refreshing}
-                className="gap-1.5"
-              >
-                <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
-                Refresh
-              </Button>
-              {role !== "employee" && (
-                <Button
-                  data-testid="privacy-toggle-btn"
-                  size="sm"
-                  onClick={togglePrivacy}
-                  className={`gap-1.5 ${privacy ? "bg-[#E8743B] hover:bg-[#d4632e] text-white" : "bg-[#1B2A4A] hover:bg-[#26395f] text-white"}`}
-                >
-                  {privacy ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  {privacy ? "Privacy on" : "Privacy off"}
-                </Button>
-              )}
-              <Button
-                data-testid="logout-btn"
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  localStorage.removeItem("hy_token");
-                  localStorage.removeItem("hy_role");
-                  localStorage.removeItem("hy_can_switch");
-                  window.dispatchEvent(new Event("hy-logout"));
-                }}
-                className="gap-1.5"
-              >
-                <LogOut className="w-4 h-4" />
-                <span className="hidden sm:inline">Log out</span>
-                <span className="sm:hidden">Out</span>
               </Button>
             </div>
           </div>
@@ -184,6 +189,50 @@ export default function Layout() {
               {label}
             </NavLink>
           ))}
+          <div className="w-px self-stretch bg-white/15 my-1.5 shrink-0" />
+          {canSwitch && (
+            <Select value={role || "owner"} onValueChange={handleSwitch}>
+              <SelectTrigger
+                data-testid="tab-account-select"
+                className="flex flex-col items-center justify-center gap-0.5 min-w-[72px] h-auto px-2 py-2 text-[10px] font-semibold text-white/60 bg-transparent border-0 shadow-none rounded-none focus:ring-0 [&>svg:last-of-type]:hidden"
+              >
+                <UserRound className="w-5 h-5" />
+                Account
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="owner">Owner view</SelectItem>
+                <SelectItem value="sales">Sales view</SelectItem>
+                <SelectItem value="employee">Crew view</SelectItem>
+              </SelectContent>
+            </Select>
+          )}
+          <button
+            data-testid="tab-refresh-btn"
+            onClick={refreshAll}
+            disabled={refreshing}
+            className="flex flex-col items-center gap-0.5 min-w-[72px] px-2 py-2 text-[10px] font-semibold text-white/60"
+          >
+            <RefreshCw className={`w-5 h-5 ${refreshing ? "animate-spin" : ""}`} />
+            Refresh
+          </button>
+          {role !== "employee" && (
+            <button
+              data-testid="tab-privacy-btn"
+              onClick={togglePrivacy}
+              className={`flex flex-col items-center gap-0.5 min-w-[72px] px-2 py-2 text-[10px] font-semibold ${privacy ? "text-[#E8743B]" : "text-white/60"}`}
+            >
+              {privacy ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+              {privacy ? "Privacy on" : "Privacy off"}
+            </button>
+          )}
+          <button
+            data-testid="tab-logout-btn"
+            onClick={logout}
+            className="flex flex-col items-center gap-0.5 min-w-[72px] px-2 py-2 text-[10px] font-semibold text-white/60"
+          >
+            <LogOut className="w-5 h-5" />
+            Log out
+          </button>
         </div>
       </nav>
     </div>

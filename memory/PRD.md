@@ -47,6 +47,7 @@ Full-stack internal CRM PWA for Haul Yeah Moving (weekend moving company, North 
 - [x] Review tracking: clicking "Ask for review" appends "Review asked {date}." to project notes; button flips to emerald "Review asked ✓" (regex on notes), tapping again re-texts
 - [x] Callback list: Call-backs KPI is a Link to /leads?filter=Call back; Leads filter now lives in the URL (useSearchParams) with a red "Call back (n)" chip filtering needsFollowUp leads — browser-verified navigation + chip selection
 - [x] Weekly recap: "Weekly recap" button on Dashboard opens Gmail compose (from contact@haulyeahmoves.com) with a plain-text summary: last weekend's jobs (Sat+Sun by jobDate) + revenue, collected, owed, open leads + pipeline, call-backs due — browser-verified body content
+- [x] Header cleanup: role switcher/chip, Privacy, Refresh, Log out moved off the header — desktop: bottom of sidebar (same testids); mobile: bottom tab bar after a divider (tab-account-select, tab-refresh-btn, tab-privacy-btn, tab-logout-btn). Header keeps live indicator + New Meet — browser-verified both viewports
 
 ## Current status / blockers
 - AIRTABLE_API_KEY not yet added by user (secrets panel). All data routes return friendly 503 until then. Verify with GET /api/airtable/verify after key is added.
