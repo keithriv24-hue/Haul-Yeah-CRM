@@ -91,11 +91,11 @@ export default function CrewToday() {
   const sendReview = async (channel) => {
     setReviewBusy(true);
     try {
+      await sendReviewRequestApi(job.job_id, { channel, message: reviewMsg });
       if (channel === "email") {
         const subject = encodeURIComponent("Thanks from Haul Yeah Moving!");
         window.location.href = `mailto:${job.customer?.email}?subject=${subject}&body=${encodeURIComponent(reviewMsg)}`;
       }
-      await sendReviewRequestApi(job.job_id, { channel, message: reviewMsg });
       toast.success(channel === "sms" ? "Review text sent!" : "Email opened and logged.");
     } catch (e) {
       toast.error(apiErrorMessage(e));
