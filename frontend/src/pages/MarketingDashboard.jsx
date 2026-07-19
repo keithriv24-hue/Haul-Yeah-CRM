@@ -564,7 +564,7 @@ export default function MarketingDashboard() {
         </div>
       </div>
 
-      {overview && overview.airtable_available === false && (
+      {overview && overview.airtable_available === false && role === "marketing" && (
         <div data-testid="mkt-airtable-banner" className="rounded-md bg-amber-50 border border-amber-200 text-amber-800 text-sm px-4 py-2.5">
           Lead numbers need the Airtable connection. Add the AIRTABLE_API_KEY and refresh — spend logging still works meanwhile.
         </div>

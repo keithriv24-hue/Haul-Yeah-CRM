@@ -36,12 +36,12 @@ const RoleChecks = ({ roles, onToggle, idPrefix }) => (
         </label>
       ))}
     </div>
-    <p className="text-[11px] text-slate-400 mt-1.5">Someone with Crew + Sales can flip between both views from the sidebar.</p>
+    <p className="text-[11px] text-slate-400 mt-1.5">Pick their main role first — it decides which view they land in. Someone with Crew + Sales can flip between both views from the sidebar.</p>
   </div>
 );
 
 const AddUserDialog = ({ open, onOpenChange, onSaved }) => {
-  const [form, setForm] = useState({ name: "", email: "", roles: ["crew"] });
+  const [form, setForm] = useState({ name: "", email: "", roles: [] });
   const [busy, setBusy] = useState(false);
   const set = (k) => (v) => setForm((f) => ({ ...f, [k]: v }));
   const toggleRole = (r) =>
@@ -52,7 +52,7 @@ const AddUserDialog = ({ open, onOpenChange, onSaved }) => {
     try {
       await createUserApi({ name: form.name, email: form.email, roles: form.roles, role: form.roles[0] });
       toast.success(`${form.name} added. Their starting password is haulyeah123 — they'll change it on first login.`);
-      setForm({ name: "", email: "", roles: ["crew"] });
+      setForm({ name: "", email: "", roles: [] });
       onOpenChange(false);
       onSaved();
     } catch (e) {
