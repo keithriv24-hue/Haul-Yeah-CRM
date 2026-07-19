@@ -1,11 +1,9 @@
-import React, { useEffect, useState } from "react";
-import { toast } from "sonner";
-import { ChevronLeft, ChevronRight, CalendarDays, Link2, RefreshCw, Unlink } from "lucide-react";
+import React, { useState } from "react";
+import { ChevronLeft, ChevronRight, CalendarDays } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/components/AuthGate";
 import { Private } from "@/components/Bits";
 import { PF, f, STATUS_PILL } from "@/lib/fields";
-import { gcalStatusApi, gcalLoginApi, gcalSyncApi, gcalDisconnectApi, apiErrorMessage } from "@/lib/api";
 
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -15,8 +13,6 @@ export default function JobsCalendar({ projects }) {
   const isOwner = (role || "owner") === "owner";
   const now = new Date();
   const [ym, setYm] = useState({ y: now.getFullYear(), m: now.getMonth() });
-  const [gcal, setGcal] = useState(null);
-  const [syncing, setSyncing] = useState(false);
 
   const visible = projects.filter((p) => {
     const s = f(p, PF.status);
@@ -28,43 +24,6 @@ export default function JobsCalendar({ projects }) {
     const d = (f(p, PF.jobDate) || "").slice(0, 10);
     if (d) (byDate[d] = byDate[d] || []).push(p);
   });
-
-  useEffect(() => {
-    if (isOwner) gcalStatusApi().then(setGcal).catch(() => {});
-  }, [isOwner]);
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    if (params.get("gcal") === "connected") {
-      toast.success("Google Calendar connected.");
-      window.history.replaceState({}, "", window.location.pathname);
-      gcalStatusApi().then(setGcal).catch(() => {});
-    } else if (params.get("gcal") === "error") {
-      toast.error("Google connection failed. Try again.");
-      window.history.replaceState({}, "", window.location.pathname);
-    }
-  }, []);
-
-  const connect = () =>
-    gcalLoginApi()
-      .then((d) => { window.location.href = d.authorization_url; })
-      .catch((e) => toast.error(apiErrorMessage(e)));
-
-  const sync = async () => {
-    setSyncing(true);
-    try {
-      const d = await gcalSyncApi();
-      toast.success(`Synced to Google Calendar: ${d.created} new, ${d.updated} updated.`);
-    } catch (e) {
-      toast.error(apiErrorMessage(e));
-    }
-    setSyncing(false);
-  };
-
-  const disconnect = () =>
-    gcalDisconnectApi()
-      .then(() => { setGcal((g) => ({ ...g, connected: false, email: null })); toast.success("Google Calendar disconnected."); })
-      .catch((e) => toast.error(apiErrorMessage(e)));
 
   const shiftMonth = (delta) =>
     setYm(({ y, m }) => {
@@ -96,35 +55,6 @@ export default function JobsCalendar({ projects }) {
           </Button>
         </div>
       </div>
-
-      {isOwner && (
-        <div className="flex flex-wrap items-center gap-2 border border-slate-200 bg-slate-50 rounded-lg px-3 py-2 mb-3">
-          {gcal?.connected ? (
-            <>
-              <span className="text-xs text-slate-600">
-                Google Calendar: <strong className="text-emerald-700">connected</strong>{gcal.email ? <> as <Private>{gcal.email}</Private></> : null}
-              </span>
-              <Button data-testid="gcal-sync-btn" size="sm" className="gap-1 text-xs bg-[#E8743B] hover:bg-[#d4632e]" onClick={sync} disabled={syncing}>
-                <RefreshCw className={`w-3.5 h-3.5 ${syncing ? "animate-spin" : ""}`} /> {syncing ? "Syncing…" : "Sync jobs to Google"}
-              </Button>
-              <Button data-testid="gcal-disconnect-btn" variant="outline" size="sm" className="gap-1 text-xs" onClick={disconnect}>
-                <Unlink className="w-3.5 h-3.5" /> Disconnect
-              </Button>
-            </>
-          ) : (
-            <>
-              <span className="text-xs text-slate-600">
-                {gcal && !gcal.creds_configured
-                  ? "Google Calendar needs setup: add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in the secrets panel."
-                  : "Connect your Google account to push booked jobs onto your Google Calendar."}
-              </span>
-              <Button data-testid="gcal-connect-btn" variant="outline" size="sm" className="gap-1 text-xs" onClick={connect}>
-                <Link2 className="w-3.5 h-3.5" /> Connect Google Calendar
-              </Button>
-            </>
-          )}
-        </div>
-      )}
 
       <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1">
         {WEEKDAYS.map((d) => <div key={d}>{d}</div>)}

@@ -3,7 +3,7 @@ import { NavLink, Outlet } from "react-router-dom";
 import { toast } from "sonner";
 import {
   LayoutDashboard, Users, BookUser, Truck, KanbanSquare, PenLine, Receipt,
-  CreditCard, Handshake, HelpCircle, Eye, EyeOff, RefreshCw, KeyRound, LogOut, Calculator, SlidersHorizontal, MessageSquareText,
+  CreditCard, Handshake, HelpCircle, Eye, EyeOff, RefreshCw, KeyRound, LogOut, Calculator, SlidersHorizontal, MessageSquareText, Video,
 } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { useAuth } from "@/components/AuthGate";
@@ -105,6 +105,12 @@ export default function Layout() {
                 </span>
               )}
               <LiveIndicator />
+              <Button data-testid="new-meet-btn" asChild variant="outline" size="sm" className="gap-1.5">
+                <a href="https://meet.google.com/new" target="_blank" rel="noreferrer">
+                  <Video className="w-4 h-4" />
+                  <span className="hidden sm:inline">New Meet</span>
+                </a>
+              </Button>
               <Button
                 data-testid="refresh-data-btn"
                 variant="outline"

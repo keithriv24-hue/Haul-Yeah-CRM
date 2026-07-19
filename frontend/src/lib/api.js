@@ -21,10 +21,6 @@ export const authMe = () => axios.get(`${API}/auth/me`).then((r) => r.data);
 export const switchRoleApi = (role) => axios.post(`${API}/auth/switch-role`, { role }).then((r) => r.data);
 export const getRates = () => axios.get(`${API}/settings/rates`).then((r) => r.data);
 export const saveRatesApi = (rates) => axios.put(`${API}/settings/rates`, rates).then((r) => r.data);
-export const gcalStatusApi = () => axios.get(`${API}/oauth/calendar/status`).then((r) => r.data);
-export const gcalLoginApi = () => axios.get(`${API}/oauth/calendar/login`).then((r) => r.data);
-export const gcalSyncApi = () => axios.post(`${API}/calendar/sync`).then((r) => r.data);
-export const gcalDisconnectApi = () => axios.post(`${API}/oauth/calendar/disconnect`).then((r) => r.data);
 export const getSchemaApi = (table) => axios.get(`${API}/schema/${table}`).then((r) => r.data);
 
 export const getHealth = () => axios.get(`${API}/health`).then((r) => r.data);

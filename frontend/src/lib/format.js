@@ -35,7 +35,9 @@ export const gmailCompose = (to, subject = "", body = "") =>
 
 export const gmailSearch = (query) => `https://mail.google.com/mail/#search/${encodeURIComponent(query || "")}`;
 
-export const calendarTemplate = (title, dateISO, details = "") => {
+export const calendarTemplate = (title, dateISO, details = "", guestEmail = "") => {
   const d = (dateISO || todayISO()).replace(/-/g, "");
-  return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(title)}&dates=${d}/${d}&details=${encodeURIComponent(details)}`;
+  let url = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(title)}&dates=${d}/${d}&details=${encodeURIComponent(details)}`;
+  if (guestEmail) url += `&add=${encodeURIComponent(guestEmail)}`;
+  return url;
 };
