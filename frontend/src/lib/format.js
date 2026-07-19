@@ -39,6 +39,11 @@ export const gmailSearch = (query) => `https://mail.google.com/mail/u/${SENDER_E
 
 export const smsLink = (phone, body) => `sms:${(phone || "").replace(/[^+\d]/g, "")}?&body=${encodeURIComponent(body)}`;
 
+export const reviewSmsBody = (name, link) => {
+  const first = (name || "").trim().split(/\s+/)[0] || "there";
+  return `Hi ${first}, thanks for moving with Haul Yeah Moving! If we did a good job, a quick Google review would mean a lot to our small crew.${link ? ` Here's the link: ${link}` : ""} Thank you!`;
+};
+
 export const calendarTemplate = (title, dateISO, details = "", guestEmail = "") => {
   const d = (dateISO || todayISO()).replace(/-/g, "");
   let url = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(title)}&dates=${d}/${d}&details=${encodeURIComponent(details)}`;

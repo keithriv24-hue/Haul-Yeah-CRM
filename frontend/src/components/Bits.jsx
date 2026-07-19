@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Info, Clock, Trash2 } from "lucide-react";
+import { Info, Clock, Trash2, PhoneCall } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { useAuth } from "@/components/AuthGate";
 import { fmtMoney, minutesSince, ageLabel } from "@/lib/format";
@@ -77,6 +77,16 @@ export const AgeTimer = ({ createdTime }) => {
     </span>
   );
 };
+
+export const FollowUpBadge = ({ days }) => (
+  <span
+    data-testid="follow-up-badge"
+    className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-bold bg-red-50 text-red-600 border-red-300"
+  >
+    <PhoneCall className="w-3.5 h-3.5" />
+    quiet {days} days — call them back
+  </span>
+);
 
 export const PageTitle = ({ title, subtitle, action }) => (
   <div className="flex flex-wrap items-start justify-between gap-3 mb-4">

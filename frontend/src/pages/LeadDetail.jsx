@@ -3,17 +3,19 @@ import { useParams, useNavigate, Link } from "react-router-dom";
 import { toast } from "sonner";
 import {
   Phone, Mail, Calculator, CreditCard, Truck, MapPin, CalendarDays, CalendarPlus, Home, Lightbulb,
-  Package, StickyNote, Search, MessageSquare, ArrowLeft, History,
+  Package, StickyNote, Search, MessageSquare, ArrowLeft, History, Pencil, Save, X,
 } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { useAuth } from "@/components/AuthGate";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { InstructionBanner, Private, Money, AgeTimer, EmptyState, LoadingRows, ConfirmDeleteButton } from "@/components/Bits";
+import { InstructionBanner, Private, Money, AgeTimer, EmptyState, LoadingRows, ConfirmDeleteButton, FollowUpBadge } from "@/components/Bits";
 import QuoteModal from "@/components/QuoteModal";
 import DepositModal from "@/components/DepositModal";
 import { AddNoteDialog } from "@/pages/Leads";
-import { LF, f, LEAD_STATUSES, STATUS_PILL, nextStepHint, KNOWN_LEAD_FIELD_IDS, formatExtraValue } from "@/lib/fields";
+import { LF, f, LEAD_STATUSES, STATUS_PILL, nextStepHint, KNOWN_LEAD_FIELD_IDS, formatExtraValue, needsFollowUp, quietDays, HOME_SIZES } from "@/lib/fields";
 import { fmtDate, gmailCompose, gmailSearch, calendarTemplate, smsLink } from "@/lib/format";
 import { quoteSmsBody } from "@/lib/quote";
 import { lowFromHigh, depositFromQuote } from "@/lib/pricing";
@@ -38,6 +40,9 @@ export default function LeadDetail() {
   const [depositOpen, setDepositOpen] = useState(false);
   const [noteOpen, setNoteOpen] = useState(false);
   const [booking, setBooking] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState({});
+  const [savingEdit, setSavingEdit] = useState(false);
 
   useEffect(() => {
     loadTable("leads");
@@ -74,6 +79,44 @@ export default function LeadDetail() {
 
   const setStatus = (v) => updateRecord("leads", lead.id, { [LF.status]: v }).catch(() => {});
 
+  const startEdit = () => {
+    setForm({
+      name: f(lead, LF.name) || "",
+      phone: f(lead, LF.phone) || "",
+      email: f(lead, LF.email) || "",
+      moveDate: (f(lead, LF.moveDate) || "").slice(0, 10),
+      homeSize: f(lead, LF.homeSize) || "",
+      from: f(lead, LF.from) || "",
+      to: f(lead, LF.to) || "",
+    });
+    setEditing(true);
+  };
+
+  const setF = (k) => (e) => setForm((s) => ({ ...s, [k]: e.target.value }));
+
+  const saveEdit = async () => {
+    if (!form.name.trim()) {
+      toast.error("The lead needs a name.");
+      return;
+    }
+    setSavingEdit(true);
+    const fields = {
+      [LF.name]: form.name.trim(),
+      [LF.phone]: form.phone,
+      [LF.email]: form.email,
+      [LF.from]: form.from,
+      [LF.to]: form.to,
+    };
+    if (form.moveDate) fields[LF.moveDate] = form.moveDate;
+    if (form.homeSize) fields[LF.homeSize] = form.homeSize;
+    try {
+      await updateRecord("leads", lead.id, fields);
+      toast.success("Lead updated.");
+      setEditing(false);
+    } catch {}
+    setSavingEdit(false);
+  };
+
   const bookAsJob = async () => {
     setBooking(true);
     try {
@@ -94,6 +137,7 @@ export default function LeadDetail() {
           <div className="flex items-center gap-3 flex-wrap">
             <Private className="font-display text-3xl sm:text-4xl font-extrabold tracking-tight text-[#1B2A4A]" data-testid="lead-detail-name">{name}</Private>
             {status === "New" && <AgeTimer createdTime={lead.createdTime} />}
+            {needsFollowUp(lead) && <FollowUpBadge days={quietDays(lead)} />}
           </div>
           <div className="text-sm text-slate-500 mt-1 space-x-3">
             {phone && <Private>{phone}</Private>}
@@ -115,18 +159,71 @@ export default function LeadDetail() {
       <div className="grid lg:grid-cols-2 gap-4 items-start">
         <div className="space-y-4">
           <div className="bg-white border border-slate-200 rounded-lg p-5 space-y-3" data-testid="lead-detail-info">
-            <h2 className="font-display font-bold text-[#1B2A4A]">Move details</h2>
-            <InfoRow icon={CalendarDays} label="Move date" isPrivate={false}>{fmtDate(f(lead, LF.moveDate))}</InfoRow>
-            <InfoRow icon={Home} label="Home size" isPrivate={false}>{f(lead, LF.homeSize) || "Size TBD"}</InfoRow>
-            <InfoRow icon={MapPin} label="Route">{f(lead, LF.from) || "?"} → {f(lead, LF.to) || "?"}</InfoRow>
-            {(f(lead, LF.specialty) || []).length > 0 && (
-              <InfoRow icon={Package} label="Specialty" isPrivate={false}>{(f(lead, LF.specialty) || []).join(", ")}</InfoRow>
+            <div className="flex items-center justify-between">
+              <h2 className="font-display font-bold text-[#1B2A4A]">Move details</h2>
+              {!editing && (
+                <Button data-testid="lead-detail-edit-btn" variant="outline" size="sm" className="gap-1 text-xs" onClick={startEdit}>
+                  <Pencil className="w-3.5 h-3.5" /> Edit
+                </Button>
+              )}
+            </div>
+            {editing ? (
+              <div className="grid grid-cols-2 gap-3" data-testid="lead-detail-edit-form">
+                <div className="col-span-2">
+                  <Label>Name *</Label>
+                  <Input data-testid="lead-edit-name-input" value={form.name} onChange={setF("name")} />
+                </div>
+                <div>
+                  <Label>Phone</Label>
+                  <Input data-testid="lead-edit-phone-input" value={form.phone} onChange={setF("phone")} />
+                </div>
+                <div>
+                  <Label>Email</Label>
+                  <Input data-testid="lead-edit-email-input" type="email" value={form.email} onChange={setF("email")} />
+                </div>
+                <div>
+                  <Label>Move date</Label>
+                  <Input data-testid="lead-edit-date-input" type="date" value={form.moveDate} onChange={setF("moveDate")} />
+                </div>
+                <div>
+                  <Label>Home size</Label>
+                  <Select value={form.homeSize} onValueChange={(v) => setForm((s) => ({ ...s, homeSize: v }))}>
+                    <SelectTrigger data-testid="lead-edit-size-select"><SelectValue placeholder="Pick size" /></SelectTrigger>
+                    <SelectContent>{HOME_SIZES.map((h) => <SelectItem key={h} value={h}>{h}</SelectItem>)}</SelectContent>
+                  </Select>
+                </div>
+                <div className="col-span-2">
+                  <Label>Moving from</Label>
+                  <Input data-testid="lead-edit-from-input" value={form.from} onChange={setF("from")} />
+                </div>
+                <div className="col-span-2">
+                  <Label>Moving to</Label>
+                  <Input data-testid="lead-edit-to-input" value={form.to} onChange={setF("to")} />
+                </div>
+                <div className="col-span-2 flex gap-2">
+                  <Button data-testid="lead-edit-save-btn" onClick={saveEdit} disabled={savingEdit} className="flex-1 gap-1.5 bg-[#E8743B] hover:bg-[#d4632e]">
+                    <Save className="w-4 h-4" /> {savingEdit ? "Saving…" : "Save changes"}
+                  </Button>
+                  <Button data-testid="lead-edit-cancel-btn" variant="outline" onClick={() => setEditing(false)} className="gap-1.5">
+                    <X className="w-4 h-4" /> Cancel
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <InfoRow icon={CalendarDays} label="Move date" isPrivate={false}>{fmtDate(f(lead, LF.moveDate))}</InfoRow>
+                <InfoRow icon={Home} label="Home size" isPrivate={false}>{f(lead, LF.homeSize) || "Size TBD"}</InfoRow>
+                <InfoRow icon={MapPin} label="Route">{f(lead, LF.from) || "?"} → {f(lead, LF.to) || "?"}</InfoRow>
+                {(f(lead, LF.specialty) || []).length > 0 && (
+                  <InfoRow icon={Package} label="Specialty" isPrivate={false}>{(f(lead, LF.specialty) || []).join(", ")}</InfoRow>
+                )}
+                {f(lead, LF.contactMethod) && <InfoRow icon={Phone} label="Prefers" isPrivate={false}>{f(lead, LF.contactMethod)}</InfoRow>}
+                {f(lead, LF.source) && <InfoRow icon={Lightbulb} label="Source" isPrivate={false}>{f(lead, LF.source)}</InfoRow>}
+                {extras.map((x) => (
+                  <InfoRow key={x.id} icon={Lightbulb} label={x.name}>{x.display}</InfoRow>
+                ))}
+              </>
             )}
-            {f(lead, LF.contactMethod) && <InfoRow icon={Phone} label="Prefers" isPrivate={false}>{f(lead, LF.contactMethod)}</InfoRow>}
-            {f(lead, LF.source) && <InfoRow icon={Lightbulb} label="Source" isPrivate={false}>{f(lead, LF.source)}</InfoRow>}
-            {extras.map((x) => (
-              <InfoRow key={x.id} icon={Lightbulb} label={x.name}>{x.display}</InfoRow>
-            ))}
           </div>
 
           <div className="bg-white border border-slate-200 rounded-lg p-5" data-testid="lead-detail-quote">

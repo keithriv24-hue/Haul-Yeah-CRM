@@ -21,6 +21,8 @@ export const authMe = () => axios.get(`${API}/auth/me`).then((r) => r.data);
 export const switchRoleApi = (role) => axios.post(`${API}/auth/switch-role`, { role }).then((r) => r.data);
 export const getRates = () => axios.get(`${API}/settings/rates`).then((r) => r.data);
 export const saveRatesApi = (rates) => axios.put(`${API}/settings/rates`, rates).then((r) => r.data);
+export const getBusinessApi = () => axios.get(`${API}/settings/business`).then((r) => r.data);
+export const saveBusinessApi = (b) => axios.put(`${API}/settings/business`, b).then((r) => r.data);
 export const getSchemaApi = (table) => axios.get(`${API}/schema/${table}`).then((r) => r.data);
 
 export const getHealth = () => axios.get(`${API}/health`).then((r) => r.data);

@@ -149,11 +149,32 @@ export const STATUS_PILL = {
   Low: "bg-slate-100 text-slate-600 border-slate-300",
 };
 
+export const lastTouch = (lead) => {
+  const notes = f(lead, LF.notes) || "";
+  let latest = lead?.createdTime ? new Date(lead.createdTime) : null;
+  const re = /(\d{1,2})\/(\d{1,2})\/(\d{4})/g;
+  let m;
+  while ((m = re.exec(notes))) {
+    const d = new Date(+m[3], +m[1] - 1, +m[2]);
+    if (!Number.isNaN(d.getTime()) && (!latest || d > latest)) latest = d;
+  }
+  return latest;
+};
+
+export const quietDays = (lead) => {
+  const t = lastTouch(lead);
+  return t ? Math.floor((Date.now() - t.getTime()) / 86400000) : 0;
+};
+
+export const needsFollowUp = (lead) =>
+  f(lead, LF.status) === "Quoted" && !f(lead, LF.depositPaid) && quietDays(lead) >= 2;
+
 export const nextStepHint = (lead) => {
   const status = f(lead, LF.status);
   const hasDeposit = !!f(lead, LF.depositPaid);
   if (status === "New") return "Call or text now — the clock is running.";
   if (["Contacted", "Warm", "Hot"].includes(status)) return "Use Quote to price the job.";
+  if (status === "Quoted" && !hasDeposit && needsFollowUp(lead)) return "They've gone quiet — call them back today.";
   if (status === "Quoted" && !hasDeposit) return "Send the deposit link to lock the date.";
   if (status === "Quoted" && hasDeposit) return "Book it as a job.";
   if (status === "Booked") return "Manage it in Projects.";

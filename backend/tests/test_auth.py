@@ -254,6 +254,23 @@ class TestRoles:
         r = requests.delete(f"{BASE_URL}/api/tables/leads/recFAKE123", headers={"Authorization": f"Bearer {tok}"}, timeout=15)
         assert r.status_code in (404, 422, 503), f"got {r.status_code}"
 
+    def test_business_settings_put_is_owner_only(self):
+        tok = _login(SALES_PW)["token"]
+        r = requests.put(f"{BASE_URL}/api/settings/business", json={"reviewLink": "https://x.test"},
+                         headers={"Authorization": f"Bearer {tok}"}, timeout=15)
+        assert r.status_code == 403
+
+    def test_business_settings_roundtrip_for_owner(self):
+        tok = _login(CORRECT_PW)["token"]
+        h = {"Authorization": f"Bearer {tok}"}
+        r = requests.put(f"{BASE_URL}/api/settings/business", json={"reviewLink": " https://g.page/r/test/review "}, headers=h, timeout=15)
+        assert r.status_code == 200
+        assert r.json()["reviewLink"] == "https://g.page/r/test/review"
+        r = requests.get(f"{BASE_URL}/api/settings/business", headers=h, timeout=15)
+        assert r.status_code == 200
+        assert r.json()["reviewLink"] == "https://g.page/r/test/review"
+        requests.put(f"{BASE_URL}/api/settings/business", json={"reviewLink": ""}, headers=h, timeout=15)
+
 
 class TestRoleSwitch:
     def test_owner_can_switch_to_sales_and_back(self):

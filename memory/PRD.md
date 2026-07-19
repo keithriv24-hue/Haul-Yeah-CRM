@@ -40,6 +40,9 @@ Full-stack internal CRM PWA for Haul Yeah Moving (weekend moving company, North 
 - [x] Delete records: DELETE /api/tables/{table}/{id} (owner-only, 403 otherwise — 34 pytest passing); Delete buttons with confirm dialog (ConfirmDeleteButton in Bits.jsx) on lead cards, contact cards, and lead detail; optimistic removal with rollback in AppContext.deleteRecord
 - [x] Text quote button on lead cards + detail: sms: deep link drafting "Hi {first}... quote $low–$high... $deposit locks your date" (low derived via lowFromHigh = round50(high/1.1))
 - [x] All Gmail links (compose + search) now open as contact@haulyeahmoves.com (authuser param / /u/{email}/ path) — SENDER_EMAIL in format.js
+- [x] Inline lead editing: Edit button on lead detail "Move details" card unlocks name/phone/email/move date/home size/from/to with Save+Cancel (writes via PATCH)
+- [x] Follow-up reminders: red "quiet N days — call them back" badge (FollowUpBadge) on lead cards + detail for Quoted leads with no deposit and no note activity for 2+ days (lastTouch parses dates from notes, falls back to createdTime); nextStepHint updated too
+- [x] Review request text: owner-only "Ask for review" button on Completed jobs (Projects) drafting an SMS to the linked lead's phone; Google review link stored via GET/PUT /api/settings/business (Mongo, PUT owner-only) with a Settings box — 36 pytest + browser-verified persistence
 
 ## Current status / blockers
 - AIRTABLE_API_KEY not yet added by user (secrets panel). All data routes return friendly 503 until then. Verify with GET /api/airtable/verify after key is added.

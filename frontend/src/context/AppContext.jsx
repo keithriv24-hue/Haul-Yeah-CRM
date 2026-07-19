@@ -1,6 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { apiErrorMessage, createRecordApi, deleteRecordApi, getHealth, getRates, getSchemaApi, listRecords, saveRatesApi, updateRecordApi } from "@/lib/api";
+import { apiErrorMessage, createRecordApi, deleteRecordApi, getBusinessApi, getHealth, getRates, getSchemaApi, listRecords, saveBusinessApi, saveRatesApi, updateRecordApi } from "@/lib/api";
 import { DEFAULT_RATES } from "@/lib/pricing";
 import { useAuth } from "@/components/AuthGate";
 
@@ -15,6 +15,7 @@ export const AppProvider = ({ children }) => {
   const [data, setData] = useState({});
   const [refreshing, setRefreshing] = useState(false);
   const [rates, setRates] = useState(DEFAULT_RATES);
+  const [business, setBusiness] = useState({ reviewLink: "" });
   const [schemas, setSchemas] = useState({});
   const schemaRequested = useRef(new Set());
   const dataRef = useRef(data);
@@ -52,11 +53,18 @@ export const AppProvider = ({ children }) => {
   useEffect(() => {
     checkHealth();
     getRates().then(setRates).catch(() => {});
+    getBusinessApi().then(setBusiness).catch(() => {});
   }, [checkHealth]);
 
   const saveRates = useCallback(async (newRates) => {
     const saved = await saveRatesApi(newRates);
     setRates(saved);
+    return saved;
+  }, []);
+
+  const saveBusiness = useCallback(async (b) => {
+    const saved = await saveBusinessApi(b);
+    setBusiness(saved);
     return saved;
   }, []);
 
@@ -155,7 +163,7 @@ export const AppProvider = ({ children }) => {
 
   return (
     <AppContext.Provider
-      value={{ privacy, togglePrivacy, health, checkHealth, loadTable, refreshAll, refreshing, updateRecord, createRecord, deleteRecord, records, tableState, rates, saveRates, schemas, loadSchema }}
+      value={{ privacy, togglePrivacy, health, checkHealth, loadTable, refreshAll, refreshing, updateRecord, createRecord, deleteRecord, records, tableState, rates, saveRates, business, saveBusiness, schemas, loadSchema }}
     >
       {children}
     </AppContext.Provider>

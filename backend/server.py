@@ -318,6 +318,25 @@ async def save_rates(payload: RatesPayload, role: str = Depends(require_auth)):
     return rates
 
 
+class BusinessPayload(BaseModel):
+    reviewLink: str = ""
+
+
+@api_router.get("/settings/business")
+async def get_business(role: str = Depends(require_auth)):
+    doc = await mongo_db.settings.find_one({"_id": "business"}) or {}
+    return {"reviewLink": doc.get("reviewLink", "")}
+
+
+@api_router.put("/settings/business")
+async def save_business(payload: BusinessPayload, role: str = Depends(require_auth)):
+    if role != "owner":
+        raise HTTPException(status_code=403, detail="Only the owner can change settings.")
+    link = payload.reviewLink.strip()
+    await mongo_db.settings.update_one({"_id": "business"}, {"$set": {"reviewLink": link}}, upsert=True)
+    return {"reviewLink": link}
+
+
 @api_router.get("/airtable/verify")
 async def verify_connection(role: str = Depends(require_auth)):
     if role != "owner":

@@ -9,11 +9,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { InstructionBanner, PageTitle, Private, Money, AgeTimer, EmptyState, LoadingRows, ConfirmDeleteButton } from "@/components/Bits";
+import { InstructionBanner, PageTitle, Private, Money, AgeTimer, EmptyState, LoadingRows, ConfirmDeleteButton, FollowUpBadge } from "@/components/Bits";
 import QuoteModal from "@/components/QuoteModal";
 import DepositModal from "@/components/DepositModal";
 import LeadModal from "@/components/LeadModal";
-import { LF, f, LEAD_STATUSES, STATUS_PILL, nextStepHint, KNOWN_LEAD_FIELD_IDS, formatExtraValue } from "@/lib/fields";
+import { LF, f, LEAD_STATUSES, STATUS_PILL, nextStepHint, KNOWN_LEAD_FIELD_IDS, formatExtraValue, needsFollowUp, quietDays } from "@/lib/fields";
 import { fmtDate, gmailCompose, gmailSearch, calendarTemplate, smsLink } from "@/lib/format";
 import { quoteSmsBody } from "@/lib/quote";
 import { lowFromHigh, depositFromQuote } from "@/lib/pricing";
@@ -104,6 +104,7 @@ const LeadCard = ({ lead, onQuote, onDeposit, onNote }) => {
           </div>
         </div>
         {status === "New" && <AgeTimer createdTime={lead.createdTime} />}
+        {needsFollowUp(lead) && <FollowUpBadge days={quietDays(lead)} />}
       </div>
 
       <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-slate-600">

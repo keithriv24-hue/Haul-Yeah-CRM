@@ -1,13 +1,13 @@
 import React, { useEffect, useState } from "react";
-import { ChevronDown, ChevronUp, Truck, ShieldAlert, CalendarPlus } from "lucide-react";
+import { ChevronDown, ChevronUp, Truck, ShieldAlert, CalendarPlus, Star } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { InstructionBanner, PageTitle, Private, Money, EmptyState, LoadingRows } from "@/components/Bits";
-import { PF, f, PROJECT_STATUSES, TRUCKS, STATUS_PILL } from "@/lib/fields";
-import { fmtDate, fmtMoney, calendarTemplate } from "@/lib/format";
+import { PF, LF, f, PROJECT_STATUSES, TRUCKS, STATUS_PILL } from "@/lib/fields";
+import { fmtDate, fmtMoney, calendarTemplate, smsLink, reviewSmsBody } from "@/lib/format";
 import { useAuth } from "@/components/AuthGate";
 import JobsCalendar from "@/components/JobsCalendar";
 
@@ -29,7 +29,7 @@ const NumField = ({ record, fieldId, label, testId }) => {
 };
 
 const ProjectCard = ({ project }) => {
-  const { updateRecord } = useApp();
+  const { updateRecord, records, business } = useApp();
   const { role } = useAuth();
   const isOwner = (role || "owner") === "owner";
   const [open, setOpen] = useState(false);
@@ -39,6 +39,9 @@ const ProjectCard = ({ project }) => {
   const quote = Number(f(project, PF.quote)) || 0;
   const finalRev = Number(f(project, PF.finalRevenue)) || 0;
   const internal = project.internal || null;
+  const linkedLead = isOwner ? records("leads").find((r) => r.id === (f(project, PF.lead) || [])[0]) : null;
+  const custPhone = linkedLead ? f(linkedLead, LF.phone) : null;
+  const custName = linkedLead ? f(linkedLead, LF.name) : "";
 
   return (
     <div data-testid="project-card" className="bg-white border border-slate-200 rounded-lg p-4">
@@ -64,6 +67,21 @@ const ProjectCard = ({ project }) => {
             </SelectTrigger>
             <SelectContent>{PROJECT_STATUSES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
           </Select>
+          {isOwner && status === "Completed" && (
+            <Button
+              data-testid="project-review-btn"
+              asChild
+              variant="outline"
+              size="sm"
+              className="gap-1 text-xs border-amber-300 text-amber-700 hover:bg-amber-50 hover:text-amber-800"
+              disabled={!custPhone}
+              title={custPhone ? "Text them a review ask" : "No phone on the linked lead"}
+            >
+              <a href={custPhone ? smsLink(custPhone, reviewSmsBody(custName, business.reviewLink)) : undefined}>
+                <Star className="w-3.5 h-3.5" /> Ask for review
+              </a>
+            </Button>
+          )}
           <Button data-testid="project-details-btn" variant="outline" size="sm" className="gap-1 text-xs" onClick={() => setOpen(!open)}>
             {open ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />} Details
           </Button>
@@ -139,7 +157,8 @@ export default function Projects() {
   const isOwner = (role || "owner") === "owner";
   useEffect(() => {
     loadTable("projects");
-  }, [loadTable]);
+    if (isOwner) loadTable("leads");
+  }, [loadTable, isOwner]);
 
   const projects = [...records("projects")].sort((a, b) => (f(a, PF.jobDate) || "9999").localeCompare(f(b, PF.jobDate) || "9999"));
   const { loading, error } = tableState("projects");

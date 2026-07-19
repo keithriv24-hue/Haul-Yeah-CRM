@@ -18,10 +18,12 @@ const FIELDS = [
 ];
 
 export default function Settings() {
-  const { rates, saveRates } = useApp();
+  const { rates, saveRates, business, saveBusiness } = useApp();
   const [form, setForm] = useState(rates);
+  const [reviewLink, setReviewLink] = useState(business.reviewLink || "");
   const [saving, setSaving] = useState(false);
   useEffect(() => setForm(rates), [rates]);
+  useEffect(() => setReviewLink(business.reviewLink || ""), [business]);
 
   const save = async () => {
     const clean = {};
@@ -36,7 +38,8 @@ export default function Settings() {
     setSaving(true);
     try {
       await saveRates(clean);
-      toast.success("Rates saved. Every account now uses the new prices.");
+      await saveBusiness({ reviewLink: reviewLink.trim() });
+      toast.success("Settings saved. Every account now uses them.");
     } catch (e) {
       toast.error(apiErrorMessage(e));
     }
@@ -62,6 +65,20 @@ export default function Settings() {
             />
           </div>
         ))}
+      </div>
+
+      <div className="bg-white border border-slate-200 rounded-lg p-4 mb-4">
+        <Label>Google review link</Label>
+        <Input
+          data-testid="review-link-input"
+          type="url"
+          placeholder="https://g.page/r/…/review"
+          value={reviewLink}
+          onChange={(e) => setReviewLink(e.target.value)}
+        />
+        <p className="text-xs text-slate-500 mt-2">
+          Paste your Google review link here. The "Ask for review" text on completed jobs will include it.
+        </p>
       </div>
 
       <Button data-testid="save-preferences-btn" onClick={save} disabled={saving} className="w-full gap-2 bg-[#E8743B] hover:bg-[#d4632e]">
