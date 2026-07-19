@@ -70,10 +70,8 @@ export default function AuthGate({ children }) {
     return (
       <div className="min-h-screen bg-[#1B2A4A] flex items-center justify-center px-4">
         <form onSubmit={submit} data-testid="login-form" className="w-full max-w-sm bg-white rounded-lg p-8 border border-white/10">
-          <div className="font-display text-3xl font-extrabold tracking-tight text-[#1B2A4A]">
-            HAUL <span className="text-[#E8743B]">YEAH</span>
-          </div>
-          <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400 mt-1 mb-6">Moving CRM</div>
+          <img src="/logo.png" alt="Haul Yeah Moving" data-testid="login-logo" className="w-48 rounded-lg" />
+          <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400 mt-3 mb-6">Moving CRM</div>
           <p className="text-sm text-slate-600 mb-4">Enter your password to open the app. Owner, sales, and crew each have their own. This device stays logged in.</p>
           <div className="relative mb-3">
             <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />

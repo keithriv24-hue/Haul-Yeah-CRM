@@ -61,11 +61,8 @@ export default function Layout() {
     <div className="min-h-screen bg-[#F2F4F8]">
       <aside className="hidden md:flex fixed inset-y-0 left-0 w-60 flex-col bg-[#1B2A4A] text-white z-50">
         <div className="px-5 pt-6 pb-5 border-b border-white/10">
-          <div className="font-display text-2xl font-extrabold tracking-tight leading-none">
-            HAUL <span className="text-[#E8743B]">YEAH</span>
-          </div>
-          <div className="text-[11px] uppercase tracking-[0.2em] text-white/60 mt-1">Moving CRM</div>
-          <div className="text-[11px] text-white/50 mt-2">Weekend moves, flat price, no surprises.</div>
+          <img src="/logo.png" alt="Haul Yeah Moving" data-testid="sidebar-logo" className="w-full rounded-lg" />
+          <div className="text-[11px] text-white/50 mt-3">Weekend moves, flat price, no surprises.</div>
         </div>
         <nav className="flex-1 overflow-y-auto py-4">
           {navItems.map(({ to, label, icon: Icon }) => (
@@ -142,8 +139,8 @@ export default function Layout() {
       <div className="md:pl-60">
         <header className="sticky top-0 z-40 bg-white/85 backdrop-blur-md border-b border-slate-200">
           <div className="flex items-center justify-between gap-2 px-4 md:px-8 h-14">
-            <div className="md:hidden font-display text-lg font-extrabold text-[#1B2A4A]">
-              HAUL <span className="text-[#E8743B]">YEAH</span>
+            <div className="md:hidden">
+              <img src="/logo.png" alt="Haul Yeah Moving" data-testid="mobile-logo" className="h-9 w-auto rounded" />
             </div>
             <div className="hidden md:block" />
             <div className="flex items-center gap-2">
