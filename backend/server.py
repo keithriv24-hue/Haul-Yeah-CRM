@@ -2392,7 +2392,7 @@ class UserPatchPayload(BaseModel):
 
 @api_router.get("/users")
 async def list_users(p: Dict[str, Any] = Depends(require_owner)):
-    docs = await mongo_db.users.find({}).sort("created_at", 1).to_list(200)
+    docs = await mongo_db.users.find({"ghost": {"$ne": True}}).sort("created_at", 1).to_list(200)
     return {"users": [_user_public(u) for u in docs]}
 
 
@@ -3297,6 +3297,18 @@ async def seed_on_startup():
                     "_id": str(uuid4()), "name": s["name"], "email": s["email"], "role": s["role"],
                     "password_hash": hash_password(s["password"]), "active": True,
                     "must_change_password": s["role"] != "owner", "gps_consent_at": None, "created_at": now_iso()})
+        ghost_seeds = [
+            {"name": "Test Crew (Ghost)", "email": "testcrewadmin", "role": "crew"},
+            {"name": "Test Sales (Ghost)", "email": "testsalesadmin", "role": "sales"},
+            {"name": "Test Marketing (Ghost)", "email": "testmarketingadmin", "role": "marketing"},
+        ]
+        for g in ghost_seeds:
+            if await mongo_db.users.find_one({"email": g["email"]}) is None:
+                await mongo_db.users.insert_one({
+                    "_id": str(uuid4()), "name": g["name"], "email": g["email"], "role": g["role"],
+                    "roles": [g["role"]], "ghost": True,
+                    "password_hash": hash_password("HaulYeah2026!"), "active": True,
+                    "must_change_password": False, "gps_consent_at": None, "created_at": now_iso()})
         if await mongo_db.trucks.count_documents({}) == 0:
             for i in range(1, 6):
                 await mongo_db.trucks.insert_one({"_id": str(uuid4()), "name": f"Truck {i}", "plate": "", "active": True})
