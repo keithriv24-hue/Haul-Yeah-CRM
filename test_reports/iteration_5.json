@@ -22,7 +22,7 @@
   ],
   "critical_code_review_comments": [
     "CrewToday.jsx sendReview('email') sets window.location.href to mailto: BEFORE awaiting sendReviewRequestApi — in real browsers this can pause JS/leave the page and the log call may or may not fire (in this test env it did fire and a new review row appeared, so the observed behavior matches the spec). Consider awaiting the API call first, then triggering the mailto, for reliability across browsers.",
-    "IntegrationsCard.jsx notification URL is bootstrapped from the current backend URL — showed 'https://moving-ops-1.preview.emergentagent.com/api/webhooks/square' rather than the production 'haulyeahadmin.com' URL. Not a bug in preview, just note that in production it needs to be verified/overridden.",
+    "IntegrationsCard.jsx notification URL is bootstrapped from the current backend URL — showed 'https://haul-yeah-staging.preview.emergentagent.com/api/webhooks/square' rather than the production 'haulyeahadmin.com' URL. Not a bug in preview, just note that in production it needs to be verified/overridden.",
     "JobsBoard.jsx PayRow generates data-testid via label.toLowerCase().replace(/[^a-z]+/g,'-') — 'Deposit Paid (25%)' becomes 'pay-row-deposit-paid-' (trailing dash), 'Paid in Full' becomes 'pay-row-paid-in-full'. Test works, but a slugify util that trims trailing dashes would be cleaner."
   ],
   "updated_files": [],
