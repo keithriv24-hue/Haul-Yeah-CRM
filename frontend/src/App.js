@@ -27,6 +27,11 @@ import DaysOff from "@/pages/DaysOff";
 import CrewToday from "@/pages/CrewToday";
 import JobsBoard from "@/pages/JobsBoard";
 import MarketingDashboard from "@/pages/MarketingDashboard";
+import Team from "@/pages/Team";
+import MemberProfile from "@/pages/MemberProfile";
+import Leaderboard from "@/pages/Leaderboard";
+import Challenges from "@/pages/Challenges";
+import TeamAdmin from "@/pages/TeamAdmin";
 import Track from "@/pages/Track";
 import { UpdateOverlay } from "@/components/UpdateOverlay";
 
@@ -42,6 +47,10 @@ function RoleRoutes() {
           <Route path="/script" element={<Script />} />
           <Route path="/tasks" element={<Tasks />} />
           <Route path="/blog" element={<Blog />} />
+          <Route path="/team" element={<Team />} />
+          <Route path="/team/:id" element={<MemberProfile />} />
+          <Route path="/leaderboard" element={<Leaderboard />} />
+          <Route path="/challenges" element={<Challenges />} />
           <Route path="*" element={<Navigate to="/leads" replace />} />
         </Route>
       </Routes>
@@ -57,6 +66,10 @@ function RoleRoutes() {
           <Route path="/days-off" element={<DaysOff />} />
           <Route path="/tasks" element={<Tasks />} />
           <Route path="/blog" element={<Blog />} />
+          <Route path="/team" element={<Team />} />
+          <Route path="/team/:id" element={<MemberProfile />} />
+          <Route path="/leaderboard" element={<Leaderboard />} />
+          <Route path="/challenges" element={<Challenges />} />
           <Route path="*" element={<Navigate to="/today" replace />} />
         </Route>
       </Routes>
@@ -69,6 +82,10 @@ function RoleRoutes() {
           <Route path="/marketing" element={<MarketingDashboard />} />
           <Route path="/tasks" element={<Tasks />} />
           <Route path="/blog" element={<Blog />} />
+          <Route path="/team" element={<Team />} />
+          <Route path="/team/:id" element={<MemberProfile />} />
+          <Route path="/leaderboard" element={<Leaderboard />} />
+          <Route path="/challenges" element={<Challenges />} />
           <Route path="*" element={<Navigate to="/marketing" replace />} />
         </Route>
       </Routes>
@@ -82,6 +99,10 @@ function RoleRoutes() {
           <Route path="/day-sheet" element={<DaySheet />} />
           <Route path="/tasks" element={<Tasks />} />
           <Route path="/blog" element={<Blog />} />
+          <Route path="/team" element={<Team />} />
+          <Route path="/team/:id" element={<MemberProfile />} />
+          <Route path="/leaderboard" element={<Leaderboard />} />
+          <Route path="/challenges" element={<Challenges />} />
           <Route path="*" element={<Navigate to="/projects" replace />} />
         </Route>
       </Routes>
@@ -102,6 +123,11 @@ function RoleRoutes() {
         <Route path="/day-sheet" element={<DaySheet />} />
         <Route path="/tasks" element={<Tasks />} />
         <Route path="/blog" element={<Blog />} />
+        <Route path="/team" element={<Team />} />
+        <Route path="/team/:id" element={<MemberProfile />} />
+        <Route path="/leaderboard" element={<Leaderboard />} />
+        <Route path="/challenges" element={<Challenges />} />
+        <Route path="/team-admin" element={<TeamAdmin />} />
         <Route path="/invoices" element={<Invoices />} />
         <Route path="/subscriptions" element={<Subscriptions />} />
         <Route path="/partner" element={<Partner />} />

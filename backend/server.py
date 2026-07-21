@@ -1536,6 +1536,7 @@ async def quote_pdf(token: str):
 
 MARKETING_SOURCES = ["Meta Ad", "Google Business Profile", "Referral", "Repeat Customer", "Walk-in/Other", "Website — Direct"]
 LEAD_STATUS_F = "fldplIOmtbERJFG6X"
+LEAD_NAME_F = "fldsBIJdaasQ9fh9a"
 LEAD_SOURCE_F = "fldNQ7kAAIcVQbysk"
 UTM_FIELD_NAMES = {"utm_source": "UTM Source", "utm_medium": "UTM Medium", "utm_campaign": "UTM Campaign", "ad_name": "Ad Name"}
 STAGE_INDEX = {"New": 0, "Contacted": 1, "Quoted": 2, "Booked": 3, "Completed": 4}
@@ -1904,7 +1905,7 @@ async def create_record(table_key: str, payload: RecordPayload = Body(...), role
 
 
 @api_router.patch("/tables/{table_key}/{record_id}")
-async def update_record(table_key: str, record_id: str, payload: RecordPayload = Body(...), role: str = Depends(require_auth)):
+async def update_record(table_key: str, record_id: str, request: Request, payload: RecordPayload = Body(...), role: str = Depends(require_auth)):
     table_id = resolve_table(table_key)
     await check_table_access(role, table_key)
     if table_key == "blog" and role != "owner":
@@ -1922,6 +1923,19 @@ async def update_record(table_key: str, record_id: str, payload: RecordPayload =
         existing = await mongo_db.lead_meta.find_one({"_id": record_id})
         if not existing or not existing.get("contacted_at"):
             await mongo_db.lead_meta.update_one({"_id": record_id}, {"$set": {"contacted_at": now_iso()}}, upsert=True)
+    if table_key == "leads" and payload.fields.get(LEAD_STATUS_F) == "Booked":
+        try:
+            p = await current_principal(request)
+            if p.get("user_id") and p["role"] != "owner" and "sales" in (p.get("roles") or []):
+                u = await mongo_db.users.find_one({"_id": p["user_id"], "ghost": {"$ne": True}})
+                if u:
+                    lead_name = (data["records"][0].get("fields") or {}).get(LEAD_NAME_F) or "a lead"
+                    await create_credit_prompt("sales_booked", u, None, lead_name, record_id, _et_today())
+                    await notify(None, "owner", "Close credit waiting on you",
+                                 f"{u['name']} moved \u201c{lead_name}\u201d to Booked. Approve their Close tally on your Dashboard or in Team HQ.",
+                                 "credit_prompt", {"lead_id": record_id})
+        except Exception as exc:
+            logger.warning("sales credit prompt failed: %s", exc)
     rec = filter_record(data["records"][0], role, table_key)
     if table_key == "tasks" and role == "owner":
         meta = await mongo_db.task_meta.find_one({"_id": record_id}) or {}
@@ -2748,6 +2762,24 @@ async def set_job_status(assignment_id: str, payload: StatusPayload, p: Dict[str
                      f"{p['name']} marked \"{a.get('job_name')}\" complete. Send the customer a review text from Projects.",
                      "job_complete", {"assignment_id": assignment_id, "project_id": a.get("project_id")})
     await audit(p, f"set job status to {payload.status}", a.get("job_name") or assignment_id)
+    if payload.status == "Complete" and not a.get("credit_prompted"):
+        try:
+            await mongo_db.assignments.update_one({"_id": assignment_id}, {"$set": {"credit_prompted": True}})
+            names = []
+            for slot in a.get("crew", []):
+                u = await mongo_db.users.find_one({"_id": slot.get("user_id"), "ghost": {"$ne": True}})
+                if not u:
+                    continue
+                tag = "driver" if "driver" in (slot.get("position") or "").lower() else "helper"
+                await create_credit_prompt("crew_complete", u, tag, a.get("job_name") or "Job",
+                                           assignment_id, a.get("job_date") or _et_today())
+                names.append(u["name"])
+            if names:
+                await notify(None, "owner", "Job credit waiting on you",
+                             f"\u201c{a.get('job_name')}\u201d is complete. Approve the job tally for {', '.join(names)} on your Dashboard or in Team HQ.",
+                             "credit_prompt", {"assignment_id": assignment_id})
+        except Exception as exc:
+            logger.warning("crew credit prompt failed: %s", exc)
     if payload.status == "Complete":
         await queue_timelog_sync(assignment_id)
     fresh = await mongo_db.assignments.find_one({"_id": assignment_id})
@@ -3273,6 +3305,861 @@ async def audit_log(limit: int = 200, p: Dict[str, Any] = Depends(require_owner)
                          "details": d.get("details", {})} for d in docs]}
 
 
+# ================================================================ team profiles, badges & challenges
+
+TEAMS = ("crew", "sales")
+TEAM_FOR_ROLE_MAP = {"crew": "crew", "employee": "crew", "sales": "sales"}
+RARITIES = ("bronze", "silver", "gold")
+AUTO_METRICS = ("jobs", "driver", "helper", "closes", "driver_and_helper")
+MEMBER_PROFILE_FIELDS = ("display_name", "nickname", "bio", "role_title", "favorite_move", "fun_fact")
+
+BADGE_SEEDS = [
+    ("first-haul", "crew", "First Haul", "Completed your first job", "bronze", "Truck", "jobs", 1),
+    ("weekend-warrior", "crew", "Weekend Warrior", "10 jobs completed", "silver", "Zap", "jobs", 10),
+    ("truck-boss", "crew", "Truck Boss", "25 jobs completed", "gold", "Crown", "jobs", 25),
+    ("haul-of-famer", "crew", "Haul of Famer", "50 jobs completed", "gold", "Trophy", "jobs", 50),
+    ("behind-the-wheel", "crew", "Behind the Wheel", "First job worked as Driver", "bronze", "CarFront", "driver", 1),
+    ("road-captain", "crew", "Road Captain", "10 jobs as Driver", "silver", "Map", "driver", 10),
+    ("route-veteran", "crew", "Route Veteran", "25 jobs as Driver", "gold", "Compass", "driver", 25),
+    ("helping-hand", "crew", "Helping Hand", "First job worked as Helper", "bronze", "Hand", "helper", 1),
+    ("muscle-memory", "crew", "Muscle Memory", "10 jobs as Helper", "silver", "Dumbbell", "helper", 10),
+    ("backbone", "crew", "Backbone", "25 jobs as Helper", "gold", "Shield", "helper", 25),
+    ("two-way-player", "crew", "Two-Way Player", "5+ jobs as Driver AND 5+ jobs as Helper", "gold", "Repeat", "driver_and_helper", 5),
+    ("piano-mover", "crew", "Piano Mover", "Completed a piano job", "silver", "Music", None, None),
+    ("five-star-shoutout", "crew", "5-Star Shoutout", "Named in a Google review", "silver", "Star", None, None),
+    ("iron-streak", "crew", "Iron Streak", "5 straight weekends worked", "silver", "Flame", None, None),
+    ("zero-damage-club", "crew", "Zero Damage Club", "10 jobs with no damage claims", "gold", "ShieldCheck", None, None),
+    ("stair-master", "crew", "Stair Master", "Completed a job with 3+ flights of stairs", "silver", "TrendingUp", None, None),
+    ("early-bird", "crew", "Early Bird", "10 on-time morning arrivals in a row", "silver", "Sunrise", None, None),
+    ("workhorse", "crew", "Workhorse", "Won a monthly jobs challenge", "silver", "Award", None, None),
+    ("first-close", "sales", "First Close", "Booked your first move", "bronze", "Handshake", "closes", 1),
+    ("deal-dozen", "sales", "Deal Dozen", "12 moves closed", "silver", "Layers", "closes", 12),
+    ("quarter-club", "sales", "Quarter Club", "25 moves closed", "gold", "Crown", "closes", 25),
+    ("speed-demon", "sales", "Speed Demon", "Fastest lead callback of the week", "silver", "Zap", None, None),
+    ("big-closer", "sales", "Big Closer", "Closed a $3,000+ move", "silver", "BadgeDollarSign", None, None),
+    ("hat-trick", "sales", "Hat Trick", "3 closes in one day", "silver", "Target", None, None),
+    ("deposit-locksmith", "sales", "Deposit Locksmith", "5 deposits locked same-day as first call", "silver", "Lock", None, None),
+    ("comeback-kid", "sales", "Comeback Kid", "Revived and closed a lead marked Lost", "silver", "RotateCcw", None, None),
+    ("closer", "sales", "Closer", "Won a weekly deposits challenge", "silver", "Award", None, None),
+]
+
+
+def teams_for_roles(roles: Optional[List[str]]) -> List[str]:
+    roles = roles or []
+    return [t for t in TEAMS if any(TEAM_FOR_ROLE_MAP.get(r) == t for r in roles)]
+
+
+def _badge_out(b: Dict[str, Any], extra: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    out = {"id": b["_id"], "track": b["track"], "name": b["name"], "description": b.get("description", ""),
+           "rarity": b.get("rarity", "bronze"), "icon": b.get("icon", "Medal"), "auto": b.get("auto"),
+           "active": b.get("active", True)}
+    if extra:
+        out.update(extra)
+    return out
+
+
+async def _active_members(team: Optional[str] = None) -> List[Dict[str, Any]]:
+    docs = await mongo_db.users.find({"ghost": {"$ne": True}, "active": True}).sort("name", 1).to_list(200)
+    if team:
+        docs = [u for u in docs if team in teams_for_roles(u.get("roles") or [u.get("role")])]
+    return docs
+
+
+async def credit_counts(user_id: str) -> Dict[str, int]:
+    docs = await mongo_db.job_credits.find({"user_id": user_id}).to_list(3000)
+    month = _et_today()[:7]
+    c = {"jobs": 0, "driver": 0, "helper": 0, "closes": 0, "jobs_month": 0, "closes_month": 0}
+    for d in docs:
+        if d.get("team") == "crew":
+            c["jobs"] += 1
+            if d.get("role_tag") == "driver":
+                c["driver"] += 1
+            if d.get("role_tag") == "helper":
+                c["helper"] += 1
+            if (d.get("date") or "").startswith(month):
+                c["jobs_month"] += 1
+        else:
+            c["closes"] += 1
+            if (d.get("date") or "").startswith(month):
+                c["closes_month"] += 1
+    return c
+
+
+def _metric_met(counts: Dict[str, int], metric: str, threshold: int) -> bool:
+    if metric == "driver_and_helper":
+        return counts["driver"] >= threshold and counts["helper"] >= threshold
+    return counts.get(metric, 0) >= threshold
+
+
+async def award_badge(user: Dict[str, Any], badge: Dict[str, Any], by: str) -> bool:
+    key = f"{user['_id']}:{badge['_id']}"
+    res = await mongo_db.user_badges.update_one(
+        {"_id": key},
+        {"$setOnInsert": {"_id": key, "user_id": user["_id"], "badge_id": badge["_id"],
+                          "awarded_at": now_iso(), "awarded_by": by}},
+        upsert=True)
+    if res.upserted_id is None:
+        return False
+    await notify(user["_id"], None, "You unlocked a badge!",
+                 f"\u201c{badge['name']}\u201d ({badge.get('rarity', 'bronze').title()}) is yours \u2014 {badge.get('description', '')}",
+                 "badge", {"badge_id": badge["_id"]})
+    await audit({"name": by, "user_id": None}, "awarded badge", f"{badge['name']} \u2192 {user.get('name', '')}")
+    return True
+
+
+async def check_auto_badges(user: Dict[str, Any]) -> List[str]:
+    counts = await credit_counts(user["_id"])
+    badges = await mongo_db.badges.find({"active": True, "auto": {"$ne": None}}).to_list(300)
+    newly = []
+    for b in badges:
+        a = b.get("auto") or {}
+        if a.get("metric") and _metric_met(counts, a["metric"], a.get("threshold") or 1):
+            if await award_badge(user, b, by="auto"):
+                newly.append(b["name"])
+    return newly
+
+
+def _next_badge_hint(badges: List[Dict[str, Any]], counts: Dict[str, int], metrics: List[str]) -> str:
+    best = None
+    for b in badges:
+        a = b.get("auto") or {}
+        metric, thr = a.get("metric"), a.get("threshold") or 1
+        if metric not in metrics or metric == "driver_and_helper":
+            continue
+        cur = counts.get(metric, 0)
+        if cur >= thr:
+            continue
+        remaining = thr - (cur + 1)
+        if best is None or remaining < best[0]:
+            best = (remaining, b)
+    if not best:
+        return ""
+    remaining, b = best
+    if remaining <= 0:
+        return f" That unlocks \u201c{b['name']}\u201d!"
+    return f" {remaining} more after this one to \u201c{b['name']}\u201d."
+
+
+async def create_credit_prompt(kind: str, user: Dict[str, Any], role_tag: Optional[str],
+                               job_ref: str, ref_id: str, date_str: str):
+    key = f"{kind}:{ref_id}:{user['_id']}"
+    counts = await credit_counts(user["_id"])
+    badges = await mongo_db.badges.find({"active": True, "auto": {"$ne": None}}).to_list(300)
+    if kind == "crew_complete":
+        team, metrics = "crew", ["jobs", role_tag]
+        msg = f"{user['name']} finished \u201c{job_ref}\u201d as {(role_tag or '').title()} \u2014 give them the job tally?"
+    else:
+        team, metrics = "sales", ["closes"]
+        msg = f"{user['name']} worked a quote that ended up booked \u2014 \u201c{job_ref}\u201d. Give them a Close tally?"
+    hint = _next_badge_hint([b for b in badges if b.get("track") == team], counts, metrics)
+    await mongo_db.credit_prompts.update_one(
+        {"_id": key},
+        {"$setOnInsert": {"_id": key, "kind": kind, "user_id": user["_id"], "user_name": user["name"],
+                          "team": team, "role_tag": role_tag, "job_ref": job_ref, "ref_id": ref_id,
+                          "date": date_str, "message": (msg + hint).strip(), "status": "pending",
+                          "created_at": now_iso()}},
+        upsert=True)
+
+
+async def insert_credit(user: Dict[str, Any], team: str, role_tag: Optional[str], job_ref: str,
+                        date_str: str, source: str, actor: Dict[str, Any]):
+    doc = {"_id": str(uuid4()), "user_id": user["_id"], "user_name": user["name"], "team": team,
+           "role_tag": role_tag if team == "crew" else None, "job_ref": job_ref, "date": date_str,
+           "source": source, "credited_by": actor.get("name"), "created_at": now_iso()}
+    await mongo_db.job_credits.insert_one(doc)
+    tag = f", {role_tag}" if team == "crew" and role_tag else ""
+    await audit(actor, "credited a job" if team == "crew" else "credited a close",
+                f"{user['name']} \u2014 {job_ref} ({date_str}{tag})")
+    newly = await check_auto_badges(user)
+    return doc, newly
+
+
+# ------- team directory & profiles
+
+@api_router.get("/team/members")
+async def team_members(request: Request):
+    p = await current_principal(request)
+    users = await mongo_db.users.find({"ghost": {"$ne": True}, "active": True}).sort("name", 1).to_list(200)
+    badge_map = {b["_id"]: b for b in await mongo_db.badges.find({}).to_list(300)}
+    photos = {d["_id"] for d in await mongo_db.profile_photos.find({}, {"_id": 1}).to_list(500)}
+    members = []
+    for u in users:
+        prof = u.get("member_profile") or {}
+        members.append({
+            "id": u["_id"], "name": u.get("name", ""), "display_name": prof.get("display_name", ""),
+            "nickname": prof.get("nickname", ""), "role_title": prof.get("role_title", ""),
+            "teams": teams_for_roles(u.get("roles") or [u.get("role")]),
+            "roles": u.get("roles") or ([u.get("role")] if u.get("role") else []),
+            "titles": u.get("titles", []), "has_photo": u["_id"] in photos,
+            "pinned": [_badge_out(badge_map[bid]) for bid in (u.get("pinned_badges") or []) if bid in badge_map],
+        })
+    return {"members": members, "me": p.get("user_id")}
+
+
+@api_router.get("/team/members/{user_id}")
+async def member_detail(user_id: str, request: Request):
+    p = await current_principal(request)
+    u = await mongo_db.users.find_one({"_id": user_id})
+    is_self = p.get("user_id") == user_id
+    is_owner = p["role"] == "owner"
+    if not u or (u.get("ghost") and not (is_self or is_owner)):
+        raise HTTPException(status_code=404, detail="No such team member.")
+    tms = teams_for_roles(u.get("roles") or [u.get("role")])
+    badges = await mongo_db.badges.find({"active": True}).sort("sort", 1).to_list(300)
+    badge_map = {b["_id"]: b for b in badges}
+    awards = {a["badge_id"]: a for a in await mongo_db.user_badges.find({"user_id": user_id}).to_list(300)}
+    gallery = {t: [_badge_out(b, {"unlocked": b["_id"] in awards,
+                                  "awarded_at": (awards.get(b["_id"]) or {}).get("awarded_at")})
+                   for b in badges if b["track"] == t] for t in tms}
+    prof = u.get("member_profile") or {}
+    won = await mongo_db.challenges.find({"winners": user_id}).sort("end", -1).to_list(50)
+    out = {
+        "id": u["_id"], "name": u.get("name", ""), "member_since": u.get("created_at"),
+        "teams": tms, "roles": u.get("roles") or ([u.get("role")] if u.get("role") else []),
+        "titles": u.get("titles", []),
+        "profile": {k: prof.get(k, "") for k in MEMBER_PROFILE_FIELDS},
+        "has_photo": bool(await mongo_db.profile_photos.find_one({"_id": user_id}, {"_id": 1})),
+        "pinned": [_badge_out(badge_map[bid]) for bid in (u.get("pinned_badges") or []) if bid in badge_map],
+        "gallery": gallery,
+        "unlocked_count": sum(1 for bid in awards if bid in badge_map),
+        "is_self": is_self, "can_edit": is_self or is_owner, "can_see_numbers": is_self or is_owner,
+        "challenge_wins": [{"id": c["_id"], "name": c["name"], "team": c["team"], "end": c.get("end"),
+                            "reward": c.get("reward", {})} for c in won],
+    }
+    if is_self or is_owner:
+        counts = await credit_counts(user_id)
+        out["stats"] = {"jobs_total": counts["jobs"], "jobs_month": counts["jobs_month"],
+                        "driver": counts["driver"], "helper": counts["helper"],
+                        "closes_total": counts["closes"], "closes_month": counts["closes_month"]}
+        progress = []
+        for t in tms:
+            for b in badges:
+                if b["track"] != t or b["_id"] in awards or not b.get("auto"):
+                    continue
+                a = b["auto"]
+                cur = min(counts.get("driver", 0), counts.get("helper", 0)) if a["metric"] == "driver_and_helper" \
+                    else counts.get(a["metric"], 0)
+                progress.append({"badge_id": b["_id"], "name": b["name"], "track": t,
+                                 "metric": a["metric"], "count": cur, "threshold": a.get("threshold") or 1})
+        progress.sort(key=lambda x: x["threshold"] - x["count"])
+        out["progress"] = progress
+    return out
+
+
+class MemberProfilePayload(BaseModel):
+    display_name: str = ""
+    nickname: str = ""
+    bio: str = ""
+    role_title: str = ""
+    favorite_move: str = ""
+    fun_fact: str = ""
+
+
+def _clean_profile(payload: MemberProfilePayload) -> Dict[str, str]:
+    return {k: (getattr(payload, k) or "").strip()[:500] for k in MEMBER_PROFILE_FIELDS}
+
+
+@api_router.put("/profile")
+async def save_my_member_profile(payload: MemberProfilePayload, request: Request):
+    p = await current_principal(request)
+    if not p.get("user_id"):
+        raise HTTPException(status_code=403, detail="Only user accounts have a profile.")
+    prof = _clean_profile(payload)
+    await mongo_db.users.update_one({"_id": p["user_id"]}, {"$set": {"member_profile": prof}})
+    await audit(p, "updated their team profile", p.get("name", ""))
+    return {"profile": prof}
+
+
+@api_router.put("/team/members/{user_id}/moderate")
+async def moderate_member_profile(user_id: str, payload: MemberProfilePayload, p: Dict[str, Any] = Depends(require_owner)):
+    u = await mongo_db.users.find_one({"_id": user_id})
+    if not u:
+        raise HTTPException(status_code=404, detail="No such team member.")
+    prof = _clean_profile(payload)
+    await mongo_db.users.update_one({"_id": user_id}, {"$set": {"member_profile": prof}})
+    await audit(p, "moderated a team profile", u.get("name", ""))
+    return {"profile": prof}
+
+
+class PinsPayload(BaseModel):
+    badge_ids: List[str] = []
+
+
+@api_router.put("/profile/pins")
+async def save_pins(payload: PinsPayload, request: Request):
+    p = await current_principal(request)
+    if not p.get("user_id"):
+        raise HTTPException(status_code=403, detail="Only user accounts can pin badges.")
+    ids = list(dict.fromkeys(payload.badge_ids))[:3]
+    unlocked = {a["badge_id"] for a in await mongo_db.user_badges.find({"user_id": p["user_id"]}).to_list(300)}
+    if any(b not in unlocked for b in ids):
+        raise HTTPException(status_code=422, detail="You can only pin badges you've unlocked.")
+    await mongo_db.users.update_one({"_id": p["user_id"]}, {"$set": {"pinned_badges": ids}})
+    return {"pinned": ids}
+
+
+@api_router.post("/profile/photo")
+async def upload_profile_photo(request: Request, file: UploadFile = File(...)):
+    p = await current_principal(request)
+    if not p.get("user_id"):
+        raise HTTPException(status_code=403, detail="Only user accounts can set a photo.")
+    if not (file.content_type or "").startswith("image/"):
+        raise HTTPException(status_code=422, detail="Only photos work here.")
+    data = await file.read()
+    if len(data) > 8 * 1024 * 1024:
+        raise HTTPException(status_code=422, detail="That photo is too big (8 MB max).")
+    ext = (file.filename or "photo.jpg").rsplit(".", 1)[-1].lower() if "." in (file.filename or "") else "jpg"
+    path = f"haulyeah-crm/profile-photos/{p['user_id']}-{uuid4()}.{ext}"
+    key = await get_storage_key()
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        r = await client.put(f"{STORAGE_URL}/objects/{path}",
+                             headers={"X-Storage-Key": key, "Content-Type": file.content_type or "image/jpeg"},
+                             content=data)
+    if r.status_code >= 300:
+        raise HTTPException(status_code=502, detail="The photo didn't upload. Try again.")
+    await mongo_db.profile_photos.update_one(
+        {"_id": p["user_id"]},
+        {"$set": {"storage_path": r.json()["path"], "content_type": file.content_type or "image/jpeg",
+                  "updated_at": now_iso()}},
+        upsert=True)
+    return {"ok": True}
+
+
+@dl_router.get("/profile-photos/{user_id}")
+async def serve_profile_photo(user_id: str, request: Request, auth: Optional[str] = None):
+    if auth:
+        await principal_from_token_string(auth)
+    else:
+        await current_principal(request)
+    doc = await mongo_db.profile_photos.find_one({"_id": user_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="No photo.")
+    key = await get_storage_key()
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        r = await client.get(f"{STORAGE_URL}/objects/{doc['storage_path']}", headers={"X-Storage-Key": key})
+    if r.status_code >= 300:
+        raise HTTPException(status_code=404, detail="Photo file missing.")
+    return Response(content=r.content, media_type=doc.get("content_type", "image/jpeg"))
+
+
+@api_router.delete("/team/members/{user_id}/photo")
+async def delete_profile_photo(user_id: str, request: Request):
+    p = await current_principal(request)
+    if p["role"] != "owner" and p.get("user_id") != user_id:
+        raise HTTPException(status_code=403, detail="Not yours to remove.")
+    await mongo_db.profile_photos.delete_one({"_id": user_id})
+    if p["role"] == "owner" and p.get("user_id") != user_id:
+        u = await mongo_db.users.find_one({"_id": user_id})
+        await audit(p, "removed a profile photo", (u or {}).get("name", user_id))
+    return {"ok": True}
+
+
+# ------- badges
+
+class BadgePayload(BaseModel):
+    track: str
+    name: str
+    description: str = ""
+    rarity: str = "bronze"
+    icon: str = "Medal"
+    auto_metric: Optional[str] = None
+    auto_threshold: Optional[int] = None
+
+
+class BadgePatchPayload(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    rarity: Optional[str] = None
+    icon: Optional[str] = None
+    active: Optional[bool] = None
+    auto_metric: Optional[str] = None
+    auto_threshold: Optional[int] = None
+
+
+@api_router.get("/badges")
+async def list_badges(role: str = Depends(require_auth)):
+    docs = await mongo_db.badges.find({}).sort("sort", 1).to_list(300)
+    return {"badges": [_badge_out(b) for b in docs]}
+
+
+@api_router.post("/badges")
+async def create_badge(payload: BadgePayload, p: Dict[str, Any] = Depends(require_owner)):
+    if payload.track not in TEAMS:
+        raise HTTPException(status_code=422, detail="Track must be crew or sales.")
+    if payload.rarity not in RARITIES:
+        raise HTTPException(status_code=422, detail="Rarity must be bronze, silver, or gold.")
+    auto = None
+    if payload.auto_metric:
+        if payload.auto_metric not in AUTO_METRICS or not payload.auto_threshold or payload.auto_threshold < 1:
+            raise HTTPException(status_code=422, detail="Auto-unlock needs a valid metric and a count of 1 or more.")
+        auto = {"metric": payload.auto_metric, "threshold": int(payload.auto_threshold)}
+    last = await mongo_db.badges.find_one({}, sort=[("sort", -1)])
+    doc = {"_id": str(uuid4()), "track": payload.track, "name": payload.name.strip(),
+           "description": payload.description.strip(), "rarity": payload.rarity, "icon": payload.icon or "Medal",
+           "auto": auto, "active": True, "seeded": False, "sort": ((last or {}).get("sort") or 0) + 1,
+           "created_at": now_iso()}
+    await mongo_db.badges.insert_one(doc)
+    await audit(p, "created a badge", f"{doc['name']} ({payload.track}, {payload.rarity})")
+    return _badge_out(doc)
+
+
+@api_router.patch("/badges/{badge_id}")
+async def patch_badge(badge_id: str, payload: BadgePatchPayload, p: Dict[str, Any] = Depends(require_owner)):
+    b = await mongo_db.badges.find_one({"_id": badge_id})
+    if not b:
+        raise HTTPException(status_code=404, detail="No such badge.")
+    updates: Dict[str, Any] = {}
+    if payload.name is not None and payload.name.strip():
+        updates["name"] = payload.name.strip()
+    if payload.description is not None:
+        updates["description"] = payload.description.strip()
+    if payload.rarity is not None:
+        if payload.rarity not in RARITIES:
+            raise HTTPException(status_code=422, detail="Rarity must be bronze, silver, or gold.")
+        updates["rarity"] = payload.rarity
+    if payload.icon is not None:
+        updates["icon"] = payload.icon
+    if payload.active is not None:
+        updates["active"] = payload.active
+    if payload.auto_metric is not None:
+        if payload.auto_metric == "":
+            updates["auto"] = None
+        elif payload.auto_metric in AUTO_METRICS and payload.auto_threshold and payload.auto_threshold >= 1:
+            updates["auto"] = {"metric": payload.auto_metric, "threshold": int(payload.auto_threshold)}
+        else:
+            raise HTTPException(status_code=422, detail="Auto-unlock needs a valid metric and a count of 1 or more.")
+    if updates:
+        await mongo_db.badges.update_one({"_id": badge_id}, {"$set": updates})
+        await audit(p, "edited a badge", b["name"], {"changes": list(updates.keys())})
+    fresh = await mongo_db.badges.find_one({"_id": badge_id})
+    return _badge_out(fresh)
+
+
+class AwardPayload(BaseModel):
+    user_id: str
+
+
+@api_router.post("/badges/{badge_id}/award")
+async def manual_award_badge(badge_id: str, payload: AwardPayload, p: Dict[str, Any] = Depends(require_owner)):
+    b = await mongo_db.badges.find_one({"_id": badge_id})
+    u = await mongo_db.users.find_one({"_id": payload.user_id})
+    if not b or not u:
+        raise HTTPException(status_code=404, detail="No such badge or member.")
+    awarded = await award_badge(u, b, by=p.get("name") or "owner")
+    return {"awarded": awarded, "badge": b["name"], "user": u["name"]}
+
+
+@api_router.delete("/badges/{badge_id}/award/{user_id}")
+async def revoke_badge(badge_id: str, user_id: str, p: Dict[str, Any] = Depends(require_owner)):
+    res = await mongo_db.user_badges.delete_one({"_id": f"{user_id}:{badge_id}"})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="They don't have that badge.")
+    await mongo_db.users.update_one({"_id": user_id}, {"$pull": {"pinned_badges": badge_id}})
+    u = await mongo_db.users.find_one({"_id": user_id})
+    b = await mongo_db.badges.find_one({"_id": badge_id})
+    await audit(p, "took back a badge", f"{(b or {}).get('name', badge_id)} \u2190 {(u or {}).get('name', user_id)}")
+    return {"ok": True}
+
+
+# ------- job credits & approval prompts
+
+class CreditPayload(BaseModel):
+    user_id: str
+    team: str
+    role_tag: Optional[str] = None
+    job_ref: str
+    date: str
+
+
+@api_router.get("/credits")
+async def list_credits(user_id: Optional[str] = None, limit: int = 100, p: Dict[str, Any] = Depends(require_owner)):
+    q = {"user_id": user_id} if user_id else {}
+    docs = await mongo_db.job_credits.find(q).sort("created_at", -1).to_list(min(limit, 500))
+    return {"credits": [{"id": d["_id"], "user_id": d["user_id"], "user_name": d.get("user_name", ""),
+                         "team": d["team"], "role_tag": d.get("role_tag"), "job_ref": d.get("job_ref", ""),
+                         "date": d.get("date"), "source": d.get("source"), "credited_by": d.get("credited_by"),
+                         "created_at": d["created_at"]} for d in docs]}
+
+
+@api_router.post("/credits")
+async def add_credit(payload: CreditPayload, p: Dict[str, Any] = Depends(require_owner)):
+    if payload.team not in TEAMS:
+        raise HTTPException(status_code=422, detail="Team must be crew or sales.")
+    if payload.team == "crew" and payload.role_tag not in ("driver", "helper"):
+        raise HTTPException(status_code=422, detail="Pick Driver or Helper for crew credits.")
+    u = await mongo_db.users.find_one({"_id": payload.user_id})
+    if not u:
+        raise HTTPException(status_code=404, detail="No such member.")
+    doc, newly = await insert_credit(u, payload.team, payload.role_tag, payload.job_ref.strip() or "Job",
+                                     payload.date, "manual", p)
+    return {"credit": {"id": doc["_id"]}, "newly_unlocked": newly}
+
+
+@api_router.delete("/credits/{credit_id}")
+async def delete_credit(credit_id: str, p: Dict[str, Any] = Depends(require_owner)):
+    d = await mongo_db.job_credits.find_one({"_id": credit_id})
+    if not d:
+        raise HTTPException(status_code=404, detail="No such credit.")
+    await mongo_db.job_credits.delete_one({"_id": credit_id})
+    await audit(p, "removed a job credit", f"{d.get('user_name', '')} \u2014 {d.get('job_ref', '')} ({d.get('date', '')})")
+    return {"ok": True}
+
+
+@api_router.get("/credit-prompts")
+async def list_credit_prompts(p: Dict[str, Any] = Depends(require_owner)):
+    docs = await mongo_db.credit_prompts.find({"status": "pending"}).sort("created_at", -1).to_list(100)
+    return {"prompts": [{"id": d["_id"], "kind": d["kind"], "user_id": d["user_id"], "user_name": d["user_name"],
+                         "team": d["team"], "role_tag": d.get("role_tag"), "job_ref": d.get("job_ref", ""),
+                         "date": d.get("date"), "message": d.get("message", ""), "created_at": d["created_at"]}
+                        for d in docs]}
+
+
+class PromptResolvePayload(BaseModel):
+    approve: bool
+
+
+@api_router.post("/credit-prompts/{prompt_id:path}/resolve")
+async def resolve_credit_prompt(prompt_id: str, payload: PromptResolvePayload, p: Dict[str, Any] = Depends(require_owner)):
+    d = await mongo_db.credit_prompts.find_one({"_id": prompt_id, "status": "pending"})
+    if not d:
+        raise HTTPException(status_code=404, detail="That one's already handled.")
+    newly: List[str] = []
+    if payload.approve:
+        u = await mongo_db.users.find_one({"_id": d["user_id"]})
+        if not u:
+            raise HTTPException(status_code=404, detail="That member's account is gone.")
+        _, newly = await insert_credit(u, d["team"], d.get("role_tag"), d.get("job_ref", "Job"),
+                                       d.get("date") or _et_today(), "prompt", p)
+    else:
+        await audit(p, "skipped a job credit", f"{d.get('user_name', '')} \u2014 {d.get('job_ref', '')}")
+    await mongo_db.credit_prompts.update_one(
+        {"_id": prompt_id},
+        {"$set": {"status": "approved" if payload.approve else "dismissed", "resolved_at": now_iso()}})
+    return {"ok": True, "newly_unlocked": newly}
+
+
+# ------- leaderboard & hall of fame
+
+def _next_month(m: str) -> str:
+    y, mm = int(m[:4]), int(m[5:7])
+    mm += 1
+    if mm > 12:
+        y, mm = y + 1, 1
+    return f"{y:04d}-{mm:02d}"
+
+
+async def ensure_hall_of_fame():
+    first = await mongo_db.job_credits.find_one({}, sort=[("date", 1)])
+    if not first or not first.get("date"):
+        return
+    cur = _et_today()[:7]
+    m = first["date"][:7]
+    while m < cur:
+        for team in TEAMS:
+            _id = f"{m}:{team}"
+            if await mongo_db.hall_of_fame.find_one({"_id": _id}):
+                continue
+            docs = await mongo_db.job_credits.find({"team": team, "date": {"$regex": f"^{m}"}}).to_list(5000)
+            if not docs:
+                continue
+            counts: Dict[str, int] = {}
+            for d in docs:
+                counts[d["user_id"]] = counts.get(d["user_id"], 0) + 1
+            uid = max(counts, key=lambda k: counts[k])
+            name = next((d.get("user_name", "") for d in docs if d["user_id"] == uid), "")
+            await mongo_db.hall_of_fame.insert_one({"_id": _id, "month": m, "team": team, "winner_id": uid,
+                                                    "winner_name": name, "count": counts[uid],
+                                                    "archived_at": now_iso()})
+        m = _next_month(m)
+
+
+@api_router.get("/leaderboard")
+async def leaderboard(request: Request, month: Optional[str] = None):
+    await current_principal(request)
+    await ensure_hall_of_fame()
+    month = (month or _et_today()[:7])[:7]
+    out: Dict[str, Any] = {"month": month}
+    active_ids = {u["_id"] for u in await _active_members()}
+    for team in TEAMS:
+        docs = await mongo_db.job_credits.find({"team": team, "date": {"$regex": f"^{month}"}}).to_list(5000)
+        counts: Dict[str, Dict[str, Any]] = {}
+        for d in docs:
+            row = counts.setdefault(d["user_id"], {"user_id": d["user_id"], "name": d.get("user_name", ""), "count": 0})
+            row["count"] += 1
+        rows = [r for r in counts.values() if r["user_id"] in active_ids]
+        rows.sort(key=lambda r: (-r["count"], r["name"]))
+        out[team] = rows
+    return out
+
+
+@api_router.get("/hall-of-fame")
+async def hall_of_fame(request: Request):
+    await current_principal(request)
+    await ensure_hall_of_fame()
+    docs = await mongo_db.hall_of_fame.find({}).sort("month", -1).to_list(200)
+    return {"entries": [{"month": d["month"], "team": d["team"], "winner_id": d["winner_id"],
+                         "winner_name": d["winner_name"], "count": d["count"]} for d in docs]}
+
+
+# ------- challenges
+
+class ChallengePayload(BaseModel):
+    name: str
+    description: str = ""
+    team: str
+    type: str
+    metric: str
+    target: Optional[int] = None
+    start: str
+    end: str
+    reward_kind: str
+    reward_badge_id: Optional[str] = None
+    reward_title: Optional[str] = None
+
+
+async def challenge_progress(ch: Dict[str, Any]) -> List[Dict[str, Any]]:
+    members = await _active_members(ch["team"])
+    if ch.get("metric") == "job_credits":
+        docs = await mongo_db.job_credits.find(
+            {"team": ch["team"], "date": {"$gte": ch["start"], "$lte": ch["end"]}}).to_list(5000)
+        counts: Dict[str, int] = {}
+        for d in docs:
+            counts[d["user_id"]] = counts.get(d["user_id"], 0) + 1
+    else:
+        counts = {k: int(v) for k, v in (ch.get("verified") or {}).items()}
+    rows = [{"user_id": m["_id"], "name": m["name"], "value": counts.get(m["_id"], 0)} for m in members]
+    rows.sort(key=lambda r: (-r["value"], r["name"]))
+    return rows
+
+
+async def _award_challenge(ch: Dict[str, Any], winners: List[str], rows: List[Dict[str, Any]], actor: Dict[str, Any]):
+    reward = ch.get("reward") or {}
+    for uid in winners:
+        u = await mongo_db.users.find_one({"_id": uid})
+        if not u:
+            continue
+        if reward.get("kind") == "badge" and reward.get("badge_id"):
+            b = await mongo_db.badges.find_one({"_id": reward["badge_id"]})
+            if b:
+                await award_badge(u, b, by=f"challenge: {ch['name']}")
+        elif reward.get("kind") == "title" and reward.get("title"):
+            await mongo_db.users.update_one({"_id": uid}, {"$addToSet": {"titles": reward["title"]}})
+            await notify(uid, None, "You earned a title!",
+                         f"You won \u201c{ch['name']}\u201d \u2014 the \u201c{reward['title']}\u201d title is on your profile now.",
+                         "challenge")
+    await mongo_db.challenges.update_one(
+        {"_id": ch["_id"]},
+        {"$set": {"status": "awarded" if winners else "ended", "winners": winners, "final": rows,
+                  "awarded_at": now_iso()}})
+    await audit(actor, "closed a challenge", f"{ch['name']} \u2014 {len(winners)} winner(s)")
+
+
+async def finalize_due_challenges():
+    today = _et_today()
+    due = await mongo_db.challenges.find({"status": "active", "end": {"$lt": today}}).to_list(100)
+    for ch in due:
+        rows = await challenge_progress(ch)
+        if ch.get("metric") == "owner_verified":
+            await mongo_db.challenges.update_one({"_id": ch["_id"]}, {"$set": {"status": "needs_verify"}})
+            await notify(None, "owner", "Challenge needs your call",
+                         f"\u201c{ch['name']}\u201d just ended. Confirm the winner(s) in Team HQ \u2192 Challenges before the reward goes out.",
+                         "challenge", {"challenge_id": ch["_id"]})
+            continue
+        if ch.get("type") == "individual":
+            target = ch.get("target") or 0
+            winners = [r["user_id"] for r in rows if target and r["value"] >= target]
+        else:
+            top = rows[0]["value"] if rows else 0
+            winners = [r["user_id"] for r in rows if top > 0 and r["value"] == top]
+        await _award_challenge(ch, winners, rows, {"name": "auto", "user_id": None})
+
+
+def _challenge_out(ch: Dict[str, Any], rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    name_map = {r["user_id"]: r["name"] for r in rows}
+    return {"id": ch["_id"], "name": ch["name"], "description": ch.get("description", ""),
+            "team": ch["team"], "type": ch["type"], "metric": ch["metric"], "target": ch.get("target"),
+            "start": ch["start"], "end": ch["end"], "reward": ch.get("reward", {}),
+            "status": ch.get("status", "active"),
+            "winners": [{"user_id": w, "name": name_map.get(w, "")} for w in ch.get("winners", [])],
+            "progress": rows}
+
+
+@api_router.get("/challenges")
+async def list_challenges(request: Request):
+    p = await current_principal(request)
+    await finalize_due_challenges()
+    if p["role"] in ("owner", "marketing"):
+        visible = list(TEAMS)
+    else:
+        visible = teams_for_roles(p.get("roles") or [p["role"]])
+    docs = await mongo_db.challenges.find({"team": {"$in": visible}}).sort("end", -1).to_list(100)
+    out = []
+    for ch in docs:
+        rows = ch.get("final") if ch.get("status") in ("awarded", "ended") and ch.get("final") else await challenge_progress(ch)
+        out.append(_challenge_out(ch, rows))
+    return {"challenges": out, "me": p.get("user_id"), "is_owner": p["role"] == "owner"}
+
+
+def _validate_challenge(payload: ChallengePayload) -> Dict[str, Any]:
+    if payload.team not in TEAMS:
+        raise HTTPException(status_code=422, detail="Team must be crew or sales.")
+    if payload.type not in ("individual", "competition"):
+        raise HTTPException(status_code=422, detail="Type must be individual or competition.")
+    if payload.metric not in ("job_credits", "owner_verified"):
+        raise HTTPException(status_code=422, detail="Metric must be job_credits or owner_verified.")
+    if payload.type == "individual" and (not payload.target or payload.target < 1):
+        raise HTTPException(status_code=422, detail="Individual challenges need a goal count of 1 or more.")
+    if not payload.start or not payload.end or payload.end < payload.start:
+        raise HTTPException(status_code=422, detail="Check the start and end dates.")
+    if payload.reward_kind == "badge" and not payload.reward_badge_id:
+        raise HTTPException(status_code=422, detail="Pick the badge to give out.")
+    if payload.reward_kind == "title" and not (payload.reward_title or "").strip():
+        raise HTTPException(status_code=422, detail="Type the title to give out.")
+    if payload.reward_kind not in ("badge", "title"):
+        raise HTTPException(status_code=422, detail="Reward must be a badge or a title.")
+    reward = {"kind": payload.reward_kind}
+    if payload.reward_kind == "badge":
+        reward["badge_id"] = payload.reward_badge_id
+    else:
+        reward["title"] = payload.reward_title.strip()
+    return reward
+
+
+@api_router.post("/challenges")
+async def create_challenge(payload: ChallengePayload, p: Dict[str, Any] = Depends(require_owner)):
+    reward = _validate_challenge(payload)
+    doc = {"_id": str(uuid4()), "name": payload.name.strip(), "description": payload.description.strip(),
+           "team": payload.team, "type": payload.type, "metric": payload.metric,
+           "target": payload.target if payload.type == "individual" else None,
+           "start": payload.start, "end": payload.end, "reward": reward, "status": "active",
+           "verified": {}, "winners": [], "created_by": p.get("name"), "created_at": now_iso()}
+    await mongo_db.challenges.insert_one(doc)
+    await audit(p, "created a challenge", f"{doc['name']} ({payload.team}, {payload.type})")
+    return _challenge_out(doc, await challenge_progress(doc))
+
+
+@api_router.patch("/challenges/{challenge_id}")
+async def patch_challenge(challenge_id: str, payload: ChallengePayload, p: Dict[str, Any] = Depends(require_owner)):
+    ch = await mongo_db.challenges.find_one({"_id": challenge_id})
+    if not ch:
+        raise HTTPException(status_code=404, detail="No such challenge.")
+    if ch.get("status") == "awarded":
+        raise HTTPException(status_code=422, detail="That challenge already paid out \u2014 make a new one instead.")
+    reward = _validate_challenge(payload)
+    await mongo_db.challenges.update_one(
+        {"_id": challenge_id},
+        {"$set": {"name": payload.name.strip(), "description": payload.description.strip(),
+                  "team": payload.team, "type": payload.type, "metric": payload.metric,
+                  "target": payload.target if payload.type == "individual" else None,
+                  "start": payload.start, "end": payload.end, "reward": reward}})
+    await audit(p, "edited a challenge", payload.name.strip())
+    fresh = await mongo_db.challenges.find_one({"_id": challenge_id})
+    return _challenge_out(fresh, await challenge_progress(fresh))
+
+
+@api_router.delete("/challenges/{challenge_id}")
+async def delete_challenge(challenge_id: str, p: Dict[str, Any] = Depends(require_owner)):
+    ch = await mongo_db.challenges.find_one({"_id": challenge_id})
+    if not ch:
+        raise HTTPException(status_code=404, detail="No such challenge.")
+    await mongo_db.challenges.delete_one({"_id": challenge_id})
+    await audit(p, "deleted a challenge", ch.get("name", challenge_id))
+    return {"ok": True}
+
+
+class VerifyPayload(BaseModel):
+    user_id: str
+    value: int
+
+
+@api_router.post("/challenges/{challenge_id}/verify")
+async def verify_challenge_progress(challenge_id: str, payload: VerifyPayload, p: Dict[str, Any] = Depends(require_owner)):
+    ch = await mongo_db.challenges.find_one({"_id": challenge_id})
+    if not ch:
+        raise HTTPException(status_code=404, detail="No such challenge.")
+    if ch.get("metric") != "owner_verified":
+        raise HTTPException(status_code=422, detail="This challenge tracks itself from job credits.")
+    if ch.get("status") not in ("active", "needs_verify"):
+        raise HTTPException(status_code=422, detail="That challenge is already closed.")
+    await mongo_db.challenges.update_one({"_id": challenge_id},
+                                         {"$set": {f"verified.{payload.user_id}": max(0, int(payload.value))}})
+    u = await mongo_db.users.find_one({"_id": payload.user_id})
+    await audit(p, "verified challenge progress", f"{ch['name']} \u2014 {(u or {}).get('name', '')}: {payload.value}")
+    fresh = await mongo_db.challenges.find_one({"_id": challenge_id})
+    return _challenge_out(fresh, await challenge_progress(fresh))
+
+
+class AwardChallengePayload(BaseModel):
+    winners: List[str] = []
+
+
+@api_router.post("/challenges/{challenge_id}/award")
+async def award_challenge(challenge_id: str, payload: AwardChallengePayload, p: Dict[str, Any] = Depends(require_owner)):
+    ch = await mongo_db.challenges.find_one({"_id": challenge_id})
+    if not ch:
+        raise HTTPException(status_code=404, detail="No such challenge.")
+    if ch.get("status") not in ("active", "needs_verify"):
+        raise HTTPException(status_code=422, detail="That challenge is already closed.")
+    rows = await challenge_progress(ch)
+    valid_ids = {r["user_id"] for r in rows}
+    winners = [w for w in payload.winners if w in valid_ids]
+    await _award_challenge(ch, winners, rows, p)
+    fresh = await mongo_db.challenges.find_one({"_id": challenge_id})
+    return _challenge_out(fresh, rows)
+
+
+# ------- owner insights
+
+@api_router.get("/admin/crew-comparison")
+async def crew_comparison(p: Dict[str, Any] = Depends(require_owner)):
+    members = await _active_members("crew")
+    rows = []
+    for m in members:
+        c = await credit_counts(m["_id"])
+        rows.append({"user_id": m["_id"], "name": m["name"], "driver": c["driver"], "helper": c["helper"],
+                     "total": c["jobs"]})
+    rows.sort(key=lambda r: (-r["total"], r["name"]))
+    return {"rows": rows}
+
+
+async def seed_team_module():
+    for i, (slug, track, name, desc, rarity, icon, metric, thr) in enumerate(BADGE_SEEDS):
+        await mongo_db.badges.update_one(
+            {"_id": slug},
+            {"$setOnInsert": {"_id": slug, "track": track, "name": name, "description": desc, "rarity": rarity,
+                              "icon": icon, "auto": ({"metric": metric, "threshold": thr} if metric else None),
+                              "active": True, "seeded": True, "sort": i, "created_at": now_iso()}},
+            upsert=True)
+    if await mongo_db.challenges.count_documents({}) == 0:
+        today = datetime.strptime(_et_today(), "%Y-%m-%d").date()
+        month_start = today.replace(day=1)
+        month_end = datetime.strptime(_next_month(_et_today()[:7]) + "-01", "%Y-%m-%d").date() - timedelta(days=1)
+        week_start = today - timedelta(days=today.weekday())
+        week_end = week_start + timedelta(days=6)
+        month_name = today.strftime("%B")
+        seeds = [
+            {"name": f"Full House {month_name}", "description": "Complete 6 jobs this month and the Workhorse badge is yours.",
+             "team": "crew", "type": "individual", "metric": "job_credits", "target": 6,
+             "start": month_start.isoformat(), "end": month_end.isoformat(),
+             "reward": {"kind": "badge", "badge_id": "workhorse"}},
+            {"name": "King of the Weekend", "description": "Most jobs completed this month takes the Top Hauler title.",
+             "team": "crew", "type": "competition", "metric": "job_credits", "target": None,
+             "start": month_start.isoformat(), "end": month_end.isoformat(),
+             "reward": {"kind": "title", "title": "Top Hauler"}},
+            {"name": "Six-Pack Sprint", "description": "Lock 3 deposits this week to unlock the Closer badge. The owner confirms these.",
+             "team": "sales", "type": "individual", "metric": "owner_verified", "target": 3,
+             "start": week_start.isoformat(), "end": week_end.isoformat(),
+             "reward": {"kind": "badge", "badge_id": "closer"}},
+            {"name": "Whale Hunt", "description": "Biggest single move closed this month wins the Big Fish title. The owner confirms the winner.",
+             "team": "sales", "type": "competition", "metric": "owner_verified", "target": None,
+             "start": month_start.isoformat(), "end": month_end.isoformat(),
+             "reward": {"kind": "title", "title": "Big Fish"}},
+        ]
+        for s in seeds:
+            await mongo_db.challenges.insert_one({"_id": str(uuid4()), **s, "status": "active", "verified": {},
+                                                  "winners": [], "created_by": "seed", "created_at": now_iso()})
+
+
 # ------- startup seeding
 
 @app.on_event("startup")
@@ -3312,6 +4199,7 @@ async def seed_on_startup():
         if await mongo_db.trucks.count_documents({}) == 0:
             for i in range(1, 6):
                 await mongo_db.trucks.insert_one({"_id": str(uuid4()), "name": f"Truck {i}", "plate": "", "active": True})
+        await seed_team_module()
     except Exception as exc:
         logger.error("Startup seeding failed: %s", exc)
     asyncio.create_task(timelog_retry_loop())

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { InstructionBanner, KpiCard, PageTitle, Private, Money, Pill, EmptyState, Pill as StatusPill } from "@/components/Bits";
 import { WorkCalendar } from "@/components/WorkCalendar";
 import { CrewStatusCard } from "@/components/CrewStatusCard";
+import { CreditPromptsCard } from "@/components/team/CreditPromptsCard";
 import { LF, PF, TF, IF, SF, f, LEAD_STATUS_COLORS, LEAD_STATUSES, needsFollowUp } from "@/lib/fields";
 import { fmtMoney, fmtDate, minutesSince, ageLabel, todayISO, isOverdue, gmailCompose } from "@/lib/format";
 
@@ -132,6 +133,8 @@ export default function Dashboard() {
         </div>
       )}
       <InstructionBanner>Here's today at a glance. Call any New lead before the timer turns red.</InstructionBanner>
+
+      <CreditPromptsCard />
 
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 mb-8">
         <KpiCard

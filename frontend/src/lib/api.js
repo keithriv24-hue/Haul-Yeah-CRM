@@ -110,6 +110,44 @@ export const saveQuoteBreakdownApi = (leadId, breakdown) => axios.put(`${API}/qu
 export const getQuoteBreakdownApi = (leadId) => axios.get(`${API}/quotes/${leadId}`).then((r) => r.data);
 export const trackApi = (token) => axios.get(`${API}/track/${token}`).then((r) => r.data);
 
+export const teamMembersApi = () => axios.get(`${API}/team/members`).then((r) => r.data);
+export const memberDetailApi = (id) => axios.get(`${API}/team/members/${id}`).then((r) => r.data);
+export const saveMyProfileApi = (p) => axios.put(`${API}/profile`, p).then((r) => r.data);
+export const moderateProfileApi = (id, p) => axios.put(`${API}/team/members/${id}/moderate`, p).then((r) => r.data);
+export const savePinsApi = (badge_ids) => axios.put(`${API}/profile/pins`, { badge_ids }).then((r) => r.data);
+export const uploadProfilePhotoApi = (file) => {
+  const fd = new FormData();
+  fd.append("file", file);
+  return axios.post(`${API}/profile/photo`, fd).then((r) => r.data);
+};
+export const profilePhotoUrl = (id, v) =>
+  `${API}/profile-photos/${id}?auth=${localStorage.getItem("hy_token")}${v ? `&v=${v}` : ""}`;
+export const deleteProfilePhotoApi = (id) => axios.delete(`${API}/team/members/${id}/photo`).then((r) => r.data);
+export const listBadgesApi = () => axios.get(`${API}/badges`).then((r) => r.data.badges);
+export const createBadgeApi = (b) => axios.post(`${API}/badges`, b).then((r) => r.data);
+export const patchBadgeApi = (id, b) => axios.patch(`${API}/badges/${id}`, b).then((r) => r.data);
+export const awardBadgeApi = (id, user_id) => axios.post(`${API}/badges/${id}/award`, { user_id }).then((r) => r.data);
+export const revokeBadgeApi = (id, userId) => axios.delete(`${API}/badges/${id}/award/${userId}`).then((r) => r.data);
+export const listCreditsApi = (params = {}) => axios.get(`${API}/credits`, { params }).then((r) => r.data.credits);
+export const addCreditApi = (c) => axios.post(`${API}/credits`, c).then((r) => r.data);
+export const deleteCreditApi = (id) => axios.delete(`${API}/credits/${id}`).then((r) => r.data);
+export const creditPromptsApi = () => axios.get(`${API}/credit-prompts`).then((r) => r.data.prompts);
+export const resolvePromptApi = (id, approve) =>
+  axios.post(`${API}/credit-prompts/${encodeURIComponent(id)}/resolve`, { approve }).then((r) => r.data);
+export const leaderboardApi = (month) =>
+  axios.get(`${API}/leaderboard`, { params: month ? { month } : {} }).then((r) => r.data);
+export const hallOfFameApi = () => axios.get(`${API}/hall-of-fame`).then((r) => r.data.entries);
+export const listChallengesApi = () => axios.get(`${API}/challenges`).then((r) => r.data);
+export const createChallengeApi = (c) => axios.post(`${API}/challenges`, c).then((r) => r.data);
+export const patchChallengeApi = (id, c) => axios.patch(`${API}/challenges/${id}`, c).then((r) => r.data);
+export const deleteChallengeApi = (id) => axios.delete(`${API}/challenges/${id}`).then((r) => r.data);
+export const verifyChallengeApi = (id, user_id, value) =>
+  axios.post(`${API}/challenges/${id}/verify`, { user_id, value }).then((r) => r.data);
+export const awardChallengeApi = (id, winners) =>
+  axios.post(`${API}/challenges/${id}/award`, { winners }).then((r) => r.data);
+export const crewComparisonApi = () => axios.get(`${API}/admin/crew-comparison`).then((r) => r.data.rows);
+export const auditLogApi = (limit = 200) => axios.get(`${API}/audit`, { params: { limit } }).then((r) => r.data.entries);
+
 export const apiErrorMessage = (e) => {
   const detail = e?.response?.data?.detail;
   if (detail?.message) return detail.message;

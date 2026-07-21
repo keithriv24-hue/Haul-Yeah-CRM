@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { UserPlus, KeyRound, UserX, UserCheck, Truck, Plus, DollarSign, Pencil, Trash2, IdCard } from "lucide-react";
+import { UserPlus, KeyRound, UserX, UserCheck, Truck, Plus, DollarSign, Pencil, Trash2, IdCard, Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -279,6 +279,19 @@ export const TeamTab = () => {
 
   const shownUsers = users.filter((u) => searchMatch(query, u.name, u.email, ...(u.roles || [u.role])));
 
+  const copyInvite = (u) => {
+    const text = [
+      `You're on the Haul Yeah Moving team, ${u.name.split(" ")[0]}!`,
+      `Log in here: ${window.location.origin}`,
+      `Username: ${u.email}`,
+      `Starting password: haulyeah123 (the app makes you pick your own the first time you sign in)`,
+    ].join("\n");
+    navigator.clipboard
+      .writeText(text)
+      .then(() => toast.success("Invite copied — paste it into a text or email to them."))
+      .catch(() => toast.error("Couldn't copy. Try again."));
+  };
+
   return (
     <div className="grid lg:grid-cols-3 gap-4 mt-4">
       <div className="lg:col-span-2 bg-white rounded-lg border border-slate-200">
@@ -306,6 +319,11 @@ export const TeamTab = () => {
               <Button data-testid="edit-roles-btn" variant="outline" size="sm" className="gap-1 text-xs" onClick={() => setRolesUser(u)}>
                 <Pencil className="w-3.5 h-3.5" /> Roles
               </Button>
+              {u.active && (
+                <Button data-testid="copy-invite-btn" variant="outline" size="sm" className="gap-1 text-xs" onClick={() => copyInvite(u)}>
+                  <Copy className="w-3.5 h-3.5" /> Invite
+                </Button>
+              )}
               <Button data-testid="employee-file-btn" variant="outline" size="sm" className="gap-1 text-xs" onClick={() => setFileUser(u)}>
                 <IdCard className="w-3.5 h-3.5" /> File
               </Button>

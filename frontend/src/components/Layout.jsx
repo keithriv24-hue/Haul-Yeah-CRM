@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import {
   LayoutDashboard, Users, BookUser, Truck, KanbanSquare, PenLine, Receipt,
   CreditCard, Handshake, HelpCircle, Eye, EyeOff, RefreshCw, KeyRound, LogOut, Calculator, SlidersHorizontal, MessageSquareText, Video, UserRound,
-  HardHat, ClipboardList, AlarmClock, CalendarDays, Briefcase, Sun, Megaphone,
+  HardHat, ClipboardList, AlarmClock, CalendarDays, Briefcase, Sun, Megaphone, UsersRound, Trophy, Swords, Medal,
 } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { useAuth } from "@/components/AuthGate";
@@ -31,6 +31,10 @@ const NAV = [
   { to: "/days-off", label: "Days Off", icon: CalendarDays, roles: ["crew"] },
   { to: "/tasks", label: "To-Do", icon: KanbanSquare, roles: ["owner", "sales", "marketing", "crew", "employee"] },
   { to: "/blog", label: "Blog", icon: PenLine, roles: ["owner", "sales", "marketing", "crew", "employee"] },
+  { to: "/team", label: "Team", icon: UsersRound, roles: ["owner", "sales", "marketing", "crew", "employee"] },
+  { to: "/leaderboard", label: "Leaderboard", icon: Trophy, roles: ["owner", "sales", "marketing", "crew", "employee"] },
+  { to: "/challenges", label: "Challenges", icon: Swords, roles: ["owner", "sales", "marketing", "crew", "employee"] },
+  { to: "/team-admin", label: "Team HQ", icon: Medal, roles: ["owner"] },
   { to: "/invoices", label: "Invoices", icon: Receipt, roles: ["owner"] },
   { to: "/subscriptions", label: "Subscriptions", icon: CreditCard, roles: ["owner"] },
   { to: "/partner", label: "Partner View", icon: Handshake, roles: ["owner"] },
@@ -198,7 +202,7 @@ export default function Layout() {
             </div>
             <div className="hidden md:block" />
             <div className="flex items-center gap-2">
-              {(role === "owner" || role === "crew") && <NotificationsBell />}
+              <NotificationsBell />
               {role !== "crew" && role !== "marketing" && <LiveIndicator />}
               {role !== "crew" && role !== "marketing" && (
                 <Button data-testid="new-meet-btn" asChild variant="outline" size="sm" className="gap-1.5">
