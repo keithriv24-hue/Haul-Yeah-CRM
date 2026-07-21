@@ -1,0 +1,58 @@
+{
+  "summary": "Iteration 10 — Full backend + frontend QA of new Team Member Profiles / Badges / Challenges / Leaderboard / Team HQ module. 31/31 pytest cases pass (badge seed, challenge seed + scoping, ghost hiding, privacy rule, profile mutations, pins rules, owner-only 403 matrix across 12 endpoints, E2E credit flow, crew prompt flow after status walk, challenge lifecycle). All frontend flows pass: owner nav shows Team/Leaderboard/Challenges/Team HQ; role scoping enforced (crew ghost sees only crew challenges, sales only sales, marketing all, /team-admin redirects for non-owner); privacy honoured (crew viewing Junior shows NO stats/progress, gallery only); Team HQ credit E2E flow (add credit for Junior → 'Badge unlocked: First Haul!' + 'Behind the Wheel' + 'Credit added' toasts, row appears, delete confirms + removes); Badges tab Take-it-back UI with award-member-select + award-badge-select + revoke-badge-btn; invite button present (headless clipboard toast expected 'Couldn't copy'); role switcher owner→sales works; javante crew lands /today with proper nav. DB fully clean at end.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_team_module.py",
+    "/app/test_reports/pytest/iter10_team.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py member_detail: privacy rule is enforced correctly by omitting `stats` and `progress` keys entirely for non-owner non-self viewers (not just zeroing them) — great defensive design.",
+    "server.py save_pins: input `payload.badge_ids` de-duped with dict.fromkeys and truncated [:3] BEFORE the unlocked check — that means passing 4 unlocked badge_ids saves only the first 3 (no 422). Matches spec.",
+    "server.py list_challenges: `finalize_due_challenges()` is called INSIDE the GET request path — every list request scans for expired challenges. Fine at seed scale (4 challenges) but should be moved to a scheduler if the challenge count grows into the hundreds.",
+    "server.py award_badge dedupes via key `{user_id}:{badge_id}` with $setOnInsert — re-award is a no-op (returns False). Confirmed via re-issuing First Haul with the same credit.",
+    "server.py delete_credit: deletes the credit but does NOT re-evaluate + revoke badges. Correct per UX (owner explicitly uses Badges tab Take-it-back to revoke). But the confirmation modal in UI already warns 'Badges already unlocked stay unless you take them back on the Badges tab' — nice.",
+    "server.py POST /credits: for team=crew requires role_tag driver|helper (422 otherwise). For team=sales it silently ignores role_tag (stored as None). Fine but the frontend passes 'closer' anyway — no bug, just noting.",
+    "TeamAdmin AdminCreditsTab uses `credit-member-select` with the /team/members list — same list that hides ghosts. Owner cannot credit a ghost, which is by design.",
+    "MemberProfile.jsx: rookie-card is always present even when member has real activity — spec says 'rookie card' style. This is a visual choice, not a bug.",
+    "Layout.jsx: `role: owner` gates the Team HQ nav item; App.js gates the /team-admin route through OwnerRoutes only. Non-owner hitting /team-admin gets a Navigate('*') fallback (redirect to their role home). Verified.",
+    "Frontend crew Copy Invite toast: clipboard.writeText throws in headless Chrome without the clipboard-write permission, so the fallback toast 'Couldn't copy. Try again.' shows. Acceptable per spec — button presence is the check."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_team_module.py (new — 31 pytest tests)"
+  ],
+  "success_rate": {
+    "backend": "100% (31/31 pytest pass in 15s)",
+    "frontend": "100% (owner + crew ghost + sales ghost + marketing ghost + javante crew flows all pass; role scoping, privacy, credit E2E, badge revoke UI, invite button, role switcher, dashboard regression — all verified)"
+  },
+  "test_credentials": "HaulYeahOwner / HaulYeah2026! ✓; javante@haulyeahmoves.com / JavCrew2026! ✓; junior@haulyeahmoves.com / JunCrew2026! ✓; TestCrewAdmin/TestSalesAdmin/TestMarketingAdmin / HaulYeah2026! ✓",
+  "seed_data_creation": "Created during this iteration and cleaned up at the end: (a) 1 job_credit for Junior + 2 auto-awarded user_badges (first-haul, behind-the-wheel) [via backend pytest AND frontend UI both scenarios]; (b) 1 assignment 'QA Prompt Job' + resulting credit_prompt for Javante (both cleaned up); (c) 1 challenge 'QA Test Challenge' with reward_kind=title 'QA Tester' + 1 title added to Junior (both cleaned up); (d) 4 temporary badge pins on Junior for pin-cap test (cleaned up). FINAL DB state: 27 badges, 4 seeded challenges, 0 job_credits, 0 user_badges, 0 credit_prompts (pending), 0 QA assignments/challenges, junior.titles=[], junior.member_profile={}, Test Crew (Ghost).member_profile={}. Fully clean.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "New pytest suite /app/backend/tests/test_team_module.py covers the entire team module in ~15s (31 tests). Requires REACT_APP_BACKEND_URL env var. Uses session-scoped tokens for owner + javante + junior + 3 ghosts, so login rate limits are safe. IMPORTANT: the challenge lifecycle test creates a challenge that ends yesterday and awards a title to Junior — the test cleans up the challenge but leaves the title on Junior (as spec allows). This iteration manually cleaned junior.titles at the very end. Frontend: /team-admin has 5 tabs (credits, badges, challenges, insights, log); Credit form testids credit-member-select / credit-team-select / credit-roletag-select / credit-jobref-input / credit-date-input / credit-add-btn; Badges tab has award-member-select / award-badge-select / award-badge-btn / revoke-badge-btn / new-badge-btn / edit-badge-btn / badge-active-switch. The Team page shows my-profile-btn even for ghost accounts (because backend returns me: user_id even when the user is hidden from the members list) — spec calls this acceptable. Crew ghost /team-admin correctly redirects to /today via the Navigate('*') fallback in App.js RoleRoutes. Airtable key still not set (banner expected). Square in production mode — DO NOT touch.",
+  "detailed_test_results": {
+    "backend_badges_seed_27":                             "PASS — 27 badges (18 crew, 9 sales); slugs first-haul, two-way-player, workhorse, first-close, closer, behind-the-wheel all present.",
+    "backend_challenges_seed_4_and_scoping":              "PASS — owner sees 4 with is_owner:true; crew-only sees only crew; sales-only sees only sales; marketing sees both; dual-team javante (roles crew+sales) sees both teams.",
+    "backend_directory_hides_ghosts":                     "PASS — /team/members never returns TestCrewAdmin/TestSalesAdmin/TestMarketingAdmin for any role.",
+    "backend_privacy":                                    "PASS — crew viewing junior: can_see_numbers false, no `stats` key, no `progress` key. Owner: both present. Self: both present.",
+    "backend_profile_mutations":                          "PASS — PUT /profile saves member_profile; PUT /team/members/{id}/moderate 403 for non-owner; PUT /profile/pins 422 for unlocked badges; pins cap at 3 (passed 4 unlocked, got exactly 3).",
+    "backend_owner_only_403_matrix":                      "PASS — 12 endpoints × 3 non-owner roles all return 403.",
+    "backend_e2e_credit_flow":                            "PASS — POST /credits for Junior driver → newly_unlocked contains both 'First Haul' AND 'Behind the Wheel'; junior.stats.jobs_total +1, driver +1; gallery reflects unlocks; leaderboard.crew has junior count>=1; junior notifications include type=badge. Cleanup verified.",
+    "backend_crew_prompt_flow":                           "PASS — POST /assignments {javante Driver} → status walk En Route→Arrived→In Progress→Complete → owner GET /credit-prompts shows pending prompt mentioning 'QA Prompt Job'; POST resolve {approve:false} dismisses. Cleanup: assignment deleted.",
+    "backend_challenge_lifecycle":                        "PASS — created challenge ending yesterday with reward_kind=title 'QA Tester' → GET /challenges flips status to needs_verify; verify sets value; award to Junior returns status=awarded; junior.titles contains 'QA Tester'. Cleanup: challenge deleted (title left, then manually removed).",
+    "frontend_owner_nav_and_pages":                       "PASS — owner nav has Team, Leaderboard, Challenges, Team HQ; /team=3 cards + my-profile-btn; MemberProfile has profile-name/rookie-card/profile-stats-block/badge-gallery/27 gallery items; /leaderboard has crew+sales tabs + Hall of Fame section; /challenges shows all 4 seeded cards with progress bars/mini-leaderboards; /team-admin has all 5 tabs; Badges tab shows Crew Track + Sales Track; Log tab has audit rows.",
+    "frontend_owner_credit_e2e_via_UI":                   "PASS — Team HQ Credits tab: picked Junior + Crew + Driver + 'UI test' + today → Add credit → toasts: 'Badge unlocked: Behind the Wheel!', 'Badge unlocked: First Haul!', 'Credit added.' Row appeared in Recent credits. Clicked trash icon → confirm modal 'Remove this credit?' with 'Keep it' + 'Yes, remove' → clicked Yes → 'Credit removed' toast, row disappears. Badges tab has award-member-select/award-badge-select/award-badge-btn/revoke-badge-btn — revoke UI wired correctly (badge options render as 'First Haul (crew)' etc).",
+    "frontend_crew_ghost_role_scoping":                   "PASS — TestCrewAdmin lands /today; nav has Team/Leaderboard/Challenges but NO Team HQ; /challenges shows Full House + King of the Weekend, NOT Six-Pack Sprint / Whale Hunt; /team-admin redirects to /today; viewing Junior profile: NO profile-stats-block, NO profile-active-challenges (progress bars), badge-gallery visible with locked/unlocked chips only.",
+    "frontend_sales_ghost_role_scoping":                  "PASS — TestSalesAdmin lands /leads; /challenges shows Six-Pack Sprint + Whale Hunt, NOT Full House / King of the Weekend; /team renders with 3 member cards.",
+    "frontend_marketing_ghost_sees_all_challenges":       "PASS — TestMarketingAdmin /challenges shows all 4 seeded challenges (both crew + sales teams).",
+    "frontend_crew_ghost_self_profile":                   "PASS — TestCrewAdmin /team shows 'My profile' button (data.me populated even for hidden ghost); clicking navigates to /team/{own_id} — profile-stats-block=1 (own numbers visible), profile-edit-btn=1 (Edit profile dialog opens with nickname field).",
+    "frontend_invite_button":                             "PASS — /crew → Team tab has 3 copy-invite-btn buttons; clicking first shows toast 'Couldn't copy. Try again.' (headless clipboard fails as expected per spec — button presence is the check).",
+    "frontend_regression":                                "PASS — owner Dashboard loads with New Leads/Call-backs Due/Open Leads/Pipeline Value/Booked Revenue KPIs + Who's on the clock + Work calendar; role-switch-select works (Owner → Sales view → /leads); javante crew lands /today with crew nav (My Jobs, Time Clock, Days Off, To-Do, Blog, Team, Leaderboard, Challenges); no console TypeErrors (only expected 401s from public unauth token check on /auth/me refresh).",
+    "final_db_state":                                     "CLEAN — 27 badges, 4 seeded challenges, 0 job_credits, 0 user_badges, 0 pending credit_prompts, 0 QA assignments, 0 QA challenges. Junior + Test Crew (Ghost) profiles reset, junior.titles cleared."
+  }
+}
