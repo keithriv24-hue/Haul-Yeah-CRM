@@ -5,19 +5,20 @@ import {
   LayoutDashboard, Users, BookUser, Truck, KanbanSquare, PenLine, Receipt,
   CreditCard, Handshake, HelpCircle, Eye, EyeOff, RefreshCw, KeyRound, LogOut, Calculator, SlidersHorizontal, MessageSquareText, Video, UserRound,
   HardHat, ClipboardList, AlarmClock, CalendarDays, Briefcase, Sun, Megaphone, UsersRound, Trophy, Swords, Medal,
-  BadgeDollarSign,
+  BadgeDollarSign, BellRing,
 } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { useAuth } from "@/components/AuthGate";
 import { NotificationsBell } from "@/components/NotificationsBell";
 import { CrewContactsBubble } from "@/components/CrewContactsBubble";
 import useGpsPing from "@/lib/useGpsPing";
-import { teamNotificationsApi } from "@/lib/api";
+import { teamNotificationsApi, alertsUnreadApi, markAlertsReadApi } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const NAV = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, roles: ["owner"] },
+  { to: "/notifications", label: "Notifications", icon: BellRing, roles: ["owner", "sales", "marketing"] },
   { to: "/leads", label: "Leads", icon: Users, roles: ["owner", "sales"] },
   { to: "/calculator", label: "Quote Calculator", icon: Calculator, roles: ["sales"] },
   { to: "/script", label: "Script", icon: MessageSquareText, roles: ["owner", "sales"] },
@@ -80,8 +81,23 @@ export default function Layout() {
 
   const location = useLocation();
   const isTeamRole = ["sales", "marketing", "crew", "employee"].includes(role);
+  const hasAlerts = ["owner", "sales", "marketing"].includes(role);
   const [notifItems, setNotifItems] = useState([]);
   const [seenMarks, setSeenMarks] = useState({ task: "", blog: "" });
+  const [alertsUnread, setAlertsUnread] = useState(0);
+
+  useEffect(() => {
+    if (!hasAlerts) return;
+    const load = () => alertsUnreadApi().then(setAlertsUnread).catch(() => {});
+    load();
+    const t = setInterval(load, 60000);
+    return () => clearInterval(t);
+  }, [role, hasAlerts]);
+
+  useEffect(() => {
+    if (!hasAlerts || !location.pathname.startsWith("/notifications")) return;
+    markAlertsReadApi().then(() => setAlertsUnread(0)).catch(() => {});
+  }, [location.pathname, hasAlerts]);
 
   useEffect(() => {
     if (!isTeamRole) return;
@@ -108,6 +124,9 @@ export default function Layout() {
   if (isTeamRole) {
     badgeCounts["/tasks"] = notifItems.filter((n) => n.type === "task" && n.created_at > seenMarks.task).length;
     badgeCounts["/blog"] = notifItems.filter((n) => n.type === "blog" && n.created_at > seenMarks.blog).length;
+  }
+  if (hasAlerts) {
+    badgeCounts["/notifications"] = alertsUnread;
   }
 
   return (

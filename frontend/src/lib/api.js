@@ -159,6 +159,10 @@ export const ownerSetAvailabilityApi = (user_id, date, available) =>
   axios.post(`${API}/availability/set`, { user_id, date, available }).then((r) => r.data);
 export const profileTaskApi = () => axios.get(`${API}/profile-task`).then((r) => r.data);
 export const profileTaskDoneApi = () => axios.post(`${API}/profile-task/done`).then((r) => r.data);
+export const alertsApi = () => axios.get(`${API}/alerts`).then((r) => r.data);
+export const alertsUnreadApi = () => axios.get(`${API}/alerts/unread-count`).then((r) => r.data.unread);
+export const markAlertsReadApi = () => axios.post(`${API}/alerts/read`).then((r) => r.data);
+export const webhookInfoApi = () => axios.get(`${API}/alerts/webhook-info`).then((r) => r.data);
 
 export const apiErrorMessage = (e) => {
   const detail = e?.response?.data?.detail;

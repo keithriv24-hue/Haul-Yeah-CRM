@@ -1,0 +1,62 @@
+{
+  "summary": "Iteration 12 QA of Notification Center Phase 2 (Alerts module). Backend: 20/20 pytest cases pass in ~6s covering role gates, owner-only /alerts/webhook-info, public Zapier webhook (bad-token 401, review happy-path, new_lead pretty-title, invalid-kind→custom fallback, external_id dedupe), and per-principal read-marker isolation (owner reads → owner=0 while marketing still ≥1). Frontend: 4 role personas exercised end-to-end (owner + sales ghost + marketing ghost + crew ghost) — all 26 UI selector checks pass. Owner sees badge + full feed + LeadTimer chip ('Uncontacted 0m') + Zapier card + both email placeholders + FB/IG placeholders; badge clears after visit. Sales sees feed but NO Social tab, only contact@ email card, no Zapier card. Marketing sees Social tab (FB/IG) + only contact@ email, no Zapier. Crew has NO Notifications nav item and direct /notifications redirects to /today.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration12_alerts_webhooks.py",
+    "/app/test_reports/pytest/iter12_alerts.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py alerts module (~L4467-4565): role gate ALERT_ROLES=('owner','sales','marketing') correctly excludes crew (403 verified for all 3 endpoints). Owner-only /alerts/webhook-info uses require_owner dep — sales/marketing/crew all 403 verified.",
+    "server.py create_alert (~L4473): dedupe implemented via mongo `$setOnInsert` on _id when dedupe_key is provided. Zapier maps external_id → dedupe_key='zap:<external_id>'. Two identical POSTs → one alert (verified).",
+    "server.py zapier_webhook (~L4552): validates payload.token against settings.zapier_webhook.token — missing/wrong token → 401. Invalid kinds not in ALERT_KINDS silently coerced to 'custom' (verified). new_lead title becomes 'New lead: <lead_name>' when lead_name provided (verified).",
+    "server.py _read_key (~L4490): uses p.get('user_id') OR 'role:<role>' fallback — this means ghost users (which have user_id) get distinct read markers from real users. Isolation verified: owner marks read → owner unread=0 but marketing unread still ≥1 after the same fresh alert.",
+    "Notifications.jsx LeadTimer (~L28-53): color classes match spec — green<5min (bg-emerald-100), orange>=5min (bg-orange-500), red+pulse>=15min (bg-red-600 animate-pulse). Contacted chip renders 'Contacted in Xm' when contacted_at present. testids lead-timer + lead-timer-contacted both wired.",
+    "Notifications.jsx (~L119): canSocial=owner||marketing correctly gates the Social tab AND its TabsContent. Sales ghost verified NOT to render notif-tab-social.",
+    "Notifications.jsx email tab (~L162-170): contact@ card always rendered; keithrivera@ card is guarded by isOwner — sales+marketing ghosts verified NOT to have email-placeholder-owner in DOM.",
+    "Layout.jsx (~L84-100): hasAlerts=['owner','sales','marketing']; alertsUnread polled every 60s; auto mark-read fires on location.pathname.startsWith('/notifications'). Badge testid 'nav-badge-notifications' (from to.replace('/','-') on '/notifications' → '-notifications'). Verified badge shows '1' after a fresh webhook push and disappears after visiting /notifications + reload.",
+    "App.js routes for crew do not include /notifications — visiting the URL falls through Navigate('*') → /today. Verified.",
+    "public_router.post('/webhooks/zapier'): correctly uses public_router (not api_router) so it is reachable without auth header — only token query param validates. Route path in browser is /api/webhooks/zapier (public_router mounted under /api)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration12_alerts_webhooks.py (new — 20 pytest cases across 4 test classes)"
+  ],
+  "success_rate": {
+    "backend": "100% (20/20 pytest pass in 5.94s)",
+    "frontend": "100% (all UI selector checks across owner + 3 ghost personas pass — see detailed_test_results)"
+  },
+  "test_credentials": "Owner HaulYeahAdmin / HaulYeah2026! ✓ ; Ghosts TestSalesAdmin / TestMarketingAdmin / TestCrewAdmin / HaulYeah2026! ✓ — all working.",
+  "seed_data_creation": "Test suite pushed ~7 QA alerts via the Zapier webhook (titles: 'QA Review …', 'New lead: QA Lead …', 'QA Weirdkind …', 'QA Dedupe …', 'QA Isolation …', 'QA Sales Read Sync …', 'QA UI Badge Alert', 'QA Ghost Badge'). Per review-request agent note ('leaving a handful of QA alerts is acceptable'), these are left in mongo — owner will see them once as unread then they auto-clear on next /notifications visit. The zapier_webhook settings doc was NOT touched. Two prior QA alerts from iter11 handoff ('New lead: QA Timer Lead', 'New 5-star Google review: Maria') are still present.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "New pytest suite /app/backend/tests/test_iteration12_alerts_webhooks.py (20 tests, ~6s) covers: TestRoleGates (owner/sales/marketing 200 vs crew 403 on /alerts, /alerts/unread-count, /alerts/read), TestWebhookInfoAccess (only owner gets /alerts/webhook-info; sales/marketing/crew 403), TestZapierWebhook (bad-token 401 + happy paths + external_id dedupe + invalid-kind→custom + new_lead pretty-title), TestReadTracking (per-principal isolation + list unread flag mirrors count). Fixture webhook_url auto-fetches the current secret token from /api/alerts/webhook-info as owner, so it self-heals if the token is ever rotated. Frontend testids for future iterations: nav-notifications (nav link), nav-badge-notifications (unread badge on nav), notifications-page, alerts-feed, alert-row, lead-timer + lead-timer-contacted, zapier-webhook-card + zapier-webhook-url + zapier-copy-btn, email-placeholder-contact + email-placeholder-owner (owner-only), social-placeholder-fb + social-placeholder-ig (owner/marketing-only), notif-tab-all/email/social/alerts. Airtable key still unset — lead_alert_loop background poller silently skips (expected, no Airtable-sourced new_lead alerts in preview).",
+  "detailed_test_results": {
+    "backend_role_gates_alerts_list":         "PASS — owner/sales/marketing 200; crew 403.",
+    "backend_role_gates_unread_count":        "PASS — crew 403.",
+    "backend_role_gates_mark_read":           "PASS — crew 403; sales+marketing 200 {ok:true}.",
+    "backend_webhook_info_owner_only":        "PASS — owner returns {token, path:'/api/webhooks/zapier', kinds:[...], fields:{...}}. sales/marketing/crew all 403.",
+    "backend_zapier_bad_token":               "PASS — 401 with token=WRONG and 401 with no token.",
+    "backend_zapier_review_happy_path":       "PASS — ok:true; alert visible in /api/alerts with source='zapier', kind='review', body matches.",
+    "backend_zapier_new_lead_pretty_title":   "PASS — payload {kind:'new_lead', lead_name:'QA Lead <hex>'} → title becomes 'New lead: QA Lead <hex>'; lead_name field also preserved.",
+    "backend_zapier_invalid_kind_fallback":   "PASS — kind='totally_unknown' → stored as kind='custom'.",
+    "backend_zapier_external_id_dedupe":      "PASS — two POSTs with same external_id → exactly ONE alert in feed.",
+    "backend_read_marker_isolation":          "PASS — after both principals mark-read: owner=0, marketing=0. Push fresh alert → owner=1, marketing=1. Owner marks read → owner=0 while marketing still ≥1 (per-principal marker isolated).",
+    "backend_list_unread_flag_vs_count":      "PASS — after mark-read, sum(a.unread) === unread_count === 0. After new webhook, both go ≥1 in sync.",
+    "frontend_owner_notif_nav_and_badge":     "PASS — 'Notifications' nav item present near top; nav-badge-notifications shows '1' after webhook push; badge clears after visiting /notifications + reload.",
+    "frontend_owner_feed_and_lead_timer":     "PASS — /notifications renders 9 alert-row rows; lead-timer chip present with text 'Uncontacted 0m' (green class since <5min old).",
+    "frontend_owner_zapier_card":             "PASS — zapier-webhook-card rendered on All + Alerts tabs; zapier-webhook-url contains 'token=<hex>'; zapier-copy-btn present.",
+    "frontend_owner_email_tab":               "PASS — both email-placeholder-contact AND email-placeholder-owner rendered.",
+    "frontend_owner_social_tab":              "PASS — notif-tab-social present; FB + IG placeholder cards rendered.",
+    "frontend_owner_regression":              "PASS — /commissions renders commissions-page; /team + /challenges nav+page render.",
+    "frontend_sales_ghost":                   "PASS — Notifications nav present; /notifications loads; notif-tab-social ABSENT; only email-placeholder-contact rendered (email-placeholder-owner absent); no zapier-webhook-card; nav-commissions + nav-script still present (regression).",
+    "frontend_marketing_ghost":               "PASS — Notifications nav present; notif-tab-social present with FB+IG; email tab only contact@ card (no owner private card); no zapier-webhook-card.",
+    "frontend_crew_ghost":                    "PASS — NO nav-notifications element; direct URL /notifications → redirected to /today.",
+    "final_state":                            "~7 harmless QA alerts left in DB per handoff note ('leaving a handful of QA alerts is acceptable'). settings.zapier_webhook doc untouched. No user, lead, availability, or commission data modified."
+  },
+  "rca of the issue": "No issues found. All acceptance criteria in the review-request met. Two minor observations (informational, not bugs): (1) The lead-timer chip in the owner UI shows 'Uncontacted 0m' for the current in-preview QA new_lead alert — since 'QA Timer Lead' was inserted by main agent, its created_at may have been set to now() rather than 15+ min ago; if main agent wants to demo the red+pulse styling in a screenshot, they can either use a fake created_at OR just wait 15 minutes. The color logic in LeadTimer is verified correct by code review. (2) Old QA alerts from iterations 10-11 ('QA Timer Lead' + 'Maria' review) plus the ~7 alerts pushed this iteration will show as unread for any principal that hasn't yet visited /notifications — this is by design (per-principal marker) and clears on visit."
+}

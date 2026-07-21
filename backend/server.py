@@ -1928,6 +1928,13 @@ async def update_record(table_key: str, record_id: str, request: Request, payloa
             await mongo_db.lead_meta.update_one({"_id": record_id}, {"$set": {"contacted_at": now_iso()}}, upsert=True)
     if table_key == "leads" and payload.fields.get(LEAD_STATUS_F) == "Booked":
         try:
+            lead_name0 = (data["records"][0].get("fields") or {}).get(LEAD_NAME_F) or "a lead"
+            await create_alert("booked", f"Move booked: {lead_name0}", "Another one on the calendar.",
+                               lead_id=record_id, lead_name=lead_name0, source="app",
+                               dedupe_key=f"booked:{record_id}")
+        except Exception as exc:
+            logger.warning("booked alert failed: %s", exc)
+        try:
             p = await current_principal(request)
             if p.get("user_id") and p["role"] != "owner" and "sales" in (p.get("roles") or []):
                 u = await mongo_db.users.find_one({"_id": p["user_id"], "ghost": {"$ne": True}})
@@ -4457,6 +4464,128 @@ async def availability_overview(start: str, end: str, p: Dict[str, Any] = Depend
             "crew": [{"user_id": u["_id"], "name": u["name"]} for u in crew]}
 
 
+# ================================================================ notification center: alerts
+
+ALERT_ROLES = ("owner", "sales", "marketing")
+ALERT_KINDS = ("new_lead", "booked", "review", "custom")
+
+
+async def create_alert(kind: str, title: str, body: str = "", lead_id: Optional[str] = None,
+                       lead_name: Optional[str] = None, source: str = "app",
+                       created_at: Optional[str] = None, dedupe_key: Optional[str] = None):
+    _id = dedupe_key or str(uuid4())
+    doc = {"_id": _id, "kind": kind, "title": title[:200], "body": (body or "")[:500], "lead_id": lead_id,
+           "lead_name": lead_name, "source": source, "created_at": created_at or now_iso()}
+    try:
+        await mongo_db.alerts.update_one({"_id": _id}, {"$setOnInsert": doc}, upsert=True)
+    except Exception as exc:
+        logger.warning("create_alert failed: %s", exc)
+
+
+def _alert_gate(p: Dict[str, Any]):
+    if p["role"] not in ALERT_ROLES:
+        raise HTTPException(status_code=403, detail="You don't have access to notifications.")
+
+
+def _read_key(p: Dict[str, Any]) -> str:
+    return p.get("user_id") or f"role:{p['role']}"
+
+
+@api_router.get("/alerts")
+async def list_alerts(request: Request, limit: int = 100):
+    p = await current_principal(request)
+    _alert_gate(p)
+    docs = await mongo_db.alerts.find({}).sort("created_at", -1).to_list(min(limit, 200))
+    lead_ids = [d["lead_id"] for d in docs if d.get("lead_id")]
+    metas = {m["_id"]: m for m in await mongo_db.lead_meta.find({"_id": {"$in": lead_ids}}).to_list(500)} if lead_ids else {}
+    marker = await mongo_db.alerts_read.find_one({"_id": _read_key(p)}) or {}
+    last_read = marker.get("last_read_at") or ""
+    out = []
+    for d in docs:
+        out.append({"id": d["_id"], "kind": d["kind"], "title": d["title"], "body": d.get("body", ""),
+                    "lead_id": d.get("lead_id"), "lead_name": d.get("lead_name"), "source": d.get("source", "app"),
+                    "created_at": d["created_at"], "unread": d["created_at"] > last_read,
+                    "contacted_at": (metas.get(d.get("lead_id")) or {}).get("contacted_at") if d.get("lead_id") else None})
+    return {"alerts": out, "unread": sum(1 for a in out if a["unread"])}
+
+
+@api_router.post("/alerts/read")
+async def mark_alerts_read(request: Request):
+    p = await current_principal(request)
+    _alert_gate(p)
+    await mongo_db.alerts_read.update_one({"_id": _read_key(p)}, {"$set": {"last_read_at": now_iso()}}, upsert=True)
+    return {"ok": True}
+
+
+@api_router.get("/alerts/unread-count")
+async def alerts_unread_count(request: Request):
+    p = await current_principal(request)
+    _alert_gate(p)
+    marker = await mongo_db.alerts_read.find_one({"_id": _read_key(p)}) or {}
+    last_read = marker.get("last_read_at") or ""
+    n = await mongo_db.alerts.count_documents({"created_at": {"$gt": last_read}})
+    return {"unread": min(n, 99)}
+
+
+@api_router.get("/alerts/webhook-info")
+async def alerts_webhook_info(p: Dict[str, Any] = Depends(require_owner)):
+    doc = await mongo_db.settings.find_one({"_id": "zapier_webhook"})
+    if not doc:
+        doc = {"_id": "zapier_webhook", "token": uuid4().hex, "created_at": now_iso()}
+        await mongo_db.settings.insert_one(doc)
+    return {"token": doc["token"], "path": "/api/webhooks/zapier",
+            "kinds": list(ALERT_KINDS),
+            "fields": {"kind": "new_lead | booked | review | custom (optional, default custom)",
+                       "title": "headline text (optional)", "body": "detail line (optional)",
+                       "lead_name": "customer name (optional)"}}
+
+
+class ZapierAlertPayload(BaseModel):
+    kind: Optional[str] = None
+    title: Optional[str] = None
+    body: Optional[str] = None
+    lead_name: Optional[str] = None
+    lead_id: Optional[str] = None
+    external_id: Optional[str] = None
+
+
+@public_router.post("/webhooks/zapier")
+async def zapier_webhook(payload: ZapierAlertPayload, token: str = ""):
+    doc = await mongo_db.settings.find_one({"_id": "zapier_webhook"})
+    if not doc or not token or token != doc.get("token"):
+        raise HTTPException(status_code=401, detail="Bad or missing webhook token.")
+    kind = payload.kind if payload.kind in ALERT_KINDS else "custom"
+    default_titles = {"new_lead": "New lead", "booked": "Move booked", "review": "New Google review", "custom": "Alert"}
+    title = (payload.title or "").strip() or default_titles[kind]
+    if payload.lead_name and payload.lead_name not in title:
+        title = f"{title}: {payload.lead_name}"
+    dedupe = f"zap:{payload.external_id}" if payload.external_id else None
+    await create_alert(kind, title, payload.body or "", lead_id=payload.lead_id,
+                       lead_name=payload.lead_name, source="zapier", dedupe_key=dedupe)
+    return {"ok": True}
+
+
+async def lead_alert_loop():
+    while True:
+        try:
+            if get_api_key():
+                data = await airtable_request(
+                    "GET", TABLES["leads"],
+                    params={"filterByFormula": "DATETIME_DIFF(NOW(), CREATED_TIME(), 'hours') < 24",
+                            "pageSize": 50, "returnFieldsByFieldId": "true"})
+                for rec in data.get("records", []):
+                    name = (rec.get("fields") or {}).get(LEAD_NAME_F) or "Someone new"
+                    await create_alert("new_lead", f"New lead: {name}",
+                                       "Call them fast — under 5 minutes wins the job.",
+                                       lead_id=rec["id"], lead_name=name, source="airtable",
+                                       created_at=rec.get("createdTime"), dedupe_key=f"new_lead:{rec['id']}")
+        except HTTPException:
+            pass
+        except Exception as exc:
+            logger.warning("lead alert loop error: %s", exc)
+        await asyncio.sleep(120)
+
+
 # ------- startup seeding
 
 @app.on_event("startup")
@@ -4503,6 +4632,7 @@ async def seed_on_startup():
     asyncio.create_task(timelog_retry_loop())
     asyncio.create_task(late_alert_loop())
     asyncio.create_task(invoice_sync_loop())
+    asyncio.create_task(lead_alert_loop())
     try:
         await backfill_jobs_from_paid_invoices()
     except Exception as exc:
