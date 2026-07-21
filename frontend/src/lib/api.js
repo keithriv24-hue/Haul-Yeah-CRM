@@ -163,6 +163,13 @@ export const alertsApi = () => axios.get(`${API}/alerts`).then((r) => r.data);
 export const alertsUnreadApi = () => axios.get(`${API}/alerts/unread-count`).then((r) => r.data.unread);
 export const markAlertsReadApi = () => axios.post(`${API}/alerts/read`).then((r) => r.data);
 export const webhookInfoApi = () => axios.get(`${API}/alerts/webhook-info`).then((r) => r.data);
+export const gmailStatusApi = () => axios.get(`${API}/gmail/status`).then((r) => r.data);
+export const gmailConnectApi = (id) => axios.get(`${API}/gmail/connect/${id}`).then((r) => r.data);
+export const gmailDisconnectApi = (id) => axios.post(`${API}/gmail/disconnect/${id}`).then((r) => r.data);
+export const gmailMessagesApi = (id, params = {}) => axios.get(`${API}/gmail/${id}/messages`, { params }).then((r) => r.data);
+export const gmailMessageApi = (id, msgId) => axios.get(`${API}/gmail/${id}/messages/${msgId}`).then((r) => r.data);
+export const gmailReplyApi = (id, msgId, body) => axios.post(`${API}/gmail/${id}/messages/${msgId}/reply`, { body }).then((r) => r.data);
+export const gmailModifyApi = (id, msgId, action) => axios.post(`${API}/gmail/${id}/messages/${msgId}/modify`, { action }).then((r) => r.data);
 
 export const apiErrorMessage = (e) => {
   const detail = e?.response?.data?.detail;

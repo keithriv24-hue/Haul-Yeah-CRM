@@ -912,6 +912,15 @@ async def apply_invoice_to_jobs(inv: Dict[str, Any], notify_owner: bool = True) 
     status = inv.get("status")
     purpose = _infer_purpose(inv)
     if status == "PAID":
+        try:
+            who = (inv.get("customer") or {}).get("name") or f"invoice #{inv.get('invoice_number') or '?'}"
+            stage = {"deposit": "Deposit", "full": "Full payment"}.get(purpose, "Payment")
+            await create_alert("payment", f"Money landed: {stage} from {who}",
+                               f"${(inv.get('amount') or 0):,.2f} paid on invoice #{inv.get('invoice_number') or '—'}.",
+                               lead_id=inv.get("lead_id"), lead_name=who, source="square",
+                               dedupe_key=f"payment:{inv['invoice_id']}")
+        except Exception as exc:
+            logger.warning("payment alert failed: %s", exc)
         if inv.get("lead_id") and purpose != "deposit":
             await mark_lead_commission_payment(inv["lead_id"], "fully")
         if purpose in ("deposit", "full"):
@@ -4524,6 +4533,11 @@ async def alerts_unread_count(request: Request):
     marker = await mongo_db.alerts_read.find_one({"_id": _read_key(p)}) or {}
     last_read = marker.get("last_read_at") or ""
     n = await mongo_db.alerts.count_documents({"created_at": {"$gt": last_read}})
+    try:
+        gmail = await _gmail_unread_counts()
+        n += sum(v for mid, v in gmail.items() if p["role"] in GMAIL_MAILBOXES[mid]["roles"])
+    except Exception:
+        pass
     return {"unread": min(n, 99)}
 
 
@@ -4584,6 +4598,314 @@ async def lead_alert_loop():
         except Exception as exc:
             logger.warning("lead alert loop error: %s", exc)
         await asyncio.sleep(120)
+
+
+# ================================================================ gmail inboxes (notification center phase 3)
+
+from urllib.parse import urlencode
+
+from cryptography.fernet import Fernet
+from fastapi.responses import RedirectResponse
+
+GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me"
+GMAIL_TOKEN_URL = "https://oauth2.googleapis.com/token"
+GMAIL_SCOPES = " ".join([
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.modify",
+    "https://www.googleapis.com/auth/gmail.labels",
+    "openid",
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/userinfo.profile",
+])
+GMAIL_MAILBOXES = {
+    "contact": {"email": "contact@haulyeahmoves.com", "label": "Shared inbox", "roles": ("owner", "sales", "marketing")},
+    "owner": {"email": "keithrivera@haulyeahmoves.com", "label": "Owner inbox", "roles": ("owner",)},
+}
+_gmail_unread_cache: Dict[str, Any] = {"at": 0.0, "counts": {}}
+
+
+def _google_configured() -> bool:
+    return bool(os.environ.get("GOOGLE_CLIENT_ID", "").strip() and os.environ.get("GOOGLE_CLIENT_SECRET", "").strip())
+
+
+def _gmail_fernet() -> Fernet:
+    key = base64.urlsafe_b64encode(hashlib.sha256(os.environ["JWT_SECRET"].encode()).digest())
+    return Fernet(key)
+
+
+def _external_base(request: Request) -> str:
+    env = os.environ.get("APP_BASE_URL", "").strip().rstrip("/")
+    if env:
+        return env
+    proto = request.headers.get("x-forwarded-proto", "https")
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host", "")
+    return f"{proto}://{host}"
+
+
+def _gmail_redirect_uri(request: Request) -> str:
+    return f"{_external_base(request)}/api/gmail/oauth/callback"
+
+
+def _mailbox_or_404(p: Dict[str, Any], mailbox_id: str) -> Dict[str, Any]:
+    mb = GMAIL_MAILBOXES.get(mailbox_id)
+    if not mb or p["role"] not in mb["roles"]:
+        raise HTTPException(status_code=404, detail="No such mailbox.")
+    return mb
+
+
+async def _gmail_access_token(mailbox_id: str) -> str:
+    doc = await mongo_db.gmail_tokens.find_one({"_id": mailbox_id})
+    if not doc:
+        raise HTTPException(status_code=409, detail="That mailbox isn't connected yet.")
+    f = _gmail_fernet()
+    expires_at = doc.get("expires_at") or ""
+    if expires_at > (datetime.now(timezone.utc) + timedelta(seconds=90)).isoformat():
+        return f.decrypt(doc["access_token"].encode()).decode()
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        r = await client.post(GMAIL_TOKEN_URL, data={
+            "client_id": os.environ.get("GOOGLE_CLIENT_ID", "").strip(),
+            "client_secret": os.environ.get("GOOGLE_CLIENT_SECRET", "").strip(),
+            "refresh_token": f.decrypt(doc["refresh_token"].encode()).decode(),
+            "grant_type": "refresh_token",
+        })
+    if r.status_code >= 300:
+        raise HTTPException(status_code=409, detail="Gmail session expired — reconnect the mailbox in Settings.")
+    tok = r.json()
+    access = tok["access_token"]
+    await mongo_db.gmail_tokens.update_one({"_id": mailbox_id}, {"$set": {
+        "access_token": f.encrypt(access.encode()).decode(),
+        "expires_at": (datetime.now(timezone.utc) + timedelta(seconds=int(tok.get("expires_in", 3600)))).isoformat(),
+    }})
+    return access
+
+
+async def gmail_request(mailbox_id: str, method: str, path: str,
+                        params: Optional[Dict[str, Any]] = None, json_body: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    token = await _gmail_access_token(mailbox_id)
+    async with httpx.AsyncClient(timeout=40.0) as client:
+        r = await client.request(method, f"{GMAIL_API}{path}", params=params, json=json_body,
+                                 headers={"Authorization": f"Bearer {token}"})
+    if r.status_code in (401, 403):
+        raise HTTPException(status_code=409, detail="Gmail access was revoked — reconnect the mailbox in Settings.")
+    if r.status_code >= 300:
+        logger.warning("gmail api %s %s -> %s", method, path, r.status_code)
+        raise HTTPException(status_code=502, detail="Gmail didn't respond. Try again in a second.")
+    return r.json() if r.content else {}
+
+
+def _gmail_header(payload: Dict[str, Any], name: str) -> str:
+    return next((h.get("value", "") for h in payload.get("headers", []) if h.get("name", "").lower() == name.lower()), "")
+
+
+def _gmail_body(payload: Dict[str, Any]):
+    html, text = "", ""
+    stack = [payload]
+    while stack:
+        part = stack.pop()
+        data = (part.get("body") or {}).get("data")
+        mime = part.get("mimeType", "")
+        if data:
+            try:
+                decoded = base64.urlsafe_b64decode(data + "===").decode("utf-8", "replace")
+            except Exception:
+                decoded = ""
+            if mime == "text/html" and not html:
+                html = decoded
+            elif mime == "text/plain" and not text:
+                text = decoded
+        stack.extend(part.get("parts") or [])
+    return html, text
+
+
+def _gmail_msg_summary(msg: Dict[str, Any]) -> Dict[str, Any]:
+    payload = msg.get("payload") or {}
+    return {"id": msg["id"], "thread_id": msg.get("threadId"),
+            "from": _gmail_header(payload, "From"), "subject": _gmail_header(payload, "Subject") or "(no subject)",
+            "snippet": msg.get("snippet", ""), "date": msg.get("internalDate"),
+            "unread": "UNREAD" in (msg.get("labelIds") or [])}
+
+
+@api_router.get("/gmail/status")
+async def gmail_status(request: Request):
+    p = await current_principal(request)
+    _alert_gate(p)
+    boxes = []
+    for mid, mb in GMAIL_MAILBOXES.items():
+        if p["role"] not in mb["roles"]:
+            continue
+        doc = await mongo_db.gmail_tokens.find_one({"_id": mid})
+        boxes.append({"id": mid, "email": mb["email"], "label": mb["label"],
+                      "connected": bool(doc), "connected_at": (doc or {}).get("connected_at")})
+    out = {"configured": _google_configured(), "mailboxes": boxes}
+    if p["role"] == "owner":
+        out["redirect_uri"] = _gmail_redirect_uri(request)
+    return out
+
+
+@api_router.get("/gmail/connect/{mailbox_id}")
+async def gmail_connect(mailbox_id: str, request: Request, p: Dict[str, Any] = Depends(require_owner)):
+    mb = GMAIL_MAILBOXES.get(mailbox_id)
+    if not mb:
+        raise HTTPException(status_code=404, detail="No such mailbox.")
+    if not _google_configured():
+        raise HTTPException(status_code=422, detail="Add the Google Client ID and Secret in Settings first.")
+    state = uuid4().hex
+    await mongo_db.oauth_states.insert_one({"_id": state, "mailbox_id": mailbox_id, "created_at": now_iso()})
+    params = {"client_id": os.environ["GOOGLE_CLIENT_ID"].strip(), "redirect_uri": _gmail_redirect_uri(request),
+              "response_type": "code", "scope": GMAIL_SCOPES, "access_type": "offline", "prompt": "consent",
+              "state": state, "login_hint": mb["email"]}
+    return {"auth_url": f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"}
+
+
+@public_router.get("/gmail/oauth/callback")
+async def gmail_oauth_callback(request: Request, code: str = "", state: str = "", error: str = ""):
+    st = await mongo_db.oauth_states.find_one({"_id": state}) if state else None
+    if st:
+        await mongo_db.oauth_states.delete_one({"_id": state})
+    if error or not code or not st:
+        return RedirectResponse(url="/settings?gmail=denied")
+    if st.get("created_at", "") < (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat():
+        return RedirectResponse(url="/settings?gmail=expired")
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        r = await client.post(GMAIL_TOKEN_URL, data={
+            "code": code, "client_id": os.environ.get("GOOGLE_CLIENT_ID", "").strip(),
+            "client_secret": os.environ.get("GOOGLE_CLIENT_SECRET", "").strip(),
+            "redirect_uri": _gmail_redirect_uri(request), "grant_type": "authorization_code"})
+        if r.status_code >= 300:
+            logger.warning("gmail token exchange failed: %s", r.text[:200])
+            return RedirectResponse(url="/settings?gmail=error")
+        tok = r.json()
+        if not tok.get("refresh_token"):
+            return RedirectResponse(url="/settings?gmail=error")
+        prof = await client.get(f"{GMAIL_API}/profile", headers={"Authorization": f"Bearer {tok['access_token']}"})
+    email = (prof.json() or {}).get("emailAddress", "").lower() if prof.status_code < 300 else ""
+    mb = GMAIL_MAILBOXES[st["mailbox_id"]]
+    if email != mb["email"].lower():
+        return RedirectResponse(url=f"/settings?gmail=wrong-account&expected={mb['email']}")
+    f = _gmail_fernet()
+    await mongo_db.gmail_tokens.update_one(
+        {"_id": st["mailbox_id"]},
+        {"$set": {"email": email,
+                  "access_token": f.encrypt(tok["access_token"].encode()).decode(),
+                  "refresh_token": f.encrypt(tok["refresh_token"].encode()).decode(),
+                  "expires_at": (datetime.now(timezone.utc) + timedelta(seconds=int(tok.get("expires_in", 3600)))).isoformat(),
+                  "connected_at": now_iso()}},
+        upsert=True)
+    await audit({"name": "owner", "user_id": None}, "connected a Gmail inbox", email)
+    _gmail_unread_cache["at"] = 0.0
+    return RedirectResponse(url="/settings?gmail=connected")
+
+
+@api_router.post("/gmail/disconnect/{mailbox_id}")
+async def gmail_disconnect(mailbox_id: str, p: Dict[str, Any] = Depends(require_owner)):
+    doc = await mongo_db.gmail_tokens.find_one({"_id": mailbox_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="That mailbox isn't connected.")
+    await mongo_db.gmail_tokens.delete_one({"_id": mailbox_id})
+    await audit(p, "disconnected a Gmail inbox", doc.get("email", mailbox_id))
+    _gmail_unread_cache["at"] = 0.0
+    return {"ok": True}
+
+
+@api_router.get("/gmail/{mailbox_id}/messages")
+async def gmail_list_messages(mailbox_id: str, request: Request, q: str = "", page_token: str = "", limit: int = 25):
+    p = await current_principal(request)
+    _mailbox_or_404(p, mailbox_id)
+    params: Dict[str, Any] = {"maxResults": min(max(limit, 1), 50), "labelIds": "INBOX"}
+    if q.strip():
+        params["q"] = q.strip()[:200]
+    if page_token:
+        params["pageToken"] = page_token
+    data = await gmail_request(mailbox_id, "GET", "/messages", params=params)
+    out = []
+    for m in data.get("messages") or []:
+        msg = await gmail_request(mailbox_id, "GET", f"/messages/{m['id']}",
+                                  params={"format": "metadata", "metadataHeaders": ["From", "Subject", "Date"]})
+        out.append(_gmail_msg_summary(msg))
+    return {"messages": out, "next_page_token": data.get("nextPageToken")}
+
+
+@api_router.get("/gmail/{mailbox_id}/messages/{msg_id}")
+async def gmail_get_message(mailbox_id: str, msg_id: str, request: Request):
+    p = await current_principal(request)
+    _mailbox_or_404(p, mailbox_id)
+    msg = await gmail_request(mailbox_id, "GET", f"/messages/{msg_id}", params={"format": "full"})
+    payload = msg.get("payload") or {}
+    html, text = _gmail_body(payload)
+    if "UNREAD" in (msg.get("labelIds") or []):
+        try:
+            await gmail_request(mailbox_id, "POST", f"/messages/{msg_id}/modify",
+                                json_body={"removeLabelIds": ["UNREAD"]})
+            _gmail_unread_cache["at"] = 0.0
+        except HTTPException:
+            pass
+    return {**_gmail_msg_summary(msg), "to": _gmail_header(payload, "To"),
+            "body_html": html, "body_text": text, "unread": False}
+
+
+class GmailReplyPayload(BaseModel):
+    body: str
+
+
+@api_router.post("/gmail/{mailbox_id}/messages/{msg_id}/reply")
+async def gmail_reply(mailbox_id: str, msg_id: str, payload: GmailReplyPayload, request: Request):
+    p = await current_principal(request)
+    mb = _mailbox_or_404(p, mailbox_id)
+    body = payload.body.strip()
+    if not body:
+        raise HTTPException(status_code=422, detail="Type a reply first.")
+    orig = await gmail_request(mailbox_id, "GET", f"/messages/{msg_id}",
+                               params={"format": "metadata",
+                                       "metadataHeaders": ["From", "Reply-To", "Subject", "Message-ID"]})
+    op = orig.get("payload") or {}
+    to = _gmail_header(op, "Reply-To") or _gmail_header(op, "From")
+    subject = _gmail_header(op, "Subject") or ""
+    if not subject.lower().startswith("re:"):
+        subject = f"Re: {subject}"
+    ref = _gmail_header(op, "Message-ID")
+    mime = (f"From: {mb['email']}\r\nTo: {to}\r\nSubject: {subject}\r\n"
+            f"In-Reply-To: {ref}\r\nReferences: {ref}\r\n"
+            f"Content-Type: text/plain; charset=UTF-8\r\n\r\n{body}")
+    raw = base64.urlsafe_b64encode(mime.encode()).decode()
+    await gmail_request(mailbox_id, "POST", "/messages/send",
+                        json_body={"raw": raw, "threadId": orig.get("threadId")})
+    return {"ok": True}
+
+
+class GmailModifyPayload(BaseModel):
+    action: str
+
+
+@api_router.post("/gmail/{mailbox_id}/messages/{msg_id}/modify")
+async def gmail_modify(mailbox_id: str, msg_id: str, payload: GmailModifyPayload, request: Request):
+    p = await current_principal(request)
+    _mailbox_or_404(p, mailbox_id)
+    actions = {"archive": {"removeLabelIds": ["INBOX"]},
+               "read": {"removeLabelIds": ["UNREAD"]},
+               "unread": {"addLabelIds": ["UNREAD"]}}
+    if payload.action not in actions:
+        raise HTTPException(status_code=422, detail="Action must be archive, read, or unread.")
+    await gmail_request(mailbox_id, "POST", f"/messages/{msg_id}/modify", json_body=actions[payload.action])
+    _gmail_unread_cache["at"] = 0.0
+    return {"ok": True}
+
+
+async def _gmail_unread_counts() -> Dict[str, int]:
+    if time.time() - _gmail_unread_cache["at"] < 60:
+        return _gmail_unread_cache["counts"]
+    counts: Dict[str, int] = {}
+    for mid in GMAIL_MAILBOXES:
+        if not await mongo_db.gmail_tokens.find_one({"_id": mid}, {"_id": 1}):
+            continue
+        try:
+            data = await gmail_request(mid, "GET", "/messages",
+                                       params={"labelIds": "INBOX", "q": "is:unread", "maxResults": 1})
+            counts[mid] = int(data.get("resultSizeEstimate") or 0)
+        except HTTPException:
+            counts[mid] = 0
+    _gmail_unread_cache["at"] = time.time()
+    _gmail_unread_cache["counts"] = counts
+    return counts
 
 
 # ------- startup seeding
