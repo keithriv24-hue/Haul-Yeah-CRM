@@ -1,177 +1,55 @@
-# PRD — Haul Yeah Moving Internal CRM
+# PRD — Haul Yeah Moving CRM
 
 ## Original problem statement
-Full-stack internal CRM PWA for Haul Yeah Moving (weekend moving company, North & Central NJ), used by owner Keith on desktop and phone. The database is an EXISTING Airtable base (`appFAHTRNrRckuxI8`) — all reads/writes proxied through the FastAPI backend using field IDs, token in `AIRTABLE_API_KEY` (backend only, never frontend). 9 views + Help, global Privacy Mode, quote calculator with locked pricing, speed-to-lead timers, deposit-link workflow (no Square API), Gmail/Calendar deep links only, sixth-grade-level copy with instruction banners, labeled buttons (icon + word).
+Internal CRM for Haul Yeah Moving (weekend moving company, North/Central NJ). Owner: Keith Rivera II.
+Stack: React + FastAPI + MongoDB (RBAC/users/time/notifications) + Airtable (CRM of record: Leads, Contacts, Projects, Tasks) + Square (live payments) + OpenPhone (SMS) + Emergent object storage (photos).
+Roles: owner, sales, marketing, crew (legacy "employee" = crew). Brand: navy #1B2A4A / orange #E8743B.
+Revenue calculations strictly use paid Square invoices. Crew/marketing must never see money data (quotes, commissions, costs, margins).
 
-## Architecture
-- Backend: FastAPI proxy at `/api` → Airtable REST (httpx, 5 req/sec rate limiter, `returnFieldsByFieldId=true`, typecast on writes, friendly error normalization). No Mongo shadow copies — Airtable is the single source of truth.
-- Frontend: React (CRA + craco), shadcn/ui, Recharts, sonner toasts, native HTML5 drag-and-drop kanban. Basic PWA (manifest + icons, installable).
-- Auth: three shared-password roles — owner (`APP_PASSWORD`, full access), sales (`SALES_PASSWORD`, Leads + Quote Calculator only), employee (`EMPLOYEE_PASSWORD`, Projects without money fields + To-Do only). 30-day JWT with role claim in localStorage; backend enforces role route access and strips Quote/Deposit/Final Revenue from employee project reads+writes; crew cost rates ($28/$24) backend-only, owner project responses carry computed `internal: {crew_cost, margin}`. 5 wrong tries/IP = 15-min lockout.
-- Brand: navy #1B2A4A, orange #E8743B, Cabinet Grotesk + IBM Plex Sans.
+## Key architecture
+- `/app/backend/server.py` — single FastAPI app (~4500 lines): Airtable proxy, auth (JWT, users in Mongo), Square sync, quotes PDF, jobs/assignments, time clock, notifications, team module, commissions.
+- `/app/frontend/src` — React + shadcn. `pages/`, `components/`, `components/team/`, `components/crew/`, `lib/api.js`.
+- Login: username/email + password. Owner: **HaulYeahAdmin / HaulYeah2026!** (renamed 2026-07-21). New employees: default password `haulyeah123`, must change on first login.
+- Ghost POV accounts (hidden everywhere): TestCrewAdmin / TestSalesAdmin / TestMarketingAdmin (HaulYeah2026!).
+- Teams derived from roles array: crew team + sales team; dual-team supported (e.g. Javante crew+sales). Multi-role users switch views via role switcher.
 
-## User personas
-- Keith (owner): runs the whole lead-to-cash flow on desktop and phone.
-- Capital partner: sees Partner View only (financial summary, no customer details).
+## Implemented (chronological)
+### Earlier sessions (see CHANGELOG in git)
+Leads pipeline w/ response timers, quote calculator (locked pricing v1.0: $65/man-hr, 10% cushion, $125/$75 travel, $85/stair, piano 500/800, 25% deposit), quote PDF, Square invoice sync (live), jobs board, crew time clock + GPS map + payroll report, projects, contacts, marketing module (funnel/ad spend/margin), tasks + blog with audience sharing, search bars everywhere, badges/notifications, user management (delete deactivated, default password), ghost accounts.
 
-## Core requirements (static)
-- Airtable field IDs only; optimistic writes with toast + rollback; quotes always as ranges with "Final price confirmed by phone"; crew cost ($28/$24) internal-only on Project detail; privacy mode masks all PII and dollar figures; locked pricing v1.0 ($65/man-hr, travel $125/$75, stairs $85, piano $500/$800, 10% cushion, 25% deposit).
+### 2026-07-21 — Team Profiles + Badges + Challenges (Phase 1 of engagement spec) ✅ tested iter_10 (100%)
+- `/team` directory (all roles), `/team/:id` profiles (photo upload to object storage, display name, nickname, bio, role title, favorite move, fun fact; self-edit + owner moderation).
+- Stats privacy: numbers (job counts, progress) ONLY self + owner. Others see locked/unlocked badges only.
+- Badge tracks: crew (18 seeded) + sales (9 seeded), rarity bronze/silver/gold medallions, auto-unlock from job credits, owner-awarded ones, owner can create/edit/deactivate badges. Pin up to 3. Rookie empty state.
+- Job credits (source of truth, everyone starts at 0): owner manual credit (Team HQ) + approval prompts auto-generated when crew completes a job (role-tagged Driver/Helper) or a sales member books a lead. Badge-specific hint messages. Prompts on owner Dashboard + Team HQ.
+- Challenges: individual/competition, job_credits (auto) or owner_verified metric, team-scoped visibility (dual sees both; marketing views both; owner all), rewards = badge or profile title, auto-finalize at end date, owner confirm for verified. 4 seeded.
+- `/leaderboard`: Crew (jobs) + Sales (closes) monthly tabs, counts only; Hall of Fame permanent monthly archive.
+- `/team-admin` (Team HQ, owner): Credits / Badges / Challenges / Crew insight (Driver vs Helper comparison) / Log (audit).
+- Invite: "Invite" copy button on Team tab rows (copyable text w/ login + default password).
+- Nav bell now for all roles.
 
-## Implemented (June 2026)
-- [x] Backend Airtable proxy: /api/health, /api/airtable/verify, GET/POST/PATCH /api/tables/{table} for 7 tables, rate limiter, pagination, error normalization
-- [x] All 10 views: Dashboard (7 KPIs, doughnut, money bar chart, upcoming jobs, high-priority tasks), Leads (card grid, live age timers red >5 min, status dropdowns, filter chips, Call/Email/Quote/Deposit/Book buttons, new-lead modal), Contacts, Projects (inline edits + internal margin), To-Do kanban (drag-and-drop), Blog pipeline, Invoices (KPIs + mark-paid), Subscriptions (burn + annualized), Partner View, Help
-- [x] Quote calculator modal (exact locked formula), deposit-link modal (Square link → notes + mailto), book-as-job (creates linked Project, lead → Booked)
-- [x] Privacy Mode (blur, localStorage), live-from-Airtable indicator + Refresh, key-missing banner
-- [x] PWA manifest + icons, mobile bottom tab bar, desktop sidebar
-- [x] Owner password auth (APP_PASSWORD + 30-day JWT, per-device persistence, brute-force lockout) — 17 pytest cases pass; UI flow verified in browser
-- [x] Log out button in header
-- [x] Three-role system (owner / sales / employee): role-matched login, role chip in header, role-filtered nav + routes, backend route & field enforcement, standalone mobile-first Quote Calculator page for sales (with home-size pre-fill + coaching line), Add-note + specialty items on lead cards, employee Projects without money — 25 pytest cases + testing-agent browser pass (iteration_1.json)
-- [x] Owner Settings page: editable calculator rates (man-hour, travel ×2, stairs, pianos) stored in MongoDB, GET /api/settings/rates (all roles) + PUT (owner only), "Save preferences" updates every account; QuoteModal/Calculator/Help all use dynamic rates (10% cushion + 25% deposit stay fixed) — verified via curl + browser (rate change propagated to sales calculator: $1,175–$1,293/$323)
-- [x] Crew account: Privacy toggle removed (and blur never applies to employee role)
-- [x] Sales "Script" page: 6-step call script with say-this boxes + objection handling, sales nav only
-- [x] Owner account switcher: header dropdown (Owner/Sales/Crew view) swaps role tokens via POST /api/auth/switch-role with signed owner_switch claim; real sales/crew tokens get 403; data cache cleared on switch — 29 pytest + browser verified
-- [x] Calendar section on Projects page (owner: all non-cancelled jobs; crew: Scheduled + In Progress only) — month grid with job pills, month nav
-- [x] Google Calendar sync: OAuth connect (owner only, /api/oauth/calendar/login|callback|status|disconnect), POST /api/calendar/sync pushes all non-cancelled jobs as all-day events with dedup map in Mongo; needs GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET/PUBLIC_BASE_URL env — 34 pytest + browser verified (awaiting user's Google credentials)
-- [x] Tally form fields on lead cards: GET /api/schema/{table} fetches live field names via Airtable Meta API (10-min cache, role-filtered); lead cards auto-render every unmapped field (Stairs, Elevators, etc.) with real labels — requires token scope schema.bases:read — 37 pytest passing
-- [x] Gmail deep links complete (June 2026): Contacts already had compose + "Mail log" (Gmail search); added matching "Mail log" button to every lead card (searches by email, falls back to name). Browser-verified button pattern on Contacts; Leads verified in code (table empty pending Airtable key)
-- [x] Quote rounding: computeQuote low & high now round to nearest $50 (deposit stays 25% of rounded high) — browser-verified ($975+$125 → $1,100–$1,200, deposit $300)
-- [x] Login password show/hide eye toggle (data-testid login-toggle-password-btn) — browser-verified
-- [x] Re-verified June 2026: global Privacy Mode (blur + localStorage hy_privacy) and To-Do kanban drag-and-drop implementations intact
-- [x] Lead Detail page (/leads/:id, owner + sales): full-page view with move details, extra Tally fields, quote box, full action set, and complete notes history timeline (newest first); lead card names link to it (data-testid lead-open-link)
-- [x] Delete records: DELETE /api/tables/{table}/{id} (owner-only, 403 otherwise — 34 pytest passing); Delete buttons with confirm dialog (ConfirmDeleteButton in Bits.jsx) on lead cards, contact cards, and lead detail; optimistic removal with rollback in AppContext.deleteRecord
-- [x] Text quote button on lead cards + detail: sms: deep link drafting "Hi {first}... quote $low–$high... $deposit locks your date" (low derived via lowFromHigh = round50(high/1.1))
-- [x] All Gmail links (compose + search) now open as contact@haulyeahmoves.com (authuser param / /u/{email}/ path) — SENDER_EMAIL in format.js
-- [x] Inline lead editing: Edit button on lead detail "Move details" card unlocks name/phone/email/move date/home size/from/to with Save+Cancel (writes via PATCH)
-- [x] Follow-up reminders: red "quiet N days — call them back" badge (FollowUpBadge) on lead cards + detail for Quoted leads with no deposit and no note activity for 2+ days (lastTouch parses dates from notes, falls back to createdTime); nextStepHint updated too
-- [x] Review request text: owner-only "Ask for review" button on Completed jobs (Projects) drafting an SMS to the linked lead's phone; Google review link stored via GET/PUT /api/settings/business (Mongo, PUT owner-only) with a Settings box — 36 pytest + browser-verified persistence
-- [x] Call-backs due Dashboard KPI (kpi-callbacks, red alert when > 0) counting needsFollowUp leads — browser-verified
-- [x] Review tracking: clicking "Ask for review" appends "Review asked {date}." to project notes; button flips to emerald "Review asked ✓" (regex on notes), tapping again re-texts
-- [x] Callback list: Call-backs KPI is a Link to /leads?filter=Call back; Leads filter now lives in the URL (useSearchParams) with a red "Call back (n)" chip filtering needsFollowUp leads — browser-verified navigation + chip selection
-- [x] Weekly recap: "Weekly recap" button on Dashboard opens Gmail compose (from contact@haulyeahmoves.com) with a plain-text summary: last weekend's jobs (Sat+Sun by jobDate) + revenue, collected, owed, open leads + pipeline, call-backs due — browser-verified body content
-- [x] Header cleanup: role switcher/chip, Privacy, Refresh, Log out moved off the header — desktop: bottom of sidebar (same testids); mobile: bottom tab bar after a divider (tab-account-select, tab-refresh-btn, tab-privacy-btn, tab-logout-btn). Header keeps live indicator + New Meet — browser-verified both viewports
-- [x] Brand logo (user-supplied PNG): login card, desktop sidebar, mobile header, PWA icons (icon-192/512, apple-touch-icon, favicon regenerated from logo with orange bg padding) — browser-verified
-- [x] Square Invoices (SANDBOX): POST /api/square/invoice (owner-only) chains customer→order→invoice→publish via Square REST (httpx, Square-Version 2024-08-21); GET /api/square/status; env vars SQUARE_ACCESS_TOKEN/SQUARE_LOCATION_ID/SQUARE_ENVIRONMENT in backend/.env. SquareInvoiceModal ("Invoice" button on owner lead cards + detail): amount picker (25% deposit / full quote / custom), secondary AlertDialog confirmation before send, sandbox test-mode banner, success panel with pay link, auto note appended to lead. Live sandbox invoice #000001 created via curl; 39 pytest passing. TO GO LIVE: swap production token+location and set SQUARE_ENVIRONMENT=production
-- [x] Invoice status sync: invoices persisted in Mongo (square_invoices: lead_id, invoice_id, number, amount, status, public_url); GET /api/square/invoices (owner-only) refreshes non-terminal statuses from Square (60s throttle per invoice); InvoiceBadge (paid=emerald, waiting=amber, canceled=slate, links to pay page) on lead cards + detail Quote box; refreshes after each send — curl-verified with sandbox invoice #000004
-- NOTE: user's supplied Square key confirmed SANDBOX-ONLY (401 on production host, location "Default Test Account"). Awaiting real production token+location to flip SQUARE_ENVIRONMENT=production
-- [x] Square LIVE (production): user supplied production token + location L15944ZHWTJ8R ("Haul Yeah Moving", ACTIVE — verified via /v2/locations); SQUARE_ENVIRONMENT=production; sandbox invoice docs cleared from Mongo. Real invoices now send to real customers
-- [x] Paid auto-update: when status refresh finds an invoice newly PAID, backend PATCHes the lead's Deposit Paid checkbox (fld7BsZG5A6S1oh7Z) in Airtable (once per invoice via deposit_synced flag; 404s throttle checked_at); frontend loadSquareInvoices also flips depositPaid locally for synced PAID leads — 39 pytest passing
-- [x] Money-landed banner + cha-ching: AppContext polls /api/square/invoices every 60s (owner only); newly-PAID invoices (tracked in localStorage hy_paid_seen, baseline-inits silently on first run) trigger playChaChing (/chaching.wav — synthesized coin+bell), a toast, and a dismissible emerald "Money landed!" banner on Dashboard — browser-verified via seeded Mongo doc (then cleaned)
-- [x] Win-back texts: "Win back" sms button (winBackSmsBody) on Lost/Cold lead cards + detail; stamps "Win-back text sent {date}." note on tap
-- [x] Payment nudge texts: "Nudge pay" sms button on lead cards + detail when latest Square invoice is UNPAID/PARTIALLY_PAID/SCHEDULED (includes pay link, stamps note); Invoices page rows (Sent/Overdue) get "Text nudge" with phone looked up by customer-name match in Contacts→Leads (disabled + tooltip if no match) — pages render clean, sms bodies in format.js
-- [x] Crew day sheet: /day-sheet route (owner + employee) with date picker (defaults today), Print button (window.print), jobs for that date (non-cancelled) showing from→to, truck, crew, est hours, blank start-time line, notes; no money on the sheet. Layout chrome (aside/header/bottom nav/padding) print:hidden — print-mode browser-verified; "Day sheet" button on Projects page header
-- [x] Tappable address maps: mapsLink() (google.com/maps/dir destination) on day-sheet From/To rows (day-sheet-from-link/day-sheet-to-link, plain text when printed) and Projects job-card From/To addresses (project-from-map-link/project-to-map-link) — pages render clean
+### 2026-07-21 — Features 1–3 spec ✅ tested iter_11 (100%)
+- **F1 Commissions**: `lead_commissions` Mongo docs keyed by Airtable lead id (Airtable stays source of truth for jobs; no second job entry surface). Attribution (quote_sent_by stat-only, closed_by earns, move_type, quote_amount, job_date) editable by sales+owner on Lead detail (CommissionCard). Payment flags (deposit_paid/fully_paid/refunded) owner-only, auto-flip from Square invoice sync (deposit → pending; full paid → locked). Engine: <$1500 flat by move type (25/40/40/60/60/60), $1500–2999 = 10%, $3000+ = 12% — owner-editable rate table. Statuses: pending → locked, refunded = voided (removed from totals). `/commissions` page (owner all reps / sales own only) with day/week/month grouping + drill-down + rate editor. Crew/marketing: 403 + no nav.
+- **F2 Availability**: Crew page → Availability tab (owner): month day-grid, Sat/Sun highlighted, off vs available per day, shortage flag (available < crew needed from that day's assignments, min 2/job), short-weekend banner, owner can toggle members off/on per day. Crew still self-serve via Days Off.
+- **F3 Script**: verbatim call script (Opening/Scope/Access/Special Items/Distance/Timing/Close + surcharge checklist v1.0 + red flags + no-address response) as collapsible panel side-by-side with Quote Calculator, plus standalone /script page. Owner + sales only.
+- **Profile first-task**: every user has `profile_task`; open → pinned orange card at top of To-Do linking to own profile; auto-done on profile save; new users get it automatically + bell notification.
+- Owner login renamed HaulYeahOwner → **HaulYeahAdmin** (startup migration; OWNER_EMAIL in backend/.env). Owner account listed/editable in Team tab; guard against removing own owner role; usernames without "@" now allowed on edit.
 
-## Current status / blockers
-- AIRTABLE_API_KEY not yet added by user (secrets panel). All data routes return friendly 503 until then. Verify with GET /api/airtable/verify after key is added.
-- Production deploy exists (moving-ops-1.emergent.host); production env needs APP_PASSWORD, JWT_SECRET, AIRTABLE_API_KEY set at deploy time.
-- Full end-to-end testing-agent run over Airtable data flows is pending the key.
+## Notification Center spec (user-approved phasing; ask permission before each phase)
+- **Phase 2 (NEXT)**: Notifications page with Alerts module — new-lead live timer (orange 5 min / red 15 min), booked alerts, review alerts; Zapier inbound webhook; role-scoped unread badges. Uses existing Airtable data. No new creds needed.
+- **Phase 3**: Gmail inboxes via Google OAuth (contact@ = owner+marketing+sales; keithrivera@ = owner ONLY; read/reply/archive/mark unread/search; two-pane). User has NO creds yet → build connect flow + Settings + written instructions (Google Cloud project, Gmail API, OAuth client ID/secret).
+- **Phase 4**: Meta (FB/IG) notifications via Meta OAuth, owner+marketing only, deep-links to native platform. User has NO Meta app yet → build what's possible + instructions (App Review caveat).
+- Visibility matrix in original spec (Section 5) is the contract; enforce server-side.
 
-## Backlog (prioritized)
-- P0: Verify Airtable connection once key is added; run full testing-agent pass over all data flows (leads CRUD incl. delete + detail page, quote save, text-quote link, book-as-job, kanban drag, invoices mark-paid)
-- P1: Lead detail polish (edit fields inline); delete support for other tables if useful
-- P2: Square API deposits in v2; blog post publishing to a public site
+## Backlog
+- P1: Notification dropdown preview (tap badge → newest shared task/blog titles).
+- P2: Task comments; Lead source backfill from lead detail.
+- Optional: mirror commission fields to Airtable columns if user adds them (currently app-side by design, user chose option a).
+- User instructions owed when Phases 3/4 built: Google OAuth + Meta app setup guides.
 
-## Credentials
-See /app/memory/test_credentials.md (owner password, endpoints).
+## Environment notes
+- Preview lacks AIRTABLE_API_KEY (amber banner expected). Square is LIVE — never send invoices in tests.
+- Deployed app: haulyeahadmin.com (user deploys via Emergent Deploy; remind about env vars OWNER_EMAIL there is not needed — code default is haulyeahadmin, migration renames legacy owner emails at startup).
 
-## Session: July 19, 2026 — Airtable Job Time Log + Work Calendar + Trucks (COMPLETE)
-- Crew module FRONTEND completed & tested (iteration_2: 100% UI pass): new email/username login (owner = HaulYeahOwner, legacy shared passwords as backup), forced first-login password change, crew mobile view (My Jobs status workflow + photos, GPS Time Clock w/ consent, Days Off), owner Crew page (Team/Schedule/Time/Map/Report), notifications bell.
-- Airtable "Job Time Log" auto-mirror (tbl6mv59JAOwUyI4Y, all field IDs per user spec, typecast:true, ET timestamps, Entry "Job – M/D/YY"): first clock-in creates ONE record (dedupe via stored record id + {Entry} formula search), later events PATCH (Clock In never overwritten), last clock-out/Complete writes Clock Out + Delay Factors + Notes, Projects link via project_id or name+date match. Never deletes Airtable records. Reliability: at-least-once queue (assignment.timelog_sync.status=pending → background sync → 90s retry loop); owner sync badge on Dashboard; GET /api/timelog/status.
-- Owner Dashboard "Work calendar" (owner-only): month grid w/ dots, tap day → job cards (crew DRIVER/HELPER labels, job size, crew size, truck name+plate, delay chips, notes, actual hours first-in→last-out). GET /api/calendar/jobs?month=YYYY-MM.
-- Trucks: name + license plate + hard remove w/ confirm (history preserved via truck_name snapshot on assignments); seeded Truck 1-5; assignment dropdown = active/existing trucks only.
-- Assignment modal: Job Size dropdown (6 options) auto-prefilled from linked lead home size; crew Finish dialog: delay-factor checkboxes ("None" exclusive).
-- Fixes: crew-view 403 console noise (role-guarded AppContext fetches), Days Off red contrast, labor report field-ID param, pending_jobs now include assignment_id, loadTable short-circuits when Airtable key known-missing.
-- Testing: iteration_3 backend 13/13 new-feature tests + regression pass; delay-factor UI bug found by tester → fixed → self-verified E2E (checkboxes render, factors stored, calendar shows chips).
-- Deployment: deployment_agent scan PASS. AIRTABLE_API_KEY still EMPTY in preview (user asleep, will provide). Production deploy requires user to click Deploy in Emergent UI — agent cannot deploy.
-
-### Pending for user (morning)
-1. Click Deploy in Emergent UI to push live (build checks passed).
-2. Add Airtable personal access token as AIRTABLE_API_KEY (preview secrets panel AND ensure production has a token with read/write scope to base appFAHTRNrRckuxI8 incl. Job Time Log table). Queued punches auto-flush once key works.
-3. Note: owner login username is now HaulYeahOwner (old password-only login still works as backup).
-
-## Session: July 19, 2026 (later) — Update overlay + live crew status
-- UpdateOverlay.jsx (App root, works pre-login): polls /api/health every 25s; 2 consecutive network/502/503/504 fails → full-screen branded "The website is updating" overlay; polls every 5s while down; auto window.location.reload() on recovery (loads fresh deployed bundle). Offline variant message via navigator.onLine.
-- "Who's on the clock" card on owner Dashboard (CrewStatusCard.jsx + GET /api/team/status, owner-only): every active crew member with green pulsing "On the clock since X · job" or gray "Not active right now"; polls 30s. Verified live flip on clock-in/out via curl + screenshot.
-- Both features verified self-test (curl + screenshots incl. real backend-stop overlay test). User must REDEPLOY to get these on haulyeahadmin.com. AIRTABLE_API_KEY still not provided (asked twice).
-
-## Session: July 19, 2026 (later) — Late alerts + Employee files
-- LATE ALERT: background loop (2 min) checks today's assignments with arrival_time (ET); crew with no punch today 10+ min past arrival → owner bell notification "Late alert: X hasn't clocked in for Y — crew was due at H:MM" (deduped per assignment/user via assignment.late_alerts). /api/team/status now returns late/late_job/due_at; Dashboard "Who's on the clock" shows red pulsing LATE rows + "N running late" in summary. Verified E2E (real loop fired notification; UI showed LATE row).
-- EMPLOYEE FILES: per-user "File" button on Crew>Team → dialog with ALL-OPTIONAL fields: legal name, phone, birthday (+auto Age chip), SSN (masked, eye toggle), address, emergency contact name/phone, hire date, notes. GET/PUT /api/users/{id}/profile (owner-only, 403 for crew; audit logs "updated employee file" without field contents). Stored on user doc as `profile`. Verified E2E.
-- Reminder: user must REDEPLOY to push (update overlay, crew status card, late alerts, employee files) live. AIRTABLE_API_KEY still missing in preview.
-
-## Session: July 19, 2026 (later) — Dynamic Quote Calculator + staged Settings (COMPLETE)
-- PRICING SPEC (verified exact): subtotal = crew×hours×manHour + travel flat (truck/labor) + max(0, miles−allowance)×overageRate + flights×stairFlight + packingHours×packingRate + specialty items; cushion = cushionPercent% of subtotal; FINAL QUOTE = (subtotal+cushion) rounded UP to nearest roundingIncrement ($50); deposit = depositPercent% (25) of final. Example 3 crew/5.5h/truck/24mi = $1,350 final, $337.50 deposit — verified in UI + math.
-- OWNER SETTINGS (staged draft): 10 editable rates (manHour, cushion%, travel×2, mileage allowance, overage rate, stairs, packing, deposit%, rounding increment) + per-field "Last updated" stamps (_updatedAt in Mongo calculator_rates doc). Edits highlight orange + bottom bar counts unsaved changes; "Save Changes" → confirm dialog listing every change → live for reps. Discard reverts. Validation blocks empty/NaN/out-of-range (incl. empty→0 coercion edge).
-- SPECIALTY ITEM LIBRARY: GET/PUT /api/settings/items (Mongo settings _id calculator_items; GET owner+sales, PUT owner). Seeded Piano (upright) $500 + Piano (baby grand) $800. Owner can add/rename/reprice/hide (active switch, keeps history)/delete (with undo before save) via the same staged flow. Reps see active items as qty steppers on Calculator + QuoteModal; propagate on mount + 30s poll (useLivePricing).
-- SINGLE FINAL PRICE (no more ranges): quoteSmsBody, lead-card/detail "Text quote", DepositModal, SquareInvoiceModal all use one final quote + dynamic depositPercent (removed lowFromHigh). Help cheat sheet now renders live rates + active items + formulas.
-- FIX: 503 console noise when Airtable key missing — loadTable/loadSchema now await /api/health once (ensureHealth) before hitting Airtable proxy; 0 stray 503s on owner nav.
-- Testing: iteration_4 frontend agent — all 10 scenarios pass (staged save E2E incl. $70 rate → $1,450 requote → restored; item add/hide/delete E2E; sales & crew role regression). Both LOW action items fixed + self-verified. Data restored to defaults.
-- Reminder: REDEPLOY needed to push calculator changes to haulyeahadmin.com. AIRTABLE_API_KEY still missing in preview.
-
-## Session: July 19, 2026 (evening) — Modules 1–5: Square Sync Jobs, Jobs Board, Crew Today, Tracking, Reviews (COMPLETE, iteration_5 100% pass)
-- MODULE 1 — Square Payment Sync & Job Records:
-  - Mongo `jobs` collection keyed by Square DEPOSIT invoice number (display "Job #INV-XXXX"). HARD RULE enforced: job exists ONLY after deposit invoice = PAID.
-  - Public webhook POST /api/webhooks/square (HMAC-SHA256 verified vs notification URL + raw body, event dedupe via square_events). Handles invoice.payment_made/updated + payment.updated. Backup: invoice_sync_loop polls Square every 2 min; startup backfill (45 days, silent).
-  - Payment rows per job: deposit_paid + paid_in_full, each {status: paid|pending|unpaid, amount, paid_at exact timestamp}. Purpose tagging on invoices (deposit/full/custom); legacy inference amount>50% of quote = balance.
-  - Settings → Integrations (owner, IntegrationsCard.jsx): Square access token (settings overrides env fallback), location ID, webhook signature key, notification URL, OpenPhone API key + number, default truck pickup (seeds "3 Slater Dr, Elizabeth, NJ"). Secrets masked (…_set flags). GET/PUT /api/settings/integrations, GET /api/square/sync-status.
-  - "Square sync not connected — Settings → Integrations" banner on Jobs board when webhook key missing.
-- MODULE 2 — Owner Jobs board (/jobs, nav "Jobs"): cards sorted by job date; payment rows w/ green/yellow/red icons; AssignDialog: crew multi-select w/ per-person position (datalist Driver/Lead/Helper/Packer), truck select w/ "+ Add new truck", pickup/dropoff/truck-pickup (rendered as Google Maps links), date + start time. PATCH /api/jobs/{id} notifies newly assigned crew instantly.
-- MODULE 3 — Crew Today page (/today, crew default route): current job by invoice #, my role chip, My Crew (name/position/phone w/ tel:+sms: links), Customer (tel/sms/mailto), job details w/ maps links. Fixed "Bosses" bubble on ALL crew pages (CrewContactsBubble in Layout): Keith Rivera 201-247-8446, Romeo Perry 862-224-6176 + reminder "If you text, start with your name and why you're reaching out." Access control: /api/crew/active-job only own jobs, ZERO pricing fields.
-- MODULE 4 — Tracking: first clock-in auto-sends ONE OpenPhone SMS w/ tracking link (tracking.sms_sent flag = one per job; failure notifies owner, never blocks clock-in). Crew "Send New Tracking Link" (confirm dialog) rotates token → old link dies. Public /track/{token} page (outside AuthGate): Job #, live OSM map from gps_pings when crew clocked in + ping ≤10 min, else "Crew is en route — last updated X min ago", no PII/pricing. GPS ping interval tightened 4min→45s (useGpsPing).
-- MODULE 5 — Reviews + itemization: clock-out → "Job done!" review popup (TimeClock) → /today#review section w/ editable template (uses Settings reviewLink) → Text it (OpenPhone) / Email it (logs first, then mailto). Owner read-only Review Requests table on Jobs board (GET /api/review-requests: crew, time, channel, customer name/phone/email). Pricing Items manager = already built earlier. Square invoice itemization: quote saves store breakdown (PUT /api/quotes/{lead_id}, invoiceLineItems() folds cushion+rounding into "Local Moving Service — Crew & Truck" line so lines sum EXACTLY to flat quote); SquareInvoiceModal sends line_items for full-quote invoices + purpose + quote_total; backend adjusts last-line cents.
-- OpenPhone endpoint: POST https://api.openphone.com/v1/messages, Authorization: <key> (no Bearer). NOT CONNECTED yet — graceful 503 toasts until owner pastes key.
-- Test data in PREVIEW db: job INV-9042 (simulated webhook), webhook key 'test_sig_key_123'. Production DB is separate — owner must paste real Square webhook key + OpenPhone creds in PRODUCTION Settings after deploy, and create the webhook subscription in Square Developer dashboard pointing to https://haulyeahadmin.com/api/webhooks/square.
-- Known data gap: crew users have no phone numbers in profiles → teammate call/text icons hidden until owner fills Employee Files.
-- Testing: iteration_5 — 15 scenarios, 100% pass (owner board, assign dialog, integrations, crew today, bubble, tracking public page, review flow, clock popup, regressions incl. $1,350 calculator).
-
-## Session: July 19, 2026 (late) — Quote PDF one-pager (COMPLETE, self-tested)
-- Branded customer-facing PDF (navy/orange, logo, tagline) generated backend-side with reportlab: GET /api/quote-pdf/{token} on public_router (no login; stable token per lead in lead_quotes, created on quote save).
-- Content: Prepared for {customer}, quote date, move date, from/to, itemized "WHAT'S INCLUDED" table (customer-safe lines only — cushion + rounding folded into the labor line, drift auto-adjusted on last line so lines sum EXACTLY to flat total), YOUR FLAT TOTAL band, deposit % + balance-due rows, tagline footer. Verified: $1,850 example sums exactly, no "cushion" text anywhere, 404 on dead token.
-- Quote saves (Calculator + QuoteModal) now snapshot customerName/from/to/moveDate into the breakdown. PUT /api/quotes/{lead_id} returns token.
-- UI: "Quote PDF" button (orange outline, lead-pdf-btn / lead-detail-pdf-btn) on lead cards + lead detail when quote exists AND status is Quoted or Booked → QuotePdfModal: line preview w/ totals, Open PDF, Copy link, Text it (sms: deep link w/ message), Email it (mailto). Legacy quotes without stored breakdown get a one-click "Make a one-line PDF" fallback.
-- reportlab added to requirements.txt (pymupdf/pypdf were dev-only, removed).
-
-## Session: July 19, 2026 (night) — Marketing module + default onboarding password (COMPLETE, iteration_6 100% pass)
-- NEW ROLE "marketing": full role wiring — SWITCH_ROLES backend (owner can switch to Marketing view), ROLE_LABEL/switcher options in Layout (desktop + mobile), role checkboxes in Team dialogs (crew/sales/marketing/owner), teal marketing badge. Marketing accounts land on /marketing with only that nav item; no Airtable table access (403), no refresh/live-indicator chrome.
-- MARKETING DASHBOARD (/marketing, owner + marketing, MarketingDashboard.jsx): date-range picker (7/30/90-day presets + custom) driving GET /api/marketing/overview.
-  - Overview tab: KPI cards (Leads, Booked, Booking rate, Revenue = PAID Square invoices only, Speed-to-lead avg + tracked count), funnel bars (Leads→Contacted→Quoted→Booked→Completed with step-to-step %), campaigns/ads table (auto UTM capture — backend resolves "UTM Source/Medium/Campaign"/"Ad Name" Airtable fields by name via Meta API, 10-min cache), by-source table (leads/contacted/quoted/booked/booking %/revenue/speed).
-  - Ad Spend tab: log spend (platform Meta/Google/Other, campaign w/ datalist of known campaigns, date range, amount; POST/DELETE /api/marketing/ad-spend, Mongo ad_spend); performance table matches spend to campaign lead stats → CPL, Cost/booked, Booking rate, Revenue, ROAS with green/amber/red chips; thresholds (Mongo marketing_thresholds; cplGreen 20/cplRed 25 $, bookingGreen 20/bookingRed 15 %) editable by owner only (PUT owner-gated, inputs disabled for marketing); ROAS colors fixed ≥3 green / ≥1.5 amber / else red.
-  - Reviews tab: review_requests table w/ "review came in" checkbox + 1–5 star rating (PATCH /api/review-requests/{id}), summary chips (asked/received/avg stars).
-  - True Margin tab (OWNER-ONLY, hidden for marketing, 403 backend): per-source Revenue(paid) − crew labor cost (time_entries hours × position rate matched to jobs by lead) = margin + margin %; totals row.
-- SPEED-TO-LEAD: PATCH /api/tables/leads stamps lead_meta.contacted_at (once) when status moves to Contacted/Quoted/Booked/Completed — only in-app status changes count.
-- LEAD SOURCE: LeadModal "Where did they find us?" now a dropdown (LEAD_SOURCES: Meta Ad, Google Business Profile, Referral, Repeat Customer, Walk-in/Other, Website — Direct) writing Airtable Lead Source field (fldNQ7kAAIcVQbysk, typecast). Backend falls back Airtable field → lead_meta.source → "Website — Direct". POST /api/lead-meta/{id} exists for owner/sales manual attribution.
-- DEFAULT STARTING PASSWORD: POST /api/users no longer needs a password — every new account auto-gets "haulyeah123" (bcrypt) + must_change_password=true (forced change on first login). Add-person dialog: password field removed, amber note shows the default; roles start unchecked with "pick their main role first" hint (first-picked role = primary/landing view). integration_expert playbook consulted.
-- FIXES: require_marketing NameError (defined after use at /review-requests — backend crashed on reload; moved definition up); corrupted node_modules (@reduxjs/toolkit nested empty reselect dir broke webpack — removed, resolves to top-level reselect 5.2.0); duplicate amber Airtable banners on /marketing for owner (inline banner now marketing-role-only).
-- Testing: iteration_6 — 20/20 backend pytest (tests/test_marketing_module.py) + 11/11 frontend flows pass incl. forced-password-change E2E, marketing-view switch, regressions (sales/crew logins, Dashboard/Jobs/Settings). Thresholds restored to defaults after QA. deployment_agent scan PASS (ready to deploy).
-- Reminder: user must REDEPLOY to push the Marketing module + default password live to haulyeahadmin.com. AIRTABLE_API_KEY still missing in preview (funnel shows zeros + banner until added). User must add the 5 fields to Airtable Leads: "Lead Source", "UTM Source", "UTM Medium", "UTM Campaign", "Ad Name" (backend matches by exact name, case-insensitive).
-
-## Session: July 19, 2026 (late night) — Delete deactivated accounts (COMPLETE, self-tested)
-- DELETE /api/users/{id} (owner-only): 422 if still active ("Deactivate them first"), 404 unknown, audit-logged. History safe — time_entries/assignments/photos keep name snapshots.
-- Team tab: red "Delete" button (delete-user-btn) appears ONLY on deactivated rows, AlertDialog confirm (confirm-delete-user) → hard delete + toast. Verified E2E via curl (422/200/404/403 matrix) + browser (button gated to deactivated row, dialog, row disappears).
-
-## Session: July 19, 2026 (later) — Per-category search bars (COMPLETE, iteration_7 100%)
-- Reusable SearchBar + searchMatch in Bits.jsx (icon, clear X button, data-testid per page). Client-side filtering wired into ALL list views: Leads (leads-search-input), Contacts, Projects, Crew Team tab (team-search-input), Jobs board (jobs list + review log), crew My Jobs (crew-jobs-search-input), Marketing (one query filters all 4 tabs: sources/campaigns/spend log/perf/reviews/margin; summary chips stay unfiltered), To-Do, Blog, Invoices (KPIs stay on full set), Subscriptions (burn KPIs on full set). Query-aware empty states everywhere.
-- Also fixed corrupted node_modules (@reduxjs/toolkit nested empty reselect) breaking webpack.
-- iteration_7: 27/27 frontend checks pass. NOTE for testers: login fields need keyboard.type() (page.fill leaves submit disabled); role-switch-select is a shadcn button.
-
-## Session: July 19, 2026 (night 2) — To-Do sharing controls + Blog on every account (COMPLETE, iteration_8 100%)
-- TO-DO UNSHARED FROM CREW BY DEFAULT: tasks are owner-only unless explicitly shared. Audience stored in Mongo `task_meta` {_id: airtableRecId, audience: subset of [sales, marketing, crew]} (employee role maps to crew group).
-- OWNER CONTROLS: Sales/Marketing/Crew toggle chips on every task card (task-share-*, POST /api/tasks/{id}/audience owner-only, sanitises input); Add-task dialog "Who sees this?" chips + orange "Everyone" chip (new-task-share-everyone) toggling all 3 — dialog title flips to "Mass message" / save button "Send to everyone"; header "Mass message" button (mass-message-btn) opens dialog pre-filled with all 3 groups.
-- SERVER-SIDE ENFORCEMENT (server.py): ROLE_TABLES now gives sales/marketing/crew/employee access to tasks+blog. GET /tables/tasks: owner gets records with audience attached; others only see tasks shared with their group. Non-owner task writes: create 403, patch limited to status field (TASK_STATUS_F) and only on shared tasks; blog writes owner-only. GET /tables/blog for non-owner filtered to status Published (BLOG_STATUS_F) — drafts/ideas stay owner-only.
-- FRONTEND: To-Do + Blog nav/routes added to sales, marketing, crew, employee views (Layout NAV + App.js). Tasks.jsx role-aware (no owner buttons for teams, team-flavoured banner/empty states, drag/status-move still allowed). Blog.jsx role-aware: non-owners get read-only published grid (published-post-card) + read dialog (post-read-modal); owner keeps kanban.
-- Testing: iteration_8 — 19/19 backend pytest (tests/test_todo_blog_sharing.py) + 18/18 frontend checks across owner/marketing/sales/crew. Full curl gating matrix verified by main agent first.
-- REMINDER: Airtable key still missing in preview so task/blog DATA flows (actual sharing with real records) run only in production after redeploy.
-
-## Session: July 19, 2026 (night 3) — Add/remove projects (COMPLETE, self-tested)
-- Projects page (owner): "New project" button (new-project-btn) → dialog (new-project-modal) with job name*, date, truck, from/to addresses, crew size, est hours, quote, notes → creates Airtable project with status "Pending Deposit" (for walk-in jobs that didn't come through a booked lead).
-- Delete per project card (project-delete-btn, owner-only) via shared ConfirmDeleteButton → deleteRecord (server already enforces owner-only Airtable deletes). Verified: modal renders with all fields via screenshot; create/delete use standard AppContext + proxy patterns already covered by earlier test iterations.
-
-## Session: July 20, 2026 (early AM) — Project crew link + task/blog nav badges (COMPLETE, iteration_9 100%)
-- PROJECT CREW LINK: New-project dialog has "Put it on the crew's schedule (optional)" — crew checkboxes + Driver/Helper selects (project-crew-row / project-position-select). Save creates the Airtable project then POST /api/assignments (project_id linked, truck name→mongo truck_id) so it lands in crew My Jobs/schedule + notifies them. Crew picked w/o date → validation toast BEFORE any API call. 409 conflicts → amber warnings + "Schedule anyway" (createdId state prevents duplicate project on retry). Truck options now come from mongo trucks (fallback to TRUCKS const).
-- TEAM NAV BADGES: Mongo `team_notifications` {key dedupe: task|blog:{recId}:{group}, type, group, title, created_at}. Created on task audience ADD (setTaskAudienceApi now passes title), deleted on audience removal; blog publish (create or PATCH with status Published) notifies all 3 groups once per record ($setOnInsert). GET /api/team-notifications → caller's group items (owner: empty). Layout polls 60s for sales/marketing/crew/employee; orange count badges (9+ cap) on To-Do/Blog nav (desktop nav-badge-tasks/-blog, mobile tab-badge-*); visiting /tasks or /blog stamps localStorage hy_seen_{type}_{role} and clears instantly.
-- Testing: iteration_9 — 3 new pytest + 19 regression all pass; frontend: marketing badge '2' via role-switch, sales '9+' cap, clear-on-visit, owner no badges, dialog validation, assignments create/delete E2E incl. javante my-jobs. DB left clean.
-- NOTE: blog-publish notification fires only in production (needs Airtable PATCH to succeed); logic mirrors the tested task path.
-
-## Session: July 21, 2026 — Ghost POV accounts (COMPLETE, self-tested)
-- Seeded idempotently at startup: TestCrewAdmin (crew), TestSalesAdmin (sales), TestMarketingAdmin (marketing), all password HaulYeah2026!, `ghost: true`, must_change_password false. Seed runs on production too after redeploy.
-- Undetectable: GET /api/users filters ghost:true → invisible in Team tab, crew pickers, employee files; /api/users is owner-only anyway and crew-visible surfaces (contacts bubble = hardcoded owners; schedules = assignment-based) never list them.
-- Verified: all 3 logins return correct role w/o forced password change; owner user list has no ghosts; TestMarketingAdmin UI lands on /marketing with exact employee POV (screenshot).
+## Test reports
+iteration_1..9 (earlier modules) · iteration_10 (team module, 100%) · iteration_11 (commissions/availability/script/profile-task, 100%). Pytest suite: /app/backend/tests/test_commissions_availability_profiletask.py.

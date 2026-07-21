@@ -20,7 +20,7 @@ const NAV = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, roles: ["owner"] },
   { to: "/leads", label: "Leads", icon: Users, roles: ["owner", "sales"] },
   { to: "/calculator", label: "Quote Calculator", icon: Calculator, roles: ["sales"] },
-  { to: "/script", label: "Script", icon: MessageSquareText, roles: ["sales"] },
+  { to: "/script", label: "Script", icon: MessageSquareText, roles: ["owner", "sales"] },
   { to: "/commissions", label: "Commissions", icon: BadgeDollarSign, roles: ["owner", "sales"] },
   { to: "/contacts", label: "Contacts", icon: BookUser, roles: ["owner"] },
   { to: "/projects", label: "Projects", icon: Truck, roles: ["owner", "employee"] },

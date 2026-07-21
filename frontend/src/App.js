@@ -117,6 +117,7 @@ function RoleRoutes() {
         <Route path="/leads" element={<Leads />} />
         <Route path="/leads/:id" element={<LeadDetail />} />
         <Route path="/calculator" element={<Calculator />} />
+        <Route path="/script" element={<Script />} />
         <Route path="/commissions" element={<Commissions />} />
         <Route path="/contacts" element={<Contacts />} />
         <Route path="/projects" element={<Projects />} />
