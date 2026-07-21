@@ -32,6 +32,7 @@ import MemberProfile from "@/pages/MemberProfile";
 import Leaderboard from "@/pages/Leaderboard";
 import Challenges from "@/pages/Challenges";
 import TeamAdmin from "@/pages/TeamAdmin";
+import Commissions from "@/pages/Commissions";
 import Track from "@/pages/Track";
 import { UpdateOverlay } from "@/components/UpdateOverlay";
 
@@ -45,6 +46,7 @@ function RoleRoutes() {
           <Route path="/leads/:id" element={<LeadDetail />} />
           <Route path="/calculator" element={<Calculator />} />
           <Route path="/script" element={<Script />} />
+          <Route path="/commissions" element={<Commissions />} />
           <Route path="/tasks" element={<Tasks />} />
           <Route path="/blog" element={<Blog />} />
           <Route path="/team" element={<Team />} />
@@ -115,6 +117,7 @@ function RoleRoutes() {
         <Route path="/leads" element={<Leads />} />
         <Route path="/leads/:id" element={<LeadDetail />} />
         <Route path="/calculator" element={<Calculator />} />
+        <Route path="/commissions" element={<Commissions />} />
         <Route path="/contacts" element={<Contacts />} />
         <Route path="/projects" element={<Projects />} />
         <Route path="/crew" element={<Crew />} />

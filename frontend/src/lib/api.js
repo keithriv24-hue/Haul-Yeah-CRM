@@ -148,6 +148,18 @@ export const awardChallengeApi = (id, winners) =>
 export const crewComparisonApi = () => axios.get(`${API}/admin/crew-comparison`).then((r) => r.data.rows);
 export const auditLogApi = (limit = 200) => axios.get(`${API}/audit`, { params: { limit } }).then((r) => r.data.entries);
 
+export const attributionApi = (leadId) => axios.get(`${API}/commissions/attribution/${leadId}`).then((r) => r.data);
+export const saveAttributionApi = (leadId, p) => axios.put(`${API}/commissions/attribution/${leadId}`, p).then((r) => r.data);
+export const commissionRatesApi = () => axios.get(`${API}/commissions/rates`).then((r) => r.data);
+export const saveCommissionRatesApi = (p) => axios.put(`${API}/commissions/rates`, p).then((r) => r.data);
+export const commissionsReportApi = (params = {}) => axios.get(`${API}/commissions/report`, { params }).then((r) => r.data);
+export const availabilityOverviewApi = (start, end) =>
+  axios.get(`${API}/availability/overview`, { params: { start, end } }).then((r) => r.data);
+export const ownerSetAvailabilityApi = (user_id, date, available) =>
+  axios.post(`${API}/availability/set`, { user_id, date, available }).then((r) => r.data);
+export const profileTaskApi = () => axios.get(`${API}/profile-task`).then((r) => r.data);
+export const profileTaskDoneApi = () => axios.post(`${API}/profile-task/done`).then((r) => r.data);
+
 export const apiErrorMessage = (e) => {
   const detail = e?.response?.data?.detail;
   if (detail?.message) return detail.message;

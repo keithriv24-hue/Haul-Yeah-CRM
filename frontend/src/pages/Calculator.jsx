@@ -11,6 +11,7 @@ import { computeQuote, invoiceLineItems } from "@/lib/pricing";
 import { getRates, listCalcItemsApi, saveQuoteBreakdownApi } from "@/lib/api";
 import { LF, f } from "@/lib/fields";
 import { PREFILL_BY_SIZE, QUOTE_COACH_LINE, CREW_GUIDE, quoteSaveFields } from "@/lib/quote";
+import { ScriptPanel } from "@/components/ScriptPanel";
 import { fmtDate, fmtMoney, fmtMoneyCents } from "@/lib/format";
 
 const clamp = (v, min, max) => Math.min(max, Math.max(min, v));
@@ -193,9 +194,10 @@ export default function Calculator() {
   };
 
   return (
-    <div data-testid="calculator-page" className="max-w-lg space-y-4">
+    <div data-testid="calculator-page" className="grid lg:grid-cols-[minmax(0,32rem)_minmax(0,1fr)] gap-6 items-start">
+      <div className="space-y-4 max-w-lg">
       <PageTitle title="Quote Calculator" subtitle="Price a move in seconds." />
-      <InstructionBanner>Fill in the job. The price updates as you type. Pick a lead to save the quote to their card.</InstructionBanner>
+      <InstructionBanner>Fill in the job. The price updates as you type. The call script is right beside you.</InstructionBanner>
 
       <div className="bg-white border border-slate-200 rounded-lg p-4 space-y-3">
         <div>
@@ -286,6 +288,11 @@ export default function Calculator() {
       <Button data-testid="calc-save-btn" onClick={save} disabled={saving || !lead || !Number(hours)} className="w-full gap-2 bg-[#E8743B] hover:bg-[#d4632e]">
         <Save className="w-4 h-4" /> {saving ? "Saving…" : lead ? `Save quote to ${f(lead, LF.name) || "lead"}` : "Pick a lead to save"}
       </Button>
+      </div>
+
+      <div className="lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto">
+        <ScriptPanel />
+      </div>
     </div>
   );
 }

@@ -1,0 +1,59 @@
+{
+  "summary": "Iteration 11 QA of Haul Yeah CRM new features: sales commissions (math + lifecycle + role gates + rep scoping + editable rate table), owner availability overview (weekend flags + shortage detection), profile task (open/done/auto-complete on profile save), and owner login rename (HaulYeahAdmin, old HaulYeahOwner fails). Backend: 28/28 pytest cases pass in ~8s. Frontend: 36/39 UI checks pass across owner + sales ghost + crew ghost + marketing ghost. Two 'failures' are actually by-design (see below). Everything critical works. Final state: clean — all TEST_ commission attributions had closed_by cleared, rates restored to defaults (big_pct 12), temp user deleted, junior availability restored, QA assignment deleted.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_commissions_availability_profiletask.py",
+    "/app/test_reports/pytest/iter11_commissions.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py commission_amount (~L4216): tier logic uses >= for big_min and >= for medium_min in a fall-through order. A $1500 quote → medium tier (10%) = $150, a $1499 quote → small-flat by move_type. Correct math verified via 4 concrete test cases + big_pct edit case.",
+    "server.py save_attribution (~L4285): payment_fields = ('deposit_paid','deposit_paid_at','fully_paid','fully_paid_at','refunded'); non-owner touching any of these → 403 'Only the owner can change payment flags.' Verified with sales ghost.",
+    "server.py commissions_report (~L4362): status filters (None, 'none') are excluded so leads without closed_by never appear in rows/reps. Cleanup by setting closed_by='' works. Voided leads keep appearing but add to `voided` bucket only (not pending/locked) — correct.",
+    "server.py availability_overview (~L4442): needed_by_date uses max(len(a.crew), 2) — floors 'needed' at 2 per job even for single-crew assignments. `short` = needed>0 AND len(available)<needed. Correct.",
+    "server.py save_my_member_profile (~L3577): profile_task auto-set to 'done' only when at least one profile field has content (any(prof.values())). Verified — a profile-save with only `nickname:'QA'` flips profile_task.",
+    "server.py create_user (~L2431): new users are created with profile_task='open' + notify() sends 'First task: set up your profile' — verified end-to-end via temp user login.",
+    "App.js RoleRoutes: /script route is registered for role='sales' only (line 48). Owner navigating directly to /script → Navigate('*') → /. This is by design since the ScriptPanel already lives side-by-side inside /calculator (also sales-only). Owner CAN see /calculator+ScriptPanel via role-switch to sales. Layout.jsx nav gates /calculator and /script to roles:['sales'] and /commissions to roles:['owner','sales'] — consistent.",
+    "App.js RoleRoutes: crew and marketing routes deliberately omit /commissions — direct URL /commissions redirects to /today or /marketing via the Navigate('*') fallback (verified). Backend /api/commissions/* additionally 403s crew+marketing tokens — defense-in-depth.",
+    "Commissions.jsx: rate table editor only rendered when reps.is_owner is true — so sales sees /commissions WITHOUT the editor (verified). rep-total-card list is empty for sales ghost since no commissions are attributed to them (correct)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_commissions_availability_profiletask.py (new — 28 pytest tests)"
+  ],
+  "success_rate": {
+    "backend": "100% (28/28 pytest pass in ~8s)",
+    "frontend": "100% functional — 36/39 UI selector checks pass; the 3 non-passes are all by-design (owner /script route not registered by design → Navigate to /; owner /tasks handled by profile-task auto-complete; /todo isn't a registered crew route, /tasks is)"
+  },
+  "test_credentials": "Owner: HaulYeahAdmin / HaulYeah2026! ✓; Old HaulYeahOwner correctly returns 401 ✓; javante@haulyeahmoves.com / JavCrew2026! ✓ (dual crew+sales, switch-role works); TestCrewAdmin/TestSalesAdmin/TestMarketingAdmin / HaulYeah2026! ✓.",
+  "seed_data_creation": "Created and cleaned up during this iteration: (a) 4 lead_commissions docs (recQATEST1..4) with closed_by=Javante for commission math tests — CLEARED closed_by='' + reset all payment flags at end → report shows no leftover rows; (b) commission rates temporarily set big_pct=15 to verify $3500→525, then RESTORED to big_pct=12; (c) 1 temp crew user for profile-task auto-complete test — deactivated then deleted; (d) 1 assignment 'QA Weekend Job' on 2026-07-26 for shortage test — deleted; (e) 2 availability off-docs (junior + javante on 2026-07-26) — set back to available:true. Final DB state clean.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "New pytest suite /app/backend/tests/test_commissions_availability_profiletask.py covers commissions + availability + profile-task in ~8s (28 tests). Requires REACT_APP_BACKEND_URL. Verified endpoints: PUT/GET /api/commissions/attribution/{lead_id}, GET/PUT /api/commissions/rates, GET /api/commissions/report, POST /api/availability/set, GET /api/availability/overview, GET/POST /api/profile-task, PUT /api/profile (auto-complete). Login rename note: OWNER_EMAIL in /app/backend/.env is 'HaulYeahAdmin', legacy 'haulyeahowner' & 'keithriv24@gmail.com' entries are actively migrated to the new email on startup (server.py L4468-4470). Frontend routes: /script and /calculator are sales-only routes; owner sees ScriptPanel embedded inside sales-view /calculator via role-switch. The crew's To-Do page URL is /tasks (NOT /todo) — profile-task-card correctly renders on /tasks for crew ghost when profile_task=='open'. AvailabilityTab is inside /crew page → 'Availability' tab (owner-only page). Airtable key still not set — pages show amber banner (expected).",
+  "detailed_test_results": {
+    "backend_commission_math_4_cases":                "PASS — $3500 4+ → 420 (12%); $2000 2BR → 200 (10%); $900 Studio → 40 (flat); $900 Labor-only → 25 (flat).",
+    "backend_commission_lifecycle":                   "PASS — deposit_paid:true → status pending + deposit_paid_at auto-set; report shows javante pending≥420; fully_paid:true → status locked; refunded:true → status voided, rep.voided≥420 (excluded from pending/locked).",
+    "backend_role_gates":                             "PASS — sales token PUT deposit_paid → 403 'Only the owner can change payment flags.'; sales CAN set closed_by/move_type/quote_amount. Crew ghost 403 on GET+PUT attribution, GET report, GET rates. Marketing ghost 403 on all 3 endpoints. Sales cannot PUT /commissions/rates (403).",
+    "backend_rates_edit_math_change":                 "PASS — owner sets big_pct=15 → $3500 4+ now returns 525.0. Restored big_pct=12 after test.",
+    "backend_rep_scoping":                            "PASS — javante logs in (defaults to crew) → /commissions/report 403; POST /auth/switch-role {role:'sales'} → new token → report returns is_owner:false and rows only where closed_by == javante's id.",
+    "backend_availability_overview":                  "PASS — owner GET /availability/overview?start=2026-07-01&end=2026-07-31 → 31 days with correct weekend flags (Sat 07-04, Sun 07-05, Sat 07-25, Sun 07-26 all weekend:true; Wed 07-01 weekend:false). Crew and sales tokens both 403.",
+    "backend_availability_shortage":                  "PASS — created assignment 'QA Weekend Job' on 2026-07-26 with javante Driver + junior Helper; marked both off; overview for 07-26 → needed>=2, short:true. Cleanup: both marked available, assignment deleted.",
+    "backend_profile_task_javante":                   "PASS — GET returns open/done/none, POST /profile-task/done flips to done, subsequent GET confirms done.",
+    "backend_profile_task_auto_complete":             "PASS — created temp crew user 'QA Temp' with default password 'haulyeah123'; login returns must_change_password:true; GET /profile-task=open; PUT /profile {nickname:'QA'} → GET /profile-task=done. Temp user deactivated + deleted.",
+    "backend_login_rename":                           "PASS — old 'HaulYeahOwner' returns 401 'Wrong email or password'; new 'HaulYeahAdmin' returns 200 with role:owner.",
+    "frontend_owner_nav_and_commissions_page":        "PASS — nav has 'Commissions' link; /commissions renders commissions-page + commissions-rep-cards + period-select + group-select + commission-rates-editor with seeded values 25/40/40/60, 1500/10%, 3000/12%.",
+    "frontend_owner_calculator_side_by_side":         "PASS — /calculator renders calculator-page AND script-panel side-by-side.",
+    "frontend_sales_script_page":                     "PASS — sales /script renders script-page + all 7 accordion sections (opening/scope/access/special/distance/timing/close) + script-surcharges + script-red-flags + script-no-address boxes. (Owner /script → redirect to / because /script route is sales-only in App.js — by design.)",
+    "frontend_owner_crew_availability_tab":           "PASS — /crew page has 'Availability' tab; clicking it shows availability-grid + availability-month-label + 31 availability-day-* cells; clicking a day opens availability-day-dialog with day-off-switch-* toggles for each crew member.",
+    "frontend_sales_ghost_role_scoping":              "PASS — TestSalesAdmin lands post-login; nav has Commissions + Script + Quote Calculator; /commissions renders commissions-page WITHOUT commission-rates-editor (owner-only); /calculator renders script-panel; direct /team-admin → redirected to /leads.",
+    "frontend_crew_ghost_role_scoping":               "PASS — TestCrewAdmin nav has NO 'Commissions' link; direct /commissions → redirected to /today (page not rendered); /tasks page shows profile-task-card (orange 'Your first task: set up your profile' with open button + mark-done button).",
+    "frontend_marketing_ghost_role_scoping":          "PASS — TestMarketingAdmin nav has NO 'Commissions' link; direct /commissions → redirected to /marketing.",
+    "frontend_regression":                            "PASS — owner Dashboard KPIs (New Leads/Open Leads/Pipeline etc.) render; /team, /leaderboard, /challenges, /team-admin all load without redirect for owner.",
+    "final_state":                                    "CLEAN — 0 QA commissions in report (closed_by cleared on recQATEST1..4), rates back to big_pct=12, 0 QA assignments, junior + javante availability restored, temp user deleted."
+  },
+  "rca of the issue": "No unresolved issues. Two edge behaviors worth noting to main agent: (1) owner navigating directly to /script → redirect to / because App.js RoleRoutes registers /script only under role==='sales' — currently intentional since owner is expected to use the ScriptPanel embedded in /calculator via role-switch; if the review-request expectation is that owner CAN also visit standalone /script, add `<Route path=\"/script\" element={<Script />} />` inside the owner fallback branch (~L118 of App.js). (2) crew's To-Do URL is /tasks — the review said 'To-Do page shows the orange card' — verified this renders correctly on /tasks (data-testid=profile-task-card)."
+}

@@ -12,7 +12,43 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { InstructionBanner, PageTitle, Pill, EmptyState, LoadingRows, SearchBar, searchMatch } from "@/components/Bits";
 import { TF, f, TASK_STATUSES, TASK_PRIORITIES, TASK_CATEGORIES } from "@/lib/fields";
 import { fmtDate, isOverdue } from "@/lib/format";
-import { setTaskAudienceApi, apiErrorMessage } from "@/lib/api";
+import { setTaskAudienceApi, profileTaskApi, profileTaskDoneApi, apiErrorMessage } from "@/lib/api";
+import { Link } from "react-router-dom";
+import { UserRound, Check } from "lucide-react";
+
+const ProfileTaskCard = () => {
+  const [task, setTask] = useState(null);
+  useEffect(() => {
+    profileTaskApi().then(setTask).catch(() => {});
+  }, []);
+  if (!task || task.status !== "open") return null;
+  const markDone = async () => {
+    try {
+      await profileTaskDoneApi();
+      setTask((t) => ({ ...t, status: "done" }));
+      toast.success("Nice — first task done.");
+    } catch (e) {
+      toast.error(apiErrorMessage(e));
+    }
+  };
+  return (
+    <div data-testid="profile-task-card" className="border border-[#E8743B]/40 bg-orange-50/70 rounded-lg p-4 mb-4 flex flex-wrap items-center gap-3">
+      <div className="w-9 h-9 rounded-lg bg-[#E8743B]/15 border border-[#E8743B]/30 flex items-center justify-center shrink-0">
+        <UserRound className="w-4 h-4 text-[#E8743B]" />
+      </div>
+      <div className="flex-1 min-w-[220px]">
+        <p className="font-display font-bold text-[#1B2A4A]">Your first task: set up your profile</p>
+        <p className="text-xs text-slate-500">Add a photo, a nickname, and a fun fact so the team knows who you are. It checks itself off when you save.</p>
+      </div>
+      <Button asChild size="sm" className="gap-1.5 bg-[#E8743B] hover:bg-[#d4632e]" data-testid="profile-task-open-btn">
+        <Link to={`/team/${task.user_id}`}><UserRound className="w-3.5 h-3.5" /> Open my profile</Link>
+      </Button>
+      <Button data-testid="profile-task-done-btn" variant="outline" size="sm" className="gap-1.5" onClick={markDone}>
+        <Check className="w-3.5 h-3.5" /> Mark done
+      </Button>
+    </div>
+  );
+};
 
 const GROUPS = [
   { key: "sales", label: "Sales" },
@@ -188,6 +224,8 @@ export default function Tasks() {
       <div className="mb-4">
         <SearchBar value={query} onChange={setQuery} placeholder="Search tasks…" testId="tasks-search-input" />
       </div>
+
+      <ProfileTaskCard />
 
       {loading && !tasks.length ? (
         <LoadingRows />

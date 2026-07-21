@@ -802,6 +802,7 @@ LEAD_DEPOSIT_PAID_FIELD = "fld7BsZG5A6S1oh7Z"
 
 
 async def mark_lead_deposit_paid(lead_id: str) -> bool:
+    await mark_lead_commission_payment(lead_id, "deposit")
     try:
         body = {"records": [{"id": lead_id, "fields": {LEAD_DEPOSIT_PAID_FIELD: True}}], "typecast": True}
         await airtable_request("PATCH", TABLES["leads"], json_body=body)
@@ -911,6 +912,8 @@ async def apply_invoice_to_jobs(inv: Dict[str, Any], notify_owner: bool = True) 
     status = inv.get("status")
     purpose = _infer_purpose(inv)
     if status == "PAID":
+        if inv.get("lead_id") and purpose != "deposit":
+            await mark_lead_commission_payment(inv["lead_id"], "fully")
         if purpose in ("deposit", "full"):
             await ensure_job_for_deposit(inv, mark_full=(purpose == "full"), notify_owner=notify_owner)
             return
@@ -2425,8 +2428,11 @@ async def create_user(payload: UserCreatePayload, p: Dict[str, Any] = Depends(re
         raise HTTPException(status_code=409, detail="A user with that email already exists.")
     doc = {"_id": str(uuid4()), "name": payload.name.strip(), "email": email, "role": roles[0], "roles": roles,
            "password_hash": hash_password(password), "active": True, "must_change_password": True,
-           "gps_consent_at": None, "created_at": now_iso()}
+           "gps_consent_at": None, "profile_task": "open", "created_at": now_iso()}
     await mongo_db.users.insert_one(doc)
+    await notify(doc["_id"], None, "First task: set up your profile",
+                 "Welcome aboard! Head to the To-Do page — your first task is adding a photo, a nickname, and a fun fact to your team profile.",
+                 "task")
     await audit(p, "created user", f"{doc['name']} ({email}, {'+'.join(roles)})")
     return _user_public(doc)
 
@@ -2443,8 +2449,8 @@ async def patch_user(user_id: str, payload: UserPatchPayload, p: Dict[str, Any] 
         changes.append("name")
     if payload.email is not None:
         email = payload.email.strip().lower()
-        if "@" not in email:
-            raise HTTPException(status_code=422, detail="That email doesn't look right.")
+        if not email or " " in email:
+            raise HTTPException(status_code=422, detail="That login doesn't look right — no spaces allowed.")
         clash = await mongo_db.users.find_one({"email": email, "_id": {"$ne": user_id}})
         if clash:
             raise HTTPException(status_code=409, detail="Another user already has that email.")
@@ -2454,6 +2460,8 @@ async def patch_user(user_id: str, payload: UserPatchPayload, p: Dict[str, Any] 
         roles = [r for r in payload.roles if r]
         if not roles or any(r not in ("crew", "sales", "owner", "marketing") for r in roles):
             raise HTTPException(status_code=422, detail="Roles must be crew, sales, owner, or marketing.")
+        if p["user_id"] == user_id and "owner" not in roles:
+            raise HTTPException(status_code=422, detail="You can't take Owner off your own account — you'd lock yourself out.")
         updates["roles"] = roles
         updates["role"] = roles[0]
         changes.append(f"roles → {'+'.join(roles)}")
@@ -3565,9 +3573,30 @@ async def save_my_member_profile(payload: MemberProfilePayload, request: Request
     if not p.get("user_id"):
         raise HTTPException(status_code=403, detail="Only user accounts have a profile.")
     prof = _clean_profile(payload)
-    await mongo_db.users.update_one({"_id": p["user_id"]}, {"$set": {"member_profile": prof}})
+    updates: Dict[str, Any] = {"member_profile": prof}
+    if any(prof.values()):
+        updates["profile_task"] = "done"
+    await mongo_db.users.update_one({"_id": p["user_id"]}, {"$set": updates})
     await audit(p, "updated their team profile", p.get("name", ""))
     return {"profile": prof}
+
+
+@api_router.get("/profile-task")
+async def get_profile_task(request: Request):
+    p = await current_principal(request)
+    if not p.get("user_id"):
+        return {"status": "none"}
+    u = await mongo_db.users.find_one({"_id": p["user_id"]}, {"profile_task": 1})
+    return {"status": (u or {}).get("profile_task") or "none", "user_id": p["user_id"]}
+
+
+@api_router.post("/profile-task/done")
+async def complete_profile_task(request: Request):
+    p = await current_principal(request)
+    if not p.get("user_id"):
+        raise HTTPException(status_code=403, detail="Only user accounts have this task.")
+    await mongo_db.users.update_one({"_id": p["user_id"]}, {"$set": {"profile_task": "done"}})
+    return {"status": "done"}
 
 
 @api_router.put("/team/members/{user_id}/moderate")
@@ -4130,6 +4159,14 @@ async def seed_team_module():
                               "icon": icon, "auto": ({"metric": metric, "threshold": thr} if metric else None),
                               "active": True, "seeded": True, "sort": i, "created_at": now_iso()}},
             upsert=True)
+    for u in await mongo_db.users.find({"profile_task": {"$exists": False}}).to_list(300):
+        prof = u.get("member_profile") or {}
+        done = any((prof.get(k) or "").strip() for k in MEMBER_PROFILE_FIELDS)
+        await mongo_db.users.update_one({"_id": u["_id"]}, {"$set": {"profile_task": "done" if done else "open"}})
+        if not done:
+            await notify(u["_id"], None, "First task: set up your profile",
+                         "Head to the To-Do page — your first task is adding a photo, a nickname, and a fun fact to your team profile.",
+                         "task")
     if await mongo_db.challenges.count_documents({}) == 0:
         today = datetime.strptime(_et_today(), "%Y-%m-%d").date()
         month_start = today.replace(day=1)
@@ -4160,16 +4197,277 @@ async def seed_team_module():
                                                   "winners": [], "created_by": "seed", "created_at": now_iso()})
 
 
+# ================================================================ sales commissions
+
+MOVE_TYPES = ("Labor-only", "Studio", "1-bedroom", "2-bedroom", "3-bedroom", "4+")
+COMMISSION_RATE_DEFAULTS = {
+    "small_flat": {"Labor-only": 25.0, "Studio": 40.0, "1-bedroom": 40.0, "2-bedroom": 60.0, "3-bedroom": 60.0, "4+": 60.0},
+    "medium_min": 1500.0, "medium_pct": 10.0, "big_min": 3000.0, "big_pct": 12.0,
+}
+
+
+async def get_commission_rates() -> Dict[str, Any]:
+    doc = await mongo_db.settings.find_one({"_id": "commission_rates"}) or {}
+    rates = {**COMMISSION_RATE_DEFAULTS, **{k: v for k, v in doc.items() if k in ("medium_min", "medium_pct", "big_min", "big_pct")}}
+    rates["small_flat"] = {**COMMISSION_RATE_DEFAULTS["small_flat"], **(doc.get("small_flat") or {})}
+    return rates
+
+
+def commission_amount(quote: Any, move_type: Optional[str], rates: Dict[str, Any]) -> float:
+    try:
+        q = float(quote or 0)
+    except (TypeError, ValueError):
+        q = 0.0
+    if q <= 0:
+        return 0.0
+    if q >= rates["big_min"]:
+        return round(q * rates["big_pct"] / 100, 2)
+    if q >= rates["medium_min"]:
+        return round(q * rates["medium_pct"] / 100, 2)
+    return float(rates["small_flat"].get(move_type or "", 0) or 0)
+
+
+def _commission_status(d: Dict[str, Any]) -> Optional[str]:
+    if not d.get("closed_by"):
+        return None
+    if d.get("refunded"):
+        return "voided"
+    if d.get("fully_paid"):
+        return "locked"
+    if d.get("deposit_paid"):
+        return "pending"
+    return "none"
+
+
+def _require_comm_role(p: Dict[str, Any]):
+    if p["role"] not in ("owner", "sales"):
+        raise HTTPException(status_code=403, detail="You don't have access to commissions.")
+
+
+def _attr_out(d: Dict[str, Any]) -> Dict[str, Any]:
+    return {"lead_name": d.get("lead_name", ""), "quote_sent_by": d.get("quote_sent_by") or "",
+            "closed_by": d.get("closed_by") or "", "move_type": d.get("move_type") or "",
+            "quote_amount": d.get("quote_amount"), "job_date": d.get("job_date") or "",
+            "deposit_paid": bool(d.get("deposit_paid")), "deposit_paid_at": d.get("deposit_paid_at") or "",
+            "fully_paid": bool(d.get("fully_paid")), "fully_paid_at": d.get("fully_paid_at") or "",
+            "refunded": bool(d.get("refunded"))}
+
+
+class AttributionPayload(BaseModel):
+    lead_name: Optional[str] = None
+    quote_sent_by: Optional[str] = None
+    closed_by: Optional[str] = None
+    move_type: Optional[str] = None
+    quote_amount: Optional[float] = None
+    job_date: Optional[str] = None
+    deposit_paid: Optional[bool] = None
+    deposit_paid_at: Optional[str] = None
+    fully_paid: Optional[bool] = None
+    fully_paid_at: Optional[str] = None
+    refunded: Optional[bool] = None
+
+
+@api_router.get("/commissions/attribution/{lead_id}")
+async def get_attribution(lead_id: str, request: Request):
+    p = await current_principal(request)
+    _require_comm_role(p)
+    d = await mongo_db.lead_commissions.find_one({"_id": lead_id}) or {}
+    rates = await get_commission_rates()
+    return {"attribution": _attr_out(d), "status": _commission_status(d),
+            "commission": commission_amount(d.get("quote_amount"), d.get("move_type"), rates)}
+
+
+@api_router.put("/commissions/attribution/{lead_id}")
+async def save_attribution(lead_id: str, payload: AttributionPayload, request: Request):
+    p = await current_principal(request)
+    _require_comm_role(p)
+    payment_fields = ("deposit_paid", "deposit_paid_at", "fully_paid", "fully_paid_at", "refunded")
+    if p["role"] != "owner" and any(getattr(payload, k) is not None for k in payment_fields):
+        raise HTTPException(status_code=403, detail="Only the owner can change payment flags.")
+    updates: Dict[str, Any] = {}
+    if payload.lead_name is not None:
+        updates["lead_name"] = payload.lead_name.strip()[:200]
+    for k in ("quote_sent_by", "closed_by"):
+        v = getattr(payload, k)
+        if v is not None:
+            if v and not await mongo_db.users.find_one({"_id": v}):
+                raise HTTPException(status_code=404, detail="That team member doesn't exist.")
+            updates[k] = v or None
+    if payload.move_type is not None:
+        if payload.move_type and payload.move_type not in MOVE_TYPES:
+            raise HTTPException(status_code=422, detail="Pick a real move type.")
+        updates["move_type"] = payload.move_type or None
+    if payload.quote_amount is not None:
+        if payload.quote_amount < 0:
+            raise HTTPException(status_code=422, detail="Quote amount can't be negative.")
+        updates["quote_amount"] = round(float(payload.quote_amount), 2)
+    if payload.job_date is not None:
+        updates["job_date"] = payload.job_date
+    if p["role"] == "owner":
+        d0 = await mongo_db.lead_commissions.find_one({"_id": lead_id}) or {}
+        if payload.deposit_paid is not None:
+            updates["deposit_paid"] = payload.deposit_paid
+            updates["deposit_paid_at"] = (payload.deposit_paid_at or d0.get("deposit_paid_at") or _et_today()) if payload.deposit_paid else None
+        if payload.fully_paid is not None:
+            updates["fully_paid"] = payload.fully_paid
+            updates["fully_paid_at"] = (payload.fully_paid_at or d0.get("fully_paid_at") or _et_today()) if payload.fully_paid else None
+        if payload.refunded is not None:
+            updates["refunded"] = payload.refunded
+    updates["updated_at"] = now_iso()
+    updates["updated_by"] = p.get("name")
+    await mongo_db.lead_commissions.update_one({"_id": lead_id}, {"$set": updates}, upsert=True)
+    d = await mongo_db.lead_commissions.find_one({"_id": lead_id})
+    await audit(p, "updated commission info", d.get("lead_name") or lead_id)
+    rates = await get_commission_rates()
+    return {"attribution": _attr_out(d), "status": _commission_status(d),
+            "commission": commission_amount(d.get("quote_amount"), d.get("move_type"), rates)}
+
+
+@api_router.get("/commissions/rates")
+async def commission_rates(request: Request):
+    p = await current_principal(request)
+    _require_comm_role(p)
+    return {"rates": await get_commission_rates(), "move_types": list(MOVE_TYPES)}
+
+
+class CommissionRatesPayload(BaseModel):
+    small_flat: Dict[str, float]
+    medium_min: float
+    medium_pct: float
+    big_min: float
+    big_pct: float
+
+
+@api_router.put("/commissions/rates")
+async def save_commission_rates(payload: CommissionRatesPayload, p: Dict[str, Any] = Depends(require_owner)):
+    if payload.medium_min <= 0 or payload.big_min <= payload.medium_min:
+        raise HTTPException(status_code=422, detail="Big-move minimum must be higher than the medium-move minimum.")
+    if not (0 <= payload.medium_pct <= 100) or not (0 <= payload.big_pct <= 100):
+        raise HTTPException(status_code=422, detail="Percentages must be between 0 and 100.")
+    flat = {k: max(0.0, float(v)) for k, v in payload.small_flat.items() if k in MOVE_TYPES}
+    await mongo_db.settings.update_one(
+        {"_id": "commission_rates"},
+        {"$set": {"small_flat": flat, "medium_min": payload.medium_min, "medium_pct": payload.medium_pct,
+                  "big_min": payload.big_min, "big_pct": payload.big_pct, "updated_at": now_iso()}},
+        upsert=True)
+    await audit(p, "changed the commission rate table", "")
+    return {"rates": await get_commission_rates()}
+
+
+@api_router.get("/commissions/report")
+async def commissions_report(request: Request, start: Optional[str] = None, end: Optional[str] = None):
+    p = await current_principal(request)
+    _require_comm_role(p)
+    rates = await get_commission_rates()
+    q: Dict[str, Any] = {"closed_by": {"$nin": [None, ""]}}
+    if p["role"] != "owner":
+        if not p.get("user_id"):
+            raise HTTPException(status_code=403, detail="Log in with your own account to see commissions.")
+        q["closed_by"] = p["user_id"]
+    docs = await mongo_db.lead_commissions.find(q).to_list(3000)
+    names = {u["_id"]: u.get("name", "") for u in await mongo_db.users.find({}, {"name": 1}).to_list(300)}
+    rows = []
+    for d in docs:
+        status = _commission_status(d)
+        if status in (None, "none"):
+            continue
+        earn_date = (d.get("deposit_paid_at") or d.get("job_date") or (d.get("updated_at") or "")[:10])[:10]
+        if start and earn_date < start:
+            continue
+        if end and earn_date > end:
+            continue
+        rows.append({"lead_id": d["_id"], "lead_name": d.get("lead_name", ""), "closed_by": d.get("closed_by"),
+                     "closed_by_name": names.get(d.get("closed_by"), ""), "move_type": d.get("move_type") or "",
+                     "quote_amount": d.get("quote_amount") or 0,
+                     "commission": commission_amount(d.get("quote_amount"), d.get("move_type"), rates),
+                     "status": status, "earn_date": earn_date, "job_date": d.get("job_date") or "",
+                     "fully_paid_at": d.get("fully_paid_at") or ""})
+    rows.sort(key=lambda r: r["earn_date"], reverse=True)
+    reps: Dict[str, Dict[str, Any]] = {}
+    for r in rows:
+        rep = reps.setdefault(r["closed_by"], {"user_id": r["closed_by"], "name": r["closed_by_name"],
+                                               "pending": 0.0, "locked": 0.0, "voided": 0.0, "jobs": 0})
+        rep["jobs"] += 1
+        rep[r["status"]] = round(rep[r["status"]] + r["commission"], 2)
+    rep_rows = sorted(reps.values(), key=lambda x: -(x["pending"] + x["locked"]))
+    return {"rows": rows, "reps": rep_rows, "is_owner": p["role"] == "owner"}
+
+
+async def mark_lead_commission_payment(lead_id: str, stage: str):
+    try:
+        d = await mongo_db.lead_commissions.find_one({"_id": lead_id}) or {}
+        upd: Dict[str, Any] = {f"{stage}_paid": True}
+        if not d.get(f"{stage}_paid_at"):
+            upd[f"{stage}_paid_at"] = _et_today()
+        await mongo_db.lead_commissions.update_one({"_id": lead_id}, {"$set": upd}, upsert=True)
+    except Exception as exc:
+        logger.warning("commission %s flip failed for %s: %s", stage, lead_id, exc)
+
+
+# ================================================================ availability overview (owner)
+
+class OwnerAvailabilityPayload(BaseModel):
+    user_id: str
+    date: str
+    available: bool
+
+
+@api_router.post("/availability/set")
+async def owner_set_availability(payload: OwnerAvailabilityPayload, p: Dict[str, Any] = Depends(require_owner)):
+    u = await mongo_db.users.find_one({"_id": payload.user_id})
+    if not u:
+        raise HTTPException(status_code=404, detail="No such team member.")
+    await mongo_db.availability.update_one(
+        {"_id": f"{payload.user_id}:{payload.date}"},
+        {"$set": {"user_id": payload.user_id, "name": u.get("name"), "date": payload.date,
+                  "available": payload.available, "updated_at": now_iso(), "set_by": p.get("name")}},
+        upsert=True)
+    return {"ok": True}
+
+
+@api_router.get("/availability/overview")
+async def availability_overview(start: str, end: str, p: Dict[str, Any] = Depends(require_owner)):
+    crew = await _active_members("crew")
+    off_docs = await mongo_db.availability.find(
+        {"date": {"$gte": start, "$lte": end}, "available": False}).to_list(2000)
+    off_by_date: Dict[str, List[Dict[str, str]]] = {}
+    for d in off_docs:
+        off_by_date.setdefault(d["date"], []).append({"user_id": d["user_id"], "name": d.get("name", "")})
+    assignments = await mongo_db.assignments.find({"job_date": {"$gte": start, "$lte": end}}).to_list(500)
+    needed_by_date: Dict[str, int] = {}
+    jobs_by_date: Dict[str, int] = {}
+    for a in assignments:
+        dt = a.get("job_date")
+        jobs_by_date[dt] = jobs_by_date.get(dt, 0) + 1
+        needed_by_date[dt] = needed_by_date.get(dt, 0) + max(len(a.get("crew") or []), 2)
+    days = []
+    cur = datetime.strptime(start, "%Y-%m-%d").date()
+    last = datetime.strptime(end, "%Y-%m-%d").date()
+    while cur <= last:
+        dt = cur.isoformat()
+        off = off_by_date.get(dt, [])
+        off_ids = {o["user_id"] for o in off}
+        available = [{"user_id": u["_id"], "name": u["name"]} for u in crew if u["_id"] not in off_ids]
+        needed = needed_by_date.get(dt, 0)
+        days.append({"date": dt, "weekend": cur.weekday() >= 5, "off": off, "available": available,
+                     "jobs": jobs_by_date.get(dt, 0), "needed": needed,
+                     "short": needed > 0 and len(available) < needed})
+        cur += timedelta(days=1)
+    return {"days": days, "crew_total": len(crew),
+            "crew": [{"user_id": u["_id"], "name": u["name"]} for u in crew]}
+
+
 # ------- startup seeding
 
 @app.on_event("startup")
 async def seed_on_startup():
     try:
         await mongo_db.users.create_index("email", unique=True)
-        owner_email = os.environ.get("OWNER_EMAIL", "haulyeahowner").strip().lower()
+        owner_email = os.environ.get("OWNER_EMAIL", "haulyeahadmin").strip().lower()
         owner_pw = os.environ.get("APP_PASSWORD", "")
-        if owner_email != "keithriv24@gmail.com":
-            await mongo_db.users.update_one({"email": "keithriv24@gmail.com"}, {"$set": {"email": owner_email}})
+        for legacy in ("keithriv24@gmail.com", "haulyeahowner"):
+            if owner_email != legacy:
+                await mongo_db.users.update_one({"email": legacy}, {"$set": {"email": owner_email}})
         seeds = [
             {"name": "Keith (Owner)", "email": owner_email, "role": "owner", "password": owner_pw},
             {"name": "Javante Brown", "email": "javante@haulyeahmoves.com", "role": "crew", "password": "HaulCrew2026!"},

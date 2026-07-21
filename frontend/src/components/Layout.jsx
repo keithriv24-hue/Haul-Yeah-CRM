@@ -5,6 +5,7 @@ import {
   LayoutDashboard, Users, BookUser, Truck, KanbanSquare, PenLine, Receipt,
   CreditCard, Handshake, HelpCircle, Eye, EyeOff, RefreshCw, KeyRound, LogOut, Calculator, SlidersHorizontal, MessageSquareText, Video, UserRound,
   HardHat, ClipboardList, AlarmClock, CalendarDays, Briefcase, Sun, Megaphone, UsersRound, Trophy, Swords, Medal,
+  BadgeDollarSign,
 } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { useAuth } from "@/components/AuthGate";
@@ -20,6 +21,7 @@ const NAV = [
   { to: "/leads", label: "Leads", icon: Users, roles: ["owner", "sales"] },
   { to: "/calculator", label: "Quote Calculator", icon: Calculator, roles: ["sales"] },
   { to: "/script", label: "Script", icon: MessageSquareText, roles: ["sales"] },
+  { to: "/commissions", label: "Commissions", icon: BadgeDollarSign, roles: ["owner", "sales"] },
   { to: "/contacts", label: "Contacts", icon: BookUser, roles: ["owner"] },
   { to: "/projects", label: "Projects", icon: Truck, roles: ["owner", "employee"] },
   { to: "/crew", label: "Crew", icon: HardHat, roles: ["owner"] },
