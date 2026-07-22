@@ -170,6 +170,11 @@ export const gmailMessagesApi = (id, params = {}) => axios.get(`${API}/gmail/${i
 export const gmailMessageApi = (id, msgId) => axios.get(`${API}/gmail/${id}/messages/${msgId}`).then((r) => r.data);
 export const gmailReplyApi = (id, msgId, body) => axios.post(`${API}/gmail/${id}/messages/${msgId}/reply`, { body }).then((r) => r.data);
 export const gmailModifyApi = (id, msgId, action) => axios.post(`${API}/gmail/${id}/messages/${msgId}/modify`, { action }).then((r) => r.data);
+export const metaStatusApi = () => axios.get(`${API}/meta/status`).then((r) => r.data);
+export const metaConnectApi = () => axios.get(`${API}/meta/connect`).then((r) => r.data);
+export const metaDisconnectApi = () => axios.post(`${API}/meta/disconnect`).then((r) => r.data);
+export const metaFeedApi = () => axios.get(`${API}/meta/feed`).then((r) => r.data);
+export const metaRefreshApi = () => axios.post(`${API}/meta/refresh`).then((r) => r.data);
 
 export const apiErrorMessage = (e) => {
   const detail = e?.response?.data?.detail;

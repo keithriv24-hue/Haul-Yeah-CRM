@@ -38,6 +38,8 @@ const fmtStamp = (iso) =>
 const strMap = (vals) => Object.fromEntries(Object.entries(vals || {}).map(([k, v]) => [k, String(v)]));
 
 import { IntegrationsCard } from "@/components/IntegrationsCard";
+import { GmailCard } from "@/components/GmailCard";
+import { MetaCard } from "@/components/MetaCard";
 
 export default function Settings() {
   const { rates, saveRates, business, saveBusiness } = useApp();
@@ -274,6 +276,8 @@ export default function Settings() {
       </div>
 
       <IntegrationsCard />
+      <GmailCard />
+      <MetaCard />
 
       <div className="fixed bottom-16 md:bottom-4 left-0 md:left-60 right-0 px-4 z-40">
         <div className="max-w-2xl mx-auto md:mx-0 bg-white border border-slate-200 rounded-lg shadow-lg p-3 flex items-center gap-3">

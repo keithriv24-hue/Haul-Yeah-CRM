@@ -1,0 +1,77 @@
+{
+  "summary": "Iteration 13 QA of Notification Center Phases 3+4 (Gmail inboxes + Meta social feed). Backend: 39/39 pytest cases pass in 5.45s covering all 6 Meta endpoints (status/connect/oauth-callback/feed/refresh/disconnect) + 3 Gmail endpoints (status/connect/messages) across owner/marketing/sales/crew role gates, plus alerts regression. Frontend: 4 role personas exercised end-to-end — every selector in the review-request matched exactly. Owner /settings shows both gmail-settings-card + meta-settings-card with setup instructions, redirect URIs, and all three Connect buttons DISABLED (as expected — GOOGLE_CLIENT_ID/SECRET and META_APP_ID/SECRET are intentionally empty). Owner /notifications shows all 4 tabs (All/Email/Social/Alerts) with both email placeholders + email-setup-link, and both social placeholders + social-setup-link. Sales ghost: only email-placeholder-contact (no owner card, no setup link), NO Social tab; /settings redirects to /leads. Marketing ghost: Social tab renders FB+IG placeholders WITHOUT social-setup-link (owner-only), Email tab only contact placeholder. Crew ghost: nav-notifications absent, direct /notifications redirects to /today.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration13_gmail_meta.py",
+    "/app/test_reports/pytest/iter13_gmail_meta.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py meta module (L4911-5151): _meta_gate correctly restricts to ('owner','marketing'); redirect_uri only exposed to owner in /meta/status (verified). /meta/connect uses require_owner dep — sales/marketing/crew all 403.",
+    "server.py /meta/oauth/callback (L5078-5122): public_router route so it works pre-auth; no-params / bad-state / error-param all return 302/307 RedirectResponse (denied|expired), NEVER 401/500. Verified via 3 negative pytest cases.",
+    "server.py /meta/refresh (L5144): checks meta_tokens.find_one before polling — returns 404 'Facebook isn't connected yet.' cleanly instead of stacktracing on missing tokens. Marketing gets same 404 (proper 404 vs 403 semantics).",
+    "server.py meta_poll_loop (L5044-5050): silently no-ops if meta_tokens doc missing (returns 0). Confirmed via backend logs — no error spam in preview where no tokens exist.",
+    "server.py gmail_status (L4728-4742): filters mailboxes by role via GMAIL_MAILBOXES[mid]['roles'] before returning. Sales/marketing get only contact mailbox; redirect_uri exposed only to owner. Verified.",
+    "server.py _gmail_access_token (L4657-4659): raises HTTPException(409) 'That mailbox isn't connected yet.' when no token doc exists — clean 4xx, never 500. Verified.",
+    "server.py meta callback token encryption (L5106-5114): uses _gmail_fernet() (same Fernet key derived from JWT_SECRET) — good code reuse; both providers share the same key derivation.",
+    "Notifications.jsx L119-121: canSocial = owner || marketing correctly gates BOTH the TabsTrigger AND the TabsContent — sales ghost verified NOT to render notif-tab-social.",
+    "Notifications.jsx L183-186: email-setup-link wrapped in {isOwner && ...} — sales+marketing verified NOT to see the setup link even though they see the contact placeholder.",
+    "SocialFeed.jsx L69-73: social-setup-link wrapped in {isOwner && ...} — marketing verified NOT to see the setup link even though they see the placeholder cards. Correctly matches spec.",
+    "MetaCard.jsx L69-86 + L108-121: setup instructions + connect buttons both gated on !status.configured / disabled={!status.configured} respectively. Connect button confirmed disabled in DOM.",
+    "GmailCard.jsx L69-86 + L100-110: mirrors the same 'configured' gating pattern as MetaCard. Both connect buttons (contact + owner) verified disabled.",
+    "App.js routes for crew do not include /notifications — visiting the URL falls through to /today. Verified.",
+    "backend/.env: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, META_APP_ID, META_APP_SECRET all present but empty strings. Per handoff note, this is EXPECTED (user hasn't created cloud projects yet). Not flagged as a bug."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration13_gmail_meta.py (new — 39 pytest cases across 8 test classes)"
+  ],
+  "success_rate": {
+    "backend": "100% (39/39 pytest pass in 5.45s)",
+    "frontend": "100% (all UI selector checks across owner + 3 ghost personas pass)"
+  },
+  "test_credentials": "Owner HaulYeahAdmin / HaulYeah2026! ✓ ; Ghosts TestSalesAdmin / TestMarketingAdmin / TestCrewAdmin / HaulYeah2026! ✓ — all working.",
+  "seed_data_creation": "None. No DB writes performed by this iteration's test suite. meta_tokens + gmail_tokens collections untouched (all endpoints tested with no-token / no-config paths). Nine harmless QA alerts from iter12 still visible for the owner (expected per iter12 handoff).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "New pytest suite /app/backend/tests/test_iteration13_gmail_meta.py (39 tests, ~5.5s) covers: TestMetaStatus (4), TestMetaConnect (4), TestMetaFeed (4), TestMetaRefresh (4), TestMetaDisconnect (4), TestMetaOAuthCallback (3, tests public 302/307 redirects without auth), TestGmailStatus (4), TestGmailConnect (5), TestGmailMessages (3, ensures 409 not 500 on unconnected mailbox + 404 on sales accessing owner mailbox), TestAlertsRegression (4). All 4 role personas (owner/sales/marketing/crew) covered per endpoint. Iter12's suite (test_iteration12_alerts_webhooks.py) can be re-run for alerts+zapier regression — should still pass. Frontend selectors covered end-to-end this iteration: gmail-settings-card, gmail-setup-instructions, gmail-redirect-uri, gmail-connect-contact/owner (both disabled), meta-settings-card, meta-setup-instructions, meta-redirect-uri, meta-copy-uri-btn, meta-connect-btn (disabled); notification tab placeholders + role-gated setup links (email-setup-link owner-only, social-setup-link owner-only, notif-tab-social owner+marketing-only). Once main agent gets real GOOGLE_CLIENT_ID/SECRET or META_APP_ID/SECRET from user, all disabled buttons will unlock and the /meta/connect + /gmail/connect endpoints will return 200 auth_urls instead of 422.",
+  "detailed_test_results": {
+    "backend_meta_status_owner":              "PASS — configured:false, connected:false, pages:[], redirect_uri ends with /api/meta/oauth/callback",
+    "backend_meta_status_marketing_no_uri":   "PASS — same body but NO redirect_uri key (owner-only)",
+    "backend_meta_status_sales_crew_403":     "PASS — both roles 403",
+    "backend_meta_connect_owner_422":         "PASS — 422 detail contains 'Meta App ID'",
+    "backend_meta_connect_marketing_403":     "PASS — marketing 403 (require_owner blocks even though marketing is in META_ROLES)",
+    "backend_meta_connect_sales_crew_403":    "PASS",
+    "backend_meta_feed_owner_marketing":      "PASS — both return {items:[]}",
+    "backend_meta_feed_sales_crew_403":       "PASS",
+    "backend_meta_refresh_owner_404":         "PASS — 404 'Facebook isn't connected yet.'",
+    "backend_meta_refresh_marketing_404":     "PASS",
+    "backend_meta_refresh_sales_crew_403":    "PASS",
+    "backend_meta_disconnect_owner_404":      "PASS",
+    "backend_meta_disconnect_others_403":     "PASS (marketing/sales/crew all 403)",
+    "backend_meta_callback_no_params":        "PASS — 302/307 → /settings?meta=denied",
+    "backend_meta_callback_bad_state":        "PASS — 302/307 → /settings?meta=expired",
+    "backend_meta_callback_error_param":      "PASS — 302/307 → /settings?meta=denied",
+    "backend_gmail_status_owner":             "PASS — both mailboxes (contact+owner), configured:false, redirect_uri present",
+    "backend_gmail_status_sales_only_contact":"PASS — {mailboxes:[contact]}, no redirect_uri",
+    "backend_gmail_status_marketing_only_contact":"PASS — same as sales",
+    "backend_gmail_status_crew_403":          "PASS",
+    "backend_gmail_connect_owner_422":        "PASS — 'Google Client ID and Secret' in detail (both mailboxes)",
+    "backend_gmail_connect_sales_marketing_crew_403":"PASS",
+    "backend_gmail_messages_owner_409":       "PASS — 409 'That mailbox isn't connected yet.' (both contact + owner mailboxes)",
+    "backend_gmail_messages_sales_owner_mailbox_404":"PASS — sales cannot even see the owner-private mailbox (_mailbox_or_404 returns 404 not 403)",
+    "backend_alerts_regression":              "PASS — owner/sales/marketing 200, crew 403 (iter12 behavior preserved)",
+    "frontend_owner_settings_gmail_card":     "PASS — gmail-settings-card, gmail-setup-instructions, gmail-redirect-uri all rendered; both connect buttons DISABLED",
+    "frontend_owner_settings_meta_card":      "PASS — meta-settings-card, meta-setup-instructions, meta-redirect-uri, meta-copy-uri-btn all rendered; meta-connect-btn DISABLED",
+    "frontend_owner_notifications":           "PASS — all 4 tabs present; email tab shows both placeholders + setup link; social tab shows FB+IG placeholders + setup link",
+    "frontend_sales_notifications":           "PASS — no Social tab; email tab only contact placeholder (no owner card, no setup link)",
+    "frontend_sales_settings_blocked":        "PASS — /settings redirects to /leads (no gmail/meta cards)",
+    "frontend_marketing_notifications":       "PASS — Social tab has FB+IG placeholders but NO social-setup-link (owner-only); email tab only contact placeholder",
+    "frontend_crew_no_notifications":         "PASS — nav-notifications absent; direct /notifications URL redirects to /today"
+  },
+  "rca of the issue": "No issues found. All acceptance criteria in the review-request met exactly. The four intentionally-empty env vars (GOOGLE_CLIENT_ID/SECRET, META_APP_ID/SECRET) produce the correct 'configured:false + disabled buttons + 422 on connect' user-facing state — this is BY DESIGN per the agent handoff note ('user has no Google or Meta credentials yet, both integrations are in not-configured / not-connected state'). One minor observation (informational, not a bug): the 401 CONSOLE_ERR spam during login is from the AuthGate probing /api/auth/me before the token is set — normal SPA behavior, harmless."
+}

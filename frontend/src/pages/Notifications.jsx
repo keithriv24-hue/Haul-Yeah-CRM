@@ -1,13 +1,15 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
-import { UserPlus, Handshake, Star, Bell, Mail, Instagram, Facebook, Copy, Zap, Lock } from "lucide-react";
+import { UserPlus, Handshake, Star, Bell, Mail, Copy, Zap, Lock } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/components/AuthGate";
 import { PageTitle, InstructionBanner, EmptyState, LoadingRows } from "@/components/Bits";
-import { alertsApi, webhookInfoApi } from "@/lib/api";
+import { alertsApi, webhookInfoApi, gmailStatusApi } from "@/lib/api";
+import { EmailInbox } from "@/components/EmailInbox";
+import { SocialFeed } from "@/components/SocialFeed";
 
 const KIND_ICON = { new_lead: UserPlus, booked: Handshake, review: Star, custom: Bell };
 const KIND_COLOR = {
@@ -119,15 +121,19 @@ export default function Notifications() {
   const canSocial = role === "owner" || role === "marketing";
   const canOpenLead = role === "owner" || role === "sales";
   const [data, setData] = useState(null);
+  const [gmail, setGmail] = useState(null);
 
   const load = useCallback(() => alertsApi().then(setData).catch(() => setData({ alerts: [] })), []);
   useEffect(() => {
     load();
+    gmailStatusApi().then(setGmail).catch(() => setGmail({ mailboxes: [] }));
     const t = setInterval(load, 60000);
     return () => clearInterval(t);
   }, [load]);
 
   const alerts = data?.alerts || [];
+  const connectedBoxes = (gmail?.mailboxes || []).filter((m) => m.connected);
+  const pendingBoxes = (gmail?.mailboxes || []).filter((m) => !m.connected);
 
   const Feed = ({ items }) => (
     <div className="bg-white border border-slate-200 rounded-lg mt-3" data-testid="alerts-feed">
@@ -160,23 +166,31 @@ export default function Notifications() {
             {isOwner && <ZapierCard />}
           </TabsContent>
           <TabsContent value="email">
-            <div className="space-y-3 mt-3">
-              <ComingSoonCard icon={Mail} title="contact@haulyeahmoves.com" testId="email-placeholder-contact"
-                note="The shared inbox isn't connected yet. The owner hooks it up with Google in Settings — then reading and replying happens right here." />
-              {isOwner && (
-                <ComingSoonCard icon={Mail} title="keithrivera@haulyeahmoves.com" testId="email-placeholder-owner"
-                  note="Your private inbox. Only you will ever see this one — it stays invisible to everyone else." />
-              )}
-            </div>
+            {connectedBoxes.length > 0 && <EmailInbox mailboxes={connectedBoxes} />}
+            {pendingBoxes.length > 0 && (
+              <div className="space-y-3 mt-3">
+                {pendingBoxes.map((mb) => (
+                  <ComingSoonCard
+                    key={mb.id}
+                    icon={Mail}
+                    title={mb.email}
+                    testId={`email-placeholder-${mb.id}`}
+                    note={mb.id === "owner"
+                      ? "Your private inbox. Only you will ever see this one — it stays invisible to everyone else."
+                      : "The shared inbox isn't connected yet. The owner hooks it up with Google in Settings — then reading and replying happens right here."}
+                  />
+                ))}
+                {isOwner && (
+                  <p className="text-xs text-slate-500">
+                    Hook these up on the <Link to="/settings" className="font-semibold text-[#E8743B] hover:underline" data-testid="email-setup-link">Settings page</Link> — takes one Google sign-in per inbox.
+                  </p>
+                )}
+              </div>
+            )}
           </TabsContent>
           {canSocial && (
             <TabsContent value="social">
-              <div className="space-y-3 mt-3">
-                <ComingSoonCard icon={Facebook} title="Facebook Page" testId="social-placeholder-fb"
-                  note="Comments, DMs, and mentions show up here once the Meta account is connected. Each one links straight to Facebook to reply." />
-                <ComingSoonCard icon={Instagram} title="Instagram" testId="social-placeholder-ig"
-                  note="Same deal for Instagram — connect once, and new activity lands in this feed." />
-              </div>
+              <SocialFeed isOwner={isOwner} />
             </TabsContent>
           )}
           <TabsContent value="alerts">

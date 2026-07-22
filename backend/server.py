@@ -4908,6 +4908,249 @@ async def _gmail_unread_counts() -> Dict[str, int]:
     return counts
 
 
+# ================================================================ meta (facebook / instagram) social feed (notification center phase 4)
+
+META_GRAPH = "https://graph.facebook.com/v21.0"
+META_SCOPES = ",".join([
+    "pages_show_list", "pages_read_engagement", "pages_read_user_content", "pages_manage_metadata",
+    "instagram_basic", "instagram_manage_comments", "instagram_manage_messages",
+])
+META_ROLES = ("owner", "marketing")
+
+
+def _meta_configured() -> bool:
+    return bool(os.environ.get("META_APP_ID", "").strip() and os.environ.get("META_APP_SECRET", "").strip())
+
+
+def _meta_gate(p: Dict[str, Any]):
+    if p["role"] not in META_ROLES:
+        raise HTTPException(status_code=403, detail="You don't have access to the social feed.")
+
+
+def _meta_redirect_uri(request: Request) -> str:
+    return f"{_external_base(request)}/api/meta/oauth/callback"
+
+
+async def _meta_get(path: str, token: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        r = await client.get(f"{META_GRAPH}{path}", params={"access_token": token, **(params or {})})
+    if r.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"Meta API error {r.status_code}: {r.text[:150]}")
+    return r.json()
+
+
+async def _upsert_social(doc: Dict[str, Any]) -> bool:
+    try:
+        res = await mongo_db.social_items.update_one({"_id": doc["_id"]}, {"$setOnInsert": doc}, upsert=True)
+        return res.upserted_id is not None
+    except Exception as exc:
+        logger.warning("social upsert failed: %s", exc)
+        return False
+
+
+async def _meta_poll_once() -> int:
+    doc = await mongo_db.meta_tokens.find_one({"_id": "meta"})
+    if not doc:
+        return 0
+    f = _gmail_fernet()
+    new = 0
+    for page in doc.get("pages", []):
+        try:
+            token = f.decrypt(page["token_enc"].encode()).decode()
+        except Exception:
+            continue
+        pid = page["id"]
+        try:
+            posts = await _meta_get(f"/{pid}/posts", token, {"fields": "id,permalink_url", "limit": 5})
+            for post in posts.get("data", []):
+                cs = await _meta_get(f"/{post['id']}/comments", token,
+                                     {"fields": "id,message,from{name},created_time,permalink_url",
+                                      "order": "reverse_chronological", "limit": 10})
+                for c in cs.get("data", []):
+                    author = (c.get("from") or {}).get("name") or "Someone"
+                    if author == page.get("name"):
+                        continue
+                    if await _upsert_social({
+                            "_id": f"fb_comment:{c['id']}", "platform": "facebook", "type": "comment",
+                            "title": f"{author} commented on a Facebook post",
+                            "body": (c.get("message") or "")[:300], "author": author,
+                            "link": c.get("permalink_url") or post.get("permalink_url") or f"https://www.facebook.com/{pid}",
+                            "created_at": c.get("created_time") or now_iso(), "page_id": pid}):
+                        new += 1
+        except Exception as exc:
+            logger.warning("meta poll fb comments: %s", exc)
+        for platform, plabel in (("messenger", "Messenger"), ("instagram", "Instagram")):
+            try:
+                convs = await _meta_get(f"/{pid}/conversations", token,
+                                        {"fields": "id,link,updated_time,snippet,senders",
+                                         "platform": platform, "limit": 10})
+                for cv in convs.get("data", []):
+                    sender = (((cv.get("senders") or {}).get("data") or [{}])[0].get("name")) or "Someone"
+                    upd = cv.get("updated_time") or now_iso()
+                    if await _upsert_social({
+                            "_id": f"msg:{cv['id']}:{upd}",
+                            "platform": "instagram" if platform == "instagram" else "facebook",
+                            "type": "message", "title": f"New {plabel} message from {sender}",
+                            "body": (cv.get("snippet") or "")[:300], "author": sender,
+                            "link": f"https://www.facebook.com{cv['link']}" if cv.get("link")
+                                    else f"https://business.facebook.com/latest/inbox?asset_id={pid}",
+                            "created_at": upd, "page_id": pid}):
+                        new += 1
+            except Exception as exc:
+                logger.warning("meta poll %s conversations: %s", platform, exc)
+        ig = page.get("ig") or {}
+        if ig.get("id"):
+            try:
+                media = await _meta_get(f"/{ig['id']}/media", token, {"fields": "id,permalink", "limit": 5})
+                for m in media.get("data", []):
+                    cs = await _meta_get(f"/{m['id']}/comments", token,
+                                         {"fields": "id,text,username,timestamp", "limit": 10})
+                    for c in cs.get("data", []):
+                        if c.get("username") and c["username"] == ig.get("username"):
+                            continue
+                        if await _upsert_social({
+                                "_id": f"ig_comment:{c['id']}", "platform": "instagram", "type": "comment",
+                                "title": f"@{c.get('username') or 'someone'} commented on Instagram",
+                                "body": (c.get("text") or "")[:300], "author": c.get("username") or "someone",
+                                "link": m.get("permalink") or "https://www.instagram.com",
+                                "created_at": c.get("timestamp") or now_iso(), "page_id": pid}):
+                            new += 1
+            except Exception as exc:
+                logger.warning("meta poll ig comments: %s", exc)
+            try:
+                tags = await _meta_get(f"/{ig['id']}/tags", token,
+                                       {"fields": "id,permalink,caption,username,timestamp", "limit": 10})
+                for t in tags.get("data", []):
+                    if await _upsert_social({
+                            "_id": f"ig_mention:{t['id']}", "platform": "instagram", "type": "mention",
+                            "title": f"@{t.get('username') or 'someone'} tagged you on Instagram",
+                            "body": (t.get("caption") or "")[:300], "author": t.get("username") or "someone",
+                            "link": t.get("permalink") or "https://www.instagram.com",
+                            "created_at": t.get("timestamp") or now_iso(), "page_id": pid}):
+                        new += 1
+            except Exception as exc:
+                logger.warning("meta poll ig mentions: %s", exc)
+    await mongo_db.meta_tokens.update_one({"_id": "meta"}, {"$set": {"last_poll": now_iso()}})
+    return new
+
+
+async def _safe_meta_poll():
+    try:
+        await _meta_poll_once()
+    except Exception as exc:
+        logger.warning("meta initial poll: %s", exc)
+
+
+async def meta_poll_loop():
+    while True:
+        try:
+            await _meta_poll_once()
+        except Exception as exc:
+            logger.warning("meta poll loop: %s", exc)
+        await asyncio.sleep(300)
+
+
+@api_router.get("/meta/status")
+async def meta_status(request: Request):
+    p = await current_principal(request)
+    _meta_gate(p)
+    doc = await mongo_db.meta_tokens.find_one({"_id": "meta"})
+    pages = [{"id": pg["id"], "name": pg.get("name", ""), "ig_username": (pg.get("ig") or {}).get("username")}
+             for pg in (doc or {}).get("pages", [])]
+    out = {"configured": _meta_configured(), "connected": bool(doc), "pages": pages,
+           "connected_at": (doc or {}).get("connected_at"), "last_poll": (doc or {}).get("last_poll")}
+    if p["role"] == "owner":
+        out["redirect_uri"] = _meta_redirect_uri(request)
+    return out
+
+
+@api_router.get("/meta/connect")
+async def meta_connect(request: Request, p: Dict[str, Any] = Depends(require_owner)):
+    if not _meta_configured():
+        raise HTTPException(status_code=422, detail="Add the Meta App ID and Secret first.")
+    state = uuid4().hex
+    await mongo_db.oauth_states.insert_one({"_id": state, "provider": "meta", "created_at": now_iso()})
+    params = {"client_id": os.environ["META_APP_ID"].strip(), "redirect_uri": _meta_redirect_uri(request),
+              "response_type": "code", "scope": META_SCOPES, "state": state}
+    return {"auth_url": f"https://www.facebook.com/v21.0/dialog/oauth?{urlencode(params)}"}
+
+
+@public_router.get("/meta/oauth/callback")
+async def meta_oauth_callback(request: Request, code: str = "", state: str = "", error: str = ""):
+    st = await mongo_db.oauth_states.find_one_and_delete({"_id": state}) if state else None
+    if error or not code:
+        return RedirectResponse(url="/settings?meta=denied")
+    if not st or st.get("provider") != "meta":
+        return RedirectResponse(url="/settings?meta=expired")
+    app_id = os.environ.get("META_APP_ID", "").strip()
+    app_secret = os.environ.get("META_APP_SECRET", "").strip()
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        r = await client.get(f"{META_GRAPH}/oauth/access_token", params={
+            "client_id": app_id, "client_secret": app_secret,
+            "redirect_uri": _meta_redirect_uri(request), "code": code})
+        if r.status_code != 200:
+            logger.warning("meta token exchange failed: %s", r.text[:200])
+            return RedirectResponse(url="/settings?meta=error")
+        short_token = r.json().get("access_token", "")
+        r2 = await client.get(f"{META_GRAPH}/oauth/access_token", params={
+            "grant_type": "fb_exchange_token", "client_id": app_id,
+            "client_secret": app_secret, "fb_exchange_token": short_token})
+        user_token = (r2.json().get("access_token") if r2.status_code == 200 else None) or short_token
+        r3 = await client.get(f"{META_GRAPH}/me/accounts", params={
+            "access_token": user_token,
+            "fields": "id,name,access_token,connected_instagram_account{id,username}"})
+    if r3.status_code != 200:
+        logger.warning("meta pages fetch failed: %s", r3.text[:200])
+        return RedirectResponse(url="/settings?meta=error")
+    raw_pages = r3.json().get("data") or []
+    f = _gmail_fernet()
+    pages = []
+    for pg in raw_pages:
+        if not pg.get("access_token"):
+            continue
+        ig = pg.get("connected_instagram_account") or {}
+        pages.append({"id": pg["id"], "name": pg.get("name", ""),
+                      "token_enc": f.encrypt(pg["access_token"].encode()).decode(),
+                      "ig": {"id": ig.get("id"), "username": ig.get("username")} if ig else {}})
+    if not pages:
+        return RedirectResponse(url="/settings?meta=no-pages")
+    await mongo_db.meta_tokens.update_one(
+        {"_id": "meta"}, {"$set": {"pages": pages, "connected_at": now_iso()}}, upsert=True)
+    await audit({"name": "owner", "user_id": None}, "connected Facebook / Instagram",
+                ", ".join(pg["name"] for pg in pages))
+    asyncio.create_task(_safe_meta_poll())
+    return RedirectResponse(url="/settings?meta=connected")
+
+
+@api_router.post("/meta/disconnect")
+async def meta_disconnect(p: Dict[str, Any] = Depends(require_owner)):
+    doc = await mongo_db.meta_tokens.find_one_and_delete({"_id": "meta"})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Facebook isn't connected.")
+    await audit(p, "disconnected Facebook / Instagram", ", ".join(pg.get("name", "") for pg in doc.get("pages", [])))
+    return {"ok": True}
+
+
+@api_router.get("/meta/feed")
+async def meta_feed(request: Request, limit: int = 100):
+    p = await current_principal(request)
+    _meta_gate(p)
+    items = await mongo_db.social_items.find({}).sort("created_at", -1).to_list(min(max(limit, 1), 200))
+    for i in items:
+        i["id"] = i.pop("_id")
+    return {"items": items}
+
+
+@api_router.post("/meta/refresh")
+async def meta_refresh(request: Request):
+    p = await current_principal(request)
+    _meta_gate(p)
+    if not await mongo_db.meta_tokens.find_one({"_id": "meta"}, {"_id": 1}):
+        raise HTTPException(status_code=404, detail="Facebook isn't connected yet.")
+    new = await _meta_poll_once()
+    return {"ok": True, "new_items": new}
+
+
 # ------- startup seeding
 
 @app.on_event("startup")
@@ -4955,6 +5198,7 @@ async def seed_on_startup():
     asyncio.create_task(late_alert_loop())
     asyncio.create_task(invoice_sync_loop())
     asyncio.create_task(lead_alert_loop())
+    asyncio.create_task(meta_poll_loop())
     try:
         await backfill_jobs_from_paid_invoices()
     except Exception as exc:
