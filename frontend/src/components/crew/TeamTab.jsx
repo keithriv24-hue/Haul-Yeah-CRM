@@ -71,7 +71,11 @@ const AddUserDialog = ({ open, onOpenChange, onSaved }) => {
         </DialogHeader>
         <div className="space-y-3">
           <div><Label>Name</Label><Input data-testid="add-user-name" value={form.name} onChange={(e) => set("name")(e.target.value)} placeholder="First Last" /></div>
-          <div><Label>Email (their login)</Label><Input data-testid="add-user-email" type="email" value={form.email} onChange={(e) => set("email")(e.target.value)} placeholder="name@haulyeahmoves.com" /></div>
+          <div>
+            <Label>Login — username or email</Label>
+            <Input data-testid="add-user-email" value={form.email} onChange={(e) => set("email")(e.target.value)} placeholder="keith2 or name@haulyeahmoves.com" />
+            <p className="text-[11px] text-slate-400 mt-1">Either works — a plain username (3+ characters, no spaces) or a full email address.</p>
+          </div>
           <RoleChecks roles={form.roles} onToggle={toggleRole} idPrefix="add-user" />
           <div data-testid="add-user-default-password-note" className="flex items-start gap-2 rounded-md bg-amber-50 border border-amber-200 px-3 py-2.5 text-sm text-amber-800">
             <KeyRound className="w-4 h-4 mt-0.5 shrink-0" />

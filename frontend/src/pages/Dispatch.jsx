@@ -1,16 +1,20 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
-  ChevronLeft, ChevronRight, MapPin, Truck, CalendarPlus, AlertTriangle, GripVertical, X, Clock,
+  ChevronLeft, ChevronRight, MapPin, Truck, CalendarPlus, AlertTriangle, GripVertical, X, Clock, History,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { PageTitle, InstructionBanner, KpiCard } from "@/components/Bits";
 import { AssignmentModal } from "@/components/crew/AssignmentModal";
+import { JobTimeline } from "@/components/JobTimeline";
+import { JobChecklists } from "@/components/JobChecklists";
 import { dispatchBoardApi, updateAssignmentApi, listUsersApi, listTrucksApi, apiErrorMessage } from "@/lib/api";
 import { fmtMoney, fmtDate, mapsLink } from "@/lib/format";
 
@@ -44,6 +48,22 @@ const shiftDay = (iso, delta) => {
   return d.toISOString().slice(0, 10);
 };
 
+const ProgressRing = ({ done, total }) => {
+  const pct = total ? done / total : 0;
+  const r = 8;
+  const c = 2 * Math.PI * r;
+  return (
+    <span data-testid="job-checklist-ring" className="inline-flex items-center gap-1" title={`${done}/${total} checklist items done`}>
+      <svg width="22" height="22" viewBox="0 0 22 22" className="-rotate-90">
+        <circle cx="11" cy="11" r={r} fill="none" stroke="#e2e8f0" strokeWidth="3" />
+        <circle cx="11" cy="11" r={r} fill="none" stroke={pct === 1 ? "#10b981" : "#E8743B"} strokeWidth="3"
+          strokeDasharray={c} strokeDashoffset={c * (1 - pct)} strokeLinecap="round" />
+      </svg>
+      <span className="text-[10px] font-bold text-slate-500">{done}/{total}</span>
+    </span>
+  );
+};
+
 export default function Dispatch() {
   const [date, setDate] = useState(todayET());
   const [board, setBoard] = useState(null);
@@ -53,6 +73,7 @@ export default function Dispatch() {
   const [pending, setPending] = useState(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [detail, setDetail] = useState(null);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(() => {
@@ -287,13 +308,23 @@ export default function Dispatch() {
                     Drop a truck here
                   </span>
                 )}
-                <button
-                  data-testid="dispatch-edit-job"
-                  className="ml-auto text-[11px] font-semibold text-[#E8743B] hover:underline"
-                  onClick={() => { setEditing(a); setModalOpen(true); }}
-                >
-                  Edit details
-                </button>
+                <span className="ml-auto flex items-center gap-2.5">
+                  <ProgressRing done={a.checklist_done || 0} total={a.checklist_total || 25} />
+                  <button
+                    data-testid="dispatch-open-detail"
+                    className="text-[11px] font-semibold text-[#1B2A4A] hover:underline inline-flex items-center gap-1"
+                    onClick={() => setDetail(a)}
+                  >
+                    <History className="w-3 h-3" /> Timeline
+                  </button>
+                  <button
+                    data-testid="dispatch-edit-job"
+                    className="text-[11px] font-semibold text-[#E8743B] hover:underline"
+                    onClick={() => { setEditing(a); setModalOpen(true); }}
+                  >
+                    Edit details
+                  </button>
+                </span>
               </div>
             </div>
           ))}
@@ -315,6 +346,11 @@ export default function Dispatch() {
                   <span className={`w-2 h-2 rounded-full shrink-0 ${u.clocked_in ? "bg-emerald-500 animate-pulse" : "bg-slate-200"}`} title={u.clocked_in ? "On the clock" : "Not clocked in"} />
                   <span className="text-sm font-semibold text-[#1B2A4A] flex-1 truncate">{u.name}</span>
                   {u.off && <Badge variant="outline" className="text-[9px] bg-red-50 text-red-600 border-red-200">OFF</Badge>}
+                  {board?.is_today && u.clocked_in && u.jobs_today === 0 && (
+                    <Badge data-testid="crew-unscheduled-badge" variant="outline" className="text-[9px] bg-amber-50 text-amber-700 border-amber-300 gap-0.5">
+                      <AlertTriangle className="w-2.5 h-2.5" /> On clock, no job
+                    </Badge>
+                  )}
                   {u.jobs_today > 0 && <Badge variant="outline" className="text-[9px] bg-orange-50 text-orange-700 border-orange-200">{u.jobs_today} today</Badge>}
                   <span className="flex gap-0.5" title={`${u.jobs_week} job${u.jobs_week === 1 ? "" : "s"} this week`}>
                     {Array.from({ length: Math.min(u.jobs_week, 5) }).map((_, i) => (
@@ -353,6 +389,27 @@ export default function Dispatch() {
       </div>
 
       <AssignmentModal open={modalOpen} onOpenChange={setModalOpen} initial={editing} users={users} trucks={trucks} onSaved={load} />
+
+      <Dialog open={!!detail} onOpenChange={(v) => !v && setDetail(null)}>
+        <DialogContent data-testid="dispatch-detail-dialog" className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="font-display">{detail?.job_name}</DialogTitle>
+            <DialogDescription>
+              {detail ? fmtDate(detail.job_date) : ""}{detail?.arrival_time ? ` · arrive ${detail.arrival_time}` : ""}
+            </DialogDescription>
+          </DialogHeader>
+          {detail && (
+            <Tabs defaultValue="timeline">
+              <TabsList className="w-full">
+                <TabsTrigger data-testid="detail-tab-timeline" value="timeline" className="flex-1">Timeline</TabsTrigger>
+                <TabsTrigger data-testid="detail-tab-checklists" value="checklists" className="flex-1">Checklists</TabsTrigger>
+              </TabsList>
+              <TabsContent value="timeline"><JobTimeline assignmentId={detail.id} /></TabsContent>
+              <TabsContent value="checklists"><JobChecklists assignmentId={detail.id} onStatusAdvance={load} /></TabsContent>
+            </Tabs>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <AlertDialog open={!!pending} onOpenChange={(v) => !v && setPending(null)}>
         <AlertDialogContent data-testid="dispatch-conflict-dialog">

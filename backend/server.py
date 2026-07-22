@@ -2435,8 +2435,8 @@ async def create_user(payload: UserCreatePayload, p: Dict[str, Any] = Depends(re
     if not roles or any(r not in ("crew", "sales", "owner", "marketing") for r in roles):
         raise HTTPException(status_code=422, detail="Roles must be crew, sales, owner, or marketing.")
     email = payload.email.strip().lower()
-    if "@" not in email:
-        raise HTTPException(status_code=422, detail="That email doesn't look right.")
+    if len(email) < 3 or " " in email:
+        raise HTTPException(status_code=422, detail="That login doesn't look right — use a username (3+ characters, no spaces) or an email.")
     password = payload.password or DEFAULT_STARTING_PASSWORD
     if len(password) < 8:
         raise HTTPException(status_code=422, detail="The password needs at least 8 characters.")
@@ -2673,6 +2673,12 @@ async def create_assignment(payload: AssignmentPayload, p: Dict[str, Any] = Depe
     await audit(p, "assigned crew to job", doc["job_name"],
                 {"date": doc["job_date"], "crew": [f"{c['name']} ({c['position']})" for c in doc["crew"]],
                  "truck": doc["truck_name"]})
+    if doc["crew"]:
+        await log_job_event(doc["_id"], "crew",
+                            "Crew assigned: " + ", ".join(f"{c['name']} ({c['position']})" for c in doc["crew"]),
+                            by=p["name"])
+    if doc["truck_name"]:
+        await log_job_event(doc["_id"], "truck", f"Truck assigned: {doc['truck_name']}", by=p["name"])
     return {**_sanitize_assignment(doc), "warnings": warnings}
 
 
@@ -2716,6 +2722,17 @@ async def update_assignment(assignment_id: str, payload: AssignmentPayload,
                      "assignment", {"assignment_id": assignment_id})
     await audit(p, "updated job assignment", updates["job_name"],
                 {"date": updates["job_date"], "crew": [f"{c['name']} ({c['position']})" for c in updates["crew"]]})
+    added_names = [c["name"] for c in updates["crew"] if c["user_id"] not in old_ids]
+    new_ids = {c["user_id"] for c in updates["crew"]}
+    removed_names = [c["name"] for c in existing.get("crew", []) if c["user_id"] not in new_ids]
+    if added_names:
+        await log_job_event(assignment_id, "crew", "Added to crew: " + ", ".join(added_names), by=p["name"])
+    if removed_names:
+        await log_job_event(assignment_id, "crew", "Removed from crew: " + ", ".join(removed_names), by=p["name"])
+    if (existing.get("truck_id") or None) != (updates["truck_id"] or None):
+        await log_job_event(assignment_id, "truck",
+                            f"Truck assigned: {updates['truck_name']}" if updates.get("truck_name") else "Truck removed",
+                            by=p["name"])
     await queue_timelog_sync(assignment_id)
     fresh = await mongo_db.assignments.find_one({"_id": assignment_id})
     return {**_sanitize_assignment(fresh), "warnings": warnings}
@@ -2744,6 +2761,8 @@ async def dispatch_board(date: Optional[str] = None, p: Dict[str, Any] = Depends
     docs.sort(key=lambda a: (a.get("arrival_time") or "99:99", a.get("job_name") or ""))
     ids = [a["_id"] for a in docs]
     entries = await mongo_db.time_entries.find({"assignment_id": {"$in": ids}}).to_list(500)
+    cl_docs = await mongo_db.job_checklists.find({"_id": {"$in": ids}}).to_list(100)
+    cl_done = {d["_id"]: _checklist_done_count(d) for d in cl_docs}
     open_by_assignment: Dict[str, int] = {}
     for e in entries:
         if not e.get("clock_out"):
@@ -2755,6 +2774,8 @@ async def dispatch_board(date: Optional[str] = None, p: Dict[str, Any] = Depends
     for a in docs:
         item = _sanitize_assignment(a)
         item["clocked_in"] = open_by_assignment.get(a["_id"], 0)
+        item["checklist_done"] = cl_done.get(a["_id"], 0)
+        item["checklist_total"] = CHECKLIST_TOTAL_ITEMS
         behind = False
         if is_today and a.get("arrival_time") and a.get("exec_status") in ("Assigned", "En Route"):
             try:
@@ -2845,14 +2866,11 @@ class StatusPayload(BaseModel):
     delay_factors: Optional[List[str]] = None
 
 
-@api_router.post("/crew/jobs/{assignment_id}/status")
-async def set_job_status(assignment_id: str, payload: StatusPayload, p: Dict[str, Any] = Depends(require_crew)):
-    if payload.status not in EXEC_STATUSES[1:]:
-        raise HTTPException(status_code=422, detail="Unknown status.")
-    a = await mongo_db.assignments.find_one({"_id": assignment_id, "crew.user_id": p["user_id"]})
-    if not a:
-        raise HTTPException(status_code=404, detail="That job isn't on your schedule.")
-    event = {"status": payload.status, "at": now_iso(), "by": p["name"], "by_id": p["user_id"]}
+async def _apply_exec_status(a: Dict[str, Any], status: str, p: Dict[str, Any],
+                             notes: Optional[str] = None, delay_factors: Optional[List[str]] = None) -> None:
+    assignment_id = a["_id"]
+    payload = StatusPayload(status=status, notes=notes, delay_factors=delay_factors)
+    event = {"status": payload.status, "at": now_iso(), "by": p["name"], "by_id": p.get("user_id")}
     updates: Dict[str, Any] = {"exec_status": payload.status, "updated_at": now_iso()}
     if payload.status == "Complete" and payload.notes:
         updates["completion_notes"] = payload.notes.strip()
@@ -2886,8 +2904,182 @@ async def set_job_status(assignment_id: str, payload: StatusPayload, p: Dict[str
             logger.warning("crew credit prompt failed: %s", exc)
     if payload.status == "Complete":
         await queue_timelog_sync(assignment_id)
+
+
+@api_router.post("/crew/jobs/{assignment_id}/status")
+async def set_job_status(assignment_id: str, payload: StatusPayload, p: Dict[str, Any] = Depends(require_crew)):
+    if payload.status not in EXEC_STATUSES[1:]:
+        raise HTTPException(status_code=422, detail="Unknown status.")
+    a = await mongo_db.assignments.find_one({"_id": assignment_id, "crew.user_id": p["user_id"]})
+    if not a:
+        raise HTTPException(status_code=404, detail="That job isn't on your schedule.")
+    await _apply_exec_status(a, payload.status, p, payload.notes, payload.delay_factors)
     fresh = await mongo_db.assignments.find_one({"_id": assignment_id})
     return _crew_job_view(fresh, p["user_id"])
+
+
+# ------- job checklists + operations timeline (phase B — attached to existing assignments)
+
+CHECKLIST_TEMPLATES = [
+    ("warehouse_departure", "Warehouse Departure", [
+        "Truck inspected (walkaround, lights, tires)",
+        "Fuel level checked",
+        "Dollies, straps & blankets loaded",
+        "Tools & shrink wrap on board",
+        "Job details & addresses reviewed",
+    ]),
+    ("arrival", "Arrival", [
+        "Arrived & greeted the customer",
+        "Walkthrough done — scope confirmed",
+        "Photos of existing damage taken",
+        "Floors & doorways protected",
+        "Parking / access secured",
+    ]),
+    ("loading", "Loading", [
+        "Furniture wrapped & padded",
+        "Boxes staged and labeled",
+        "Specialty items secured",
+        "Load strapped & balanced",
+        "Final sweep of every room",
+    ]),
+    ("delivery", "Delivery", [
+        "Walkthrough at the destination",
+        "Floors protected at the destination",
+        "Items placed in the right rooms",
+        "Furniture reassembled",
+        "Blankets & equipment collected",
+    ]),
+    ("completion", "Completion", [
+        "Final walkthrough with the customer",
+        "Damage check confirmed with the customer",
+        "Balance / payment confirmed",
+        "Customer asked for a review",
+        "Truck cleaned & ready for return",
+    ]),
+]
+CHECKLIST_STATUS_ADVANCE = {"warehouse_departure": "En Route", "arrival": "Arrived",
+                            "loading": "In Progress", "completion": "Complete"}
+CHECKLIST_TOTAL_ITEMS = sum(len(items) for _k, _l, items in CHECKLIST_TEMPLATES)
+
+
+async def log_job_event(assignment_id: str, kind: str, title: str, by: str = "", detail: str = ""):
+    try:
+        await mongo_db.job_events.insert_one({"_id": str(uuid4()), "assignment_id": assignment_id,
+                                              "kind": kind, "title": title[:200], "by": by,
+                                              "detail": detail[:300], "at": now_iso()})
+    except Exception as exc:
+        logger.warning("log_job_event failed: %s", exc)
+
+
+async def _assignment_for_member_or_owner(assignment_id: str, p: Dict[str, Any]) -> Dict[str, Any]:
+    a = await mongo_db.assignments.find_one({"_id": assignment_id})
+    if not a:
+        raise HTTPException(status_code=404, detail="No such job.")
+    if p["role"] != "owner" and not any(c["user_id"] == p["user_id"] for c in a.get("crew", [])):
+        raise HTTPException(status_code=403, detail="That job isn't on your schedule.")
+    return a
+
+
+def _checklists_out(state: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    lists = (state or {}).get("lists", {})
+    out = []
+    for key, label, items in CHECKLIST_TEMPLATES:
+        saved = lists.get(key) or {}
+        saved_items = saved.get("items", {})
+        rows, done_count = [], 0
+        for idx, text in enumerate(items):
+            st = saved_items.get(str(idx)) or {}
+            if st.get("done"):
+                done_count += 1
+            rows.append({"idx": idx, "label": text, "done": bool(st.get("done")),
+                         "by": st.get("by", ""), "at": st.get("at")})
+        out.append({"key": key, "label": label, "items": rows, "done_count": done_count,
+                    "total": len(items), "completed_at": saved.get("completed_at"),
+                    "auto_status": CHECKLIST_STATUS_ADVANCE.get(key)})
+    return out
+
+
+def _checklist_done_count(state: Optional[Dict[str, Any]]) -> int:
+    n = 0
+    for key, _label, items in CHECKLIST_TEMPLATES:
+        saved = (((state or {}).get("lists") or {}).get(key) or {}).get("items", {})
+        n += sum(1 for i in range(len(items)) if (saved.get(str(i)) or {}).get("done"))
+    return n
+
+
+@api_router.get("/assignments/{assignment_id}/checklists")
+async def get_job_checklists(assignment_id: str, request: Request):
+    p = await current_principal(request)
+    await _assignment_for_member_or_owner(assignment_id, p)
+    state = await mongo_db.job_checklists.find_one({"_id": assignment_id})
+    return {"checklists": _checklists_out(state)}
+
+
+class ChecklistItemPayload(BaseModel):
+    done: bool
+
+
+@api_router.post("/assignments/{assignment_id}/checklists/{list_key}/items/{idx}")
+async def toggle_checklist_item(assignment_id: str, list_key: str, idx: int, payload: ChecklistItemPayload,
+                                request: Request):
+    p = await current_principal(request)
+    a = await _assignment_for_member_or_owner(assignment_id, p)
+    template = next((t for t in CHECKLIST_TEMPLATES if t[0] == list_key), None)
+    if not template or not (0 <= idx < len(template[2])):
+        raise HTTPException(status_code=404, detail="No such checklist item.")
+    field = f"lists.{list_key}.items.{idx}"
+    item_state = {"done": True, "by": p["name"], "at": now_iso()} if payload.done else {"done": False}
+    await mongo_db.job_checklists.update_one({"_id": assignment_id}, {"$set": {field: item_state}}, upsert=True)
+    state = await mongo_db.job_checklists.find_one({"_id": assignment_id})
+    saved = ((state.get("lists") or {}).get(list_key) or {})
+    saved_items = saved.get("items", {})
+    all_done = all((saved_items.get(str(i)) or {}).get("done") for i in range(len(template[2])))
+    advanced_to = None
+    if all_done and not saved.get("completed_at"):
+        await mongo_db.job_checklists.update_one(
+            {"_id": assignment_id}, {"$set": {f"lists.{list_key}.completed_at": now_iso()}})
+        await log_job_event(assignment_id, "checklist", f"{template[1]} checklist completed", by=p["name"])
+        target = CHECKLIST_STATUS_ADVANCE.get(list_key)
+        if target and EXEC_STATUSES.index(target) > EXEC_STATUSES.index(a.get("exec_status") or "Assigned"):
+            await _apply_exec_status(a, target, p)
+            advanced_to = target
+    elif not all_done and saved.get("completed_at"):
+        await mongo_db.job_checklists.update_one(
+            {"_id": assignment_id}, {"$unset": {f"lists.{list_key}.completed_at": ""}})
+    fresh = await mongo_db.job_checklists.find_one({"_id": assignment_id})
+    return {"checklists": _checklists_out(fresh), "advanced_to": advanced_to}
+
+
+@api_router.get("/assignments/{assignment_id}/timeline")
+async def job_timeline(assignment_id: str, request: Request):
+    p = await current_principal(request)
+    a = await _assignment_for_member_or_owner(assignment_id, p)
+    events = []
+    if a.get("created_at"):
+        events.append({"at": a["created_at"], "kind": "created", "title": "Job put on the schedule", "by": ""})
+    for ev in a.get("status_history", []):
+        events.append({"at": ev.get("at"), "kind": "status", "title": f"Status: {ev.get('status')}",
+                       "by": ev.get("by", "")})
+    for d in await mongo_db.job_events.find({"assignment_id": assignment_id}).to_list(200):
+        events.append({"at": d.get("at"), "kind": d.get("kind", "event"), "title": d.get("title", ""),
+                       "by": d.get("by", ""), "detail": d.get("detail", "")})
+    for e in await mongo_db.time_entries.find({"assignment_id": assignment_id}).to_list(100):
+        if e.get("clock_in"):
+            title = f"{e.get('user_name')} clocked in"
+            if "not_scheduled_today" in (e.get("flags") or []):
+                title += " (wasn't scheduled)"
+            events.append({"at": e["clock_in"]["at"], "kind": "clock", "title": title, "by": e.get("user_name", "")})
+        if e.get("clock_out"):
+            hrs = e.get("hours")
+            events.append({"at": e["clock_out"]["at"], "kind": "clock",
+                           "title": f"{e.get('user_name')} clocked out" + (f" — {hrs:.1f}h" if hrs else ""),
+                           "by": e.get("user_name", "")})
+    for ph in await mongo_db.job_photos.find({"assignment_id": assignment_id}).to_list(100):
+        events.append({"at": ph.get("created_at"), "kind": "photo",
+                       "title": f"Photo added by {ph.get('user_name')}", "by": ph.get("user_name", "")})
+    events = [e for e in events if e.get("at")]
+    events.sort(key=lambda e: e["at"], reverse=True)
+    return {"events": events[:200]}
 
 
 # ------- photos (object storage)
@@ -2986,13 +3178,14 @@ class PunchPayload(BaseModel):
 
 
 async def _todays_assignment(user_id: str) -> Optional[Dict[str, Any]]:
-    today = datetime.now(timezone.utc).date().isoformat()
-    return await mongo_db.assignments.find_one({"crew.user_id": user_id, "job_date": today})
+    return await mongo_db.assignments.find_one({"crew.user_id": user_id, "job_date": _et_today()})
 
 
 def _punch_flags(punch_at: datetime, coords: Optional[Dict[str, float]], assignment: Optional[Dict[str, Any]],
                  kind: str) -> List[str]:
     flags = []
+    if kind == "in" and assignment is None:
+        flags.append("not_scheduled_today")
     if not coords:
         flags.append(f"no_gps_{kind}")
     if assignment:
@@ -3038,6 +3231,10 @@ async def clock_in(payload: PunchPayload, request: Request, p: Dict[str, Any] = 
         "approved": False, "edited": False, "created_at": now.isoformat(),
     }
     await mongo_db.time_entries.insert_one(doc)
+    if "not_scheduled_today" in doc["flags"]:
+        await notify(None, "owner", "Unscheduled clock-in",
+                     f"{p['name']} just clocked in but isn't on any job today. Check the Time tab on the Crew page.",
+                     "flag", {"entry_id": doc["_id"]})
     if coords:
         await mongo_db.gps_pings.insert_one({"_id": str(uuid4()), "user_id": p["user_id"], "user_name": p["name"],
                                              "lat": payload.lat, "lng": payload.lng, "at": now.isoformat()})

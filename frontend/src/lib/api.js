@@ -59,6 +59,9 @@ export const listAssignmentsApi = (params = {}) => axios.get(`${API}/assignments
 export const createAssignmentApi = (a) => axios.post(`${API}/assignments`, a).then((r) => r.data);
 export const updateAssignmentApi = (id, a) => axios.patch(`${API}/assignments/${id}`, a).then((r) => r.data);
 export const dispatchBoardApi = (date) => axios.get(`${API}/dispatch/board`, { params: date ? { date } : {} }).then((r) => r.data);
+export const jobChecklistsApi = (id) => axios.get(`${API}/assignments/${id}/checklists`).then((r) => r.data);
+export const toggleChecklistItemApi = (id, listKey, idx, done) => axios.post(`${API}/assignments/${id}/checklists/${listKey}/items/${idx}`, { done }).then((r) => r.data);
+export const jobTimelineApi = (id) => axios.get(`${API}/assignments/${id}/timeline`).then((r) => r.data);
 export const deleteAssignmentApi = (id) => axios.delete(`${API}/assignments/${id}`).then((r) => r.data);
 export const myJobsApi = () => axios.get(`${API}/crew/my-jobs`).then((r) => r.data.jobs);
 export const setJobStatusApi = (id, status, notes, delay_factors) =>
