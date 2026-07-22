@@ -58,6 +58,7 @@ export const saveUserProfileApi = (id, profile) => axios.put(`${API}/users/${id}
 export const listAssignmentsApi = (params = {}) => axios.get(`${API}/assignments`, { params }).then((r) => r.data.assignments);
 export const createAssignmentApi = (a) => axios.post(`${API}/assignments`, a).then((r) => r.data);
 export const updateAssignmentApi = (id, a) => axios.patch(`${API}/assignments/${id}`, a).then((r) => r.data);
+export const dispatchBoardApi = (date) => axios.get(`${API}/dispatch/board`, { params: date ? { date } : {} }).then((r) => r.data);
 export const deleteAssignmentApi = (id) => axios.delete(`${API}/assignments/${id}`).then((r) => r.data);
 export const myJobsApi = () => axios.get(`${API}/crew/my-jobs`).then((r) => r.data.jobs);
 export const setJobStatusApi = (id, status, notes, delay_factors) =>

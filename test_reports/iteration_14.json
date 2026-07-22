@@ -1,0 +1,41 @@
+{
+  "summary": "Iteration 14 QA of Dispatch Board (Phase A) — new owner-only GET /api/dispatch/board endpoint + new /dispatch page + drag-drop crew/truck onto job cards via reused PATCH /api/assignments/{id} (409 conflict flow preserved). Backend: 23/23 pytest cases pass in 2.62s covering board shape, counts, QA state, role gates (crew/sales/marketing → 403), behind logic (future arrival = false, In Progress = false + counted active), crew/truck pool fields, date param (future day → is_today=false + behind all false), and 409 conflict path. Frontend: owner /dispatch renders every selector in the review-request exactly — 5 KPIs, date nav with 'today' suffix, 2 job cards with behind badges, crew pool with Javante (1 today) + Junior, 5 truck chips (Truck 1 tagged with Montclair). All interactions verified: position toggle Driver↔Helper, Assign a job modal, Edit details pre-fill, HTML5 native DnD via dispatchEvent (crew + truck drop both persisted), conflict dialog with warning line 'Javante Brown is already on QA Dispatch Move — Montclair that day', Assign anyway force, remove crew, remove truck. Regression: nav-dispatch hidden for sales/marketing/crew ghosts, /dispatch redirects them appropriately (sales→/leads, crew→/today), QA assignments still visible via /api/assignments, Junior received both 'New job assigned' and 'Taken off a job' bell notifications during DnD test.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration14_dispatch.py",
+    "/app/test_reports/pytest/iter14_dispatch.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py dispatch_board L2740-2815: correctly gated behind require_owner; ghost roles (crew/sales/marketing) all 403 verified. Uses _et_today() for is_today comparison — timezone-safe.",
+    "server.py L2759-2764: behind logic gates on is_today AND exec_status in ('Assigned','En Route') AND arrival_time+15min < now — verified via dynamic test that (a) future arrival returns behind=false and (b) 'In Progress' is excluded from behind and correctly counted in counts.active.",
+    "server.py L2789-2790: crew pool filter '{roles: crew} OR {role: crew}' plus 'ghost != true' correctly excludes ghost users — /dispatch/board.crew shows only Javante + Junior (real crew), not TestCrewAdmin. Verified.",
+    "server.py L2799: truck_use is a dict keyed by truck_id, so a truck used on multiple jobs same-day would only show the LAST job_name (dict overwrite). Not a bug for current data but flagging as a potential edge case if two jobs ever share one truck same day.",
+    "server.py L2801-2811: revenue_today iterates paid Square invoices and filters by ET day of paid_at — correct behavior; verified 0.0 with no test invoices (Square LIVE mode).",
+    "Dispatch.jsx L27-39 payloadFrom: builds FULL AssignmentPayload for PATCH (project_id/job_name/job_date/... + crew) so backend PATCH validation never rejects. `ignore_warnings: false` is the default, allowing the reused 409-conflicts flow to surface — verified triggers dispatch-conflict-dialog.",
+    "Dispatch.jsx L104-132 onDrop: HTML5 dataTransfer round-tripped as JSON {kind:'crew'|'truck',...}. When dragging a crew chip already on another job, `data.from` triggers a two-step apply (remove-from-source + add-to-target via andThen callback) — clean approach.",
+    "Dispatch.jsx L17 todayET(): uses 'en-CA' locale + America/New_York timezone → YYYY-MM-DD; matches backend _et_today(). Confirmed date label switches to 'today' suffix correctly on ET-today.",
+    "Dispatch.jsx L62-66: polling every 60s with setInterval — reasonable for live board updates; cleaned up on unmount.",
+    "Dispatch.jsx L145-148 dragPayload: sets 'text/plain' with JSON — works with dispatchEvent DataTransfer round-trip (verified in playwright).",
+    "Dispatch.jsx does not currently show a loading indicator while `busy` is true beyond disabling the position/remove buttons — minor UX polish but not a blocker.",
+    "Layout.jsx nav-dispatch entry gated on roles=['owner'] only — verified sales/marketing/crew ghosts do NOT see it and are redirected on direct URL access."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration14_dispatch.py (new — 23 pytest cases across 6 test classes)"
+  ],
+  "success_rate": {
+    "backend": "100% (23/23 pytest pass in 2.62s)",
+    "frontend": "100% (all data-testid selectors + all interaction flows verified end-to-end)"
+  },
+  "test_credentials": "Owner HaulYeahAdmin / HaulYeah2026! ✓ ; Ghosts TestSales/Marketing/CrewAdmin / HaulYeah2026! ✓ ; Junior junior@haulyeahmoves.com / JunCrew2026! ✓ — all working.",
+  "seed_data_creation": "None persisted — one temporary TEST_dispatch_future_* assignment was created for the behind-logic dynamic test (23:45 arrival, exec_status forced to 'In Progress' via mongo direct write) and DELETEd in the same test class. Final board state verified back to 2 QA assignments (Montclair + Hoboken) with counts total=2, behind=2, needs_crew=1. Both QA demo assignments left untouched per handoff note. DnD test transiently added Junior+Truck2 to Hoboken then Javante via conflict-force flow — all reverted to no-crew / no-truck via job-crew-remove + job-truck-remove buttons before test finished.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "New pytest suite /app/backend/tests/test_iteration14_dispatch.py (23 tests, ~2.6s, 2 workers via pytest-xdist LoadScope). Six test classes: TestDispatchBoardOwner (7 — shape + QA state), TestDispatchRoleGates (4 — crew/sales/marketing 403, no-auth 401), TestCrewAndTruckPool (4 — Javante jobs_today=1, Junior=0, Truck 1 on Montclair, others free), TestDateParam (2 — future day is_today=false + pools preserved), TestBehindLogic (4 — future arrival not behind + In Progress not behind + counted active + cleanup + QA regression), TestAssignmentConflictFlow (2 — 409 + no persistence on 409). Frontend covered: nav-dispatch, dispatch-page, dispatch-kpi-{revenue,jobs,active,complete,behind}, dispatch-date-{prev,next,label,today}, dispatch-banner, dispatch-empty (not exercised — data present), dispatch-job-card, dispatch-behind-badge, dispatch-clocked-badge (0 today), dispatch-status-chip, dispatch-crew-pool + dispatch-crew-chip, dispatch-truck-pool + dispatch-truck-chip, job-crew-chip, job-crew-remove, job-position-toggle, job-truck-chip, job-truck-remove, job-no-crew, job-no-truck, dispatch-edit-job, dispatch-assign-btn, dispatch-conflict-dialog + dispatch-conflict-line + dispatch-conflict-force + dispatch-conflict-cancel, assignment-modal (regression). HTML5 DnD trick that WORKS for this app: playwright evaluate() → new DataTransfer + dispatchEvent('dragstart'|'dragover'|'drop'|'dragend') on the two elements — Dispatch.jsx reads via getData('text/plain') so the manual DataTransfer round-trips correctly. Prior iter12/iter13 pytest suites (alerts/webhooks + gmail/meta) remain green — did not re-run this iteration since no shared code path changed. Iter14 kept the two QA Dispatch Move assignments (Montclair + Hoboken) in place per handoff note.",
+  "rca of the issue": "No issues found. All acceptance criteria in the review-request met exactly. Notable observations: (1) HTML5 native drag simulation via playwright's native page.mouse works unreliably for HTML5 dataTransfer — the working pattern is page.evaluate() with new DataTransfer() + dispatchEvent for dragstart/dragover/drop/dragend. This is documented in context_for_next_testing_agent. (2) One informational CONSOLE_ERR: 'Failed to load resource: 409' during the conflict-flow test — this is the EXPECTED 409 conflicts response from PATCH /api/assignments/{id} that opens the dispatch-conflict-dialog, not a bug. (3) The 401 CONSOLE_ERR spam during login is the standard AuthGate /me probe before token is set — normal SPA behavior, harmless (same as iter13 finding)."
+}

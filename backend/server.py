@@ -2735,6 +2735,86 @@ async def delete_assignment(assignment_id: str, p: Dict[str, Any] = Depends(requ
     return {"deleted": True}
 
 
+# ------- dispatch board (owner day view over existing assignments)
+
+@api_router.get("/dispatch/board")
+async def dispatch_board(date: Optional[str] = None, p: Dict[str, Any] = Depends(require_owner)):
+    day = (date or _et_today())[:10]
+    docs = await mongo_db.assignments.find({"job_date": day}).to_list(100)
+    docs.sort(key=lambda a: (a.get("arrival_time") or "99:99", a.get("job_name") or ""))
+    ids = [a["_id"] for a in docs]
+    entries = await mongo_db.time_entries.find({"assignment_id": {"$in": ids}}).to_list(500)
+    open_by_assignment: Dict[str, int] = {}
+    for e in entries:
+        if not e.get("clock_out"):
+            aid = e.get("assignment_id")
+            open_by_assignment[aid] = open_by_assignment.get(aid, 0) + 1
+    now_et = datetime.now(ZoneInfo("America/New_York"))
+    is_today = day == _et_today()
+    out, active, complete, behind_count, needs_crew = [], 0, 0, 0, 0
+    for a in docs:
+        item = _sanitize_assignment(a)
+        item["clocked_in"] = open_by_assignment.get(a["_id"], 0)
+        behind = False
+        if is_today and a.get("arrival_time") and a.get("exec_status") in ("Assigned", "En Route"):
+            try:
+                hh, mm = a["arrival_time"].split(":")[:2]
+                behind = now_et > now_et.replace(hour=int(hh), minute=int(mm), second=0, microsecond=0) + timedelta(minutes=15)
+            except ValueError:
+                pass
+        item["behind"] = behind
+        status = a.get("exec_status") or "Assigned"
+        if status == "Complete":
+            complete += 1
+        elif status != "Assigned":
+            active += 1
+        if behind:
+            behind_count += 1
+        if not a.get("crew"):
+            needs_crew += 1
+        out.append(item)
+    day_dt = datetime.fromisoformat(day)
+    week_start = (day_dt - timedelta(days=day_dt.weekday())).date().isoformat()
+    week_end = (day_dt + timedelta(days=6 - day_dt.weekday())).date().isoformat()
+    week_docs = await mongo_db.assignments.find(
+        {"job_date": {"$gte": week_start, "$lte": week_end}}, {"crew": 1}).to_list(300)
+    week_count: Dict[str, int] = {}
+    for a in week_docs:
+        for c in a.get("crew", []):
+            week_count[c["user_id"]] = week_count.get(c["user_id"], 0) + 1
+    on_today: Dict[str, int] = {}
+    for a in docs:
+        for c in a.get("crew", []):
+            on_today[c["user_id"]] = on_today.get(c["user_id"], 0) + 1
+    crew_users = await mongo_db.users.find(
+        {"active": True, "ghost": {"$ne": True}, "$or": [{"roles": "crew"}, {"role": "crew"}]}).sort("name", 1).to_list(100)
+    open_entries = await mongo_db.time_entries.find({"clock_out": None}, {"user_id": 1}).to_list(100)
+    clocked_ids = {e.get("user_id") for e in open_entries}
+    off_docs = await mongo_db.availability.find({"date": day, "available": False}).to_list(100)
+    off_ids = {d.get("user_id") for d in off_docs}
+    crew_pool = [{"id": u["_id"], "name": u.get("name", ""), "jobs_today": on_today.get(u["_id"], 0),
+                  "jobs_week": week_count.get(u["_id"], 0), "clocked_in": u["_id"] in clocked_ids,
+                  "off": u["_id"] in off_ids} for u in crew_users]
+    trucks = await mongo_db.trucks.find({"active": {"$ne": False}}).sort("name", 1).to_list(100)
+    truck_use = {a.get("truck_id"): a.get("job_name") for a in docs if a.get("truck_id")}
+    truck_pool = [{"id": t["_id"], "name": t.get("name", ""), "on_job": truck_use.get(t["_id"])} for t in trucks]
+    revenue_today = 0.0
+    paid = await mongo_db.square_invoices.find(
+        {"status": "PAID", "paid_at": {"$ne": None}}, {"_id": 0, "amount": 1, "paid_at": 1}).to_list(1000)
+    for inv in paid:
+        try:
+            et_day = datetime.fromisoformat(str(inv["paid_at"]).replace("Z", "+00:00")).astimezone(
+                ZoneInfo("America/New_York")).date().isoformat()
+        except ValueError:
+            continue
+        if et_day == day:
+            revenue_today += inv.get("amount") or 0
+    return {"date": day, "is_today": is_today, "assignments": out, "crew": crew_pool, "trucks": truck_pool,
+            "revenue_today": round(revenue_today, 2),
+            "counts": {"total": len(out), "active": active, "complete": complete,
+                       "behind": behind_count, "needs_crew": needs_crew}}
+
+
 # ------- crew: my jobs + execution workflow
 
 EXEC_STATUSES = ["Assigned", "En Route", "Arrived", "In Progress", "Complete"]
