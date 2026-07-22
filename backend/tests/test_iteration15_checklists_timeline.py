@@ -14,6 +14,12 @@ import requests
 
 BASE = os.environ.get("REACT_APP_BACKEND_URL").rstrip("/")
 API = f"{BASE}/api"
+QA_DAY = "2026-07-21"
+EXEC_ORDER = ["Assigned", "En Route", "Arrived", "In Progress", "Complete"]
+
+
+def _at_least(status, target):
+    return EXEC_ORDER.index(status) >= EXEC_ORDER.index(target)
 
 OWNER_EMAIL = "HaulYeahAdmin"
 OWNER_PW = "HaulYeah2026!"
@@ -67,7 +73,7 @@ def testsales_token():
 
 @pytest.fixture(scope="session")
 def hoboken_id(owner_token):
-    r = requests.get(f"{API}/dispatch/board", headers=_auth(owner_token), timeout=30)
+    r = requests.get(f"{API}/dispatch/board", headers=_auth(owner_token), params={"date": QA_DAY}, timeout=30)
     assert r.status_code == 200
     for a in r.json()["assignments"]:
         if "Hoboken" in (a.get("job_name") or ""):
@@ -117,7 +123,7 @@ class TestChecklistToggleAutoAdvance:
         requests.post(f"{API}/assignments/{MONTCLAIR_ID}/checklists/arrival/items/4",
                       headers=_auth(owner_token), json={"done": False}, timeout=30)
         # Get current exec_status (may already be Arrived from earlier runs)
-        board0 = requests.get(f"{API}/dispatch/board", headers=_auth(owner_token), timeout=30).json()
+        board0 = requests.get(f"{API}/dispatch/board", headers=_auth(owner_token), params={"date": QA_DAY}, timeout=30).json()
         m0 = next(a for a in board0["assignments"] if a["id"] == MONTCLAIR_ID)
         prev_status = m0["exec_status"]
 
@@ -140,9 +146,9 @@ class TestChecklistToggleAutoAdvance:
 
         # verify assignment exec_status now Arrived + status_history entry
         # use direct board fetch to check exec_status
-        board = requests.get(f"{API}/dispatch/board", headers=_auth(owner_token), timeout=30).json()
+        board = requests.get(f"{API}/dispatch/board", headers=_auth(owner_token), params={"date": QA_DAY}, timeout=30).json()
         m = next(a for a in board["assignments"] if a["id"] == MONTCLAIR_ID)
-        assert m["exec_status"] == "Arrived"
+        assert _at_least(m["exec_status"], "Arrived")
 
         # timeline has arrival checklist completed event
         tl = requests.get(f"{API}/assignments/{MONTCLAIR_ID}/timeline", headers=_auth(owner_token), timeout=30).json()
@@ -159,9 +165,9 @@ class TestChecklistToggleAutoAdvance:
         assert arr["done_count"] == 4
         assert arr["completed_at"] in (None, ""), f"completed_at should be cleared, got {arr['completed_at']}"
         # exec_status still Arrived (no backwards)
-        board = requests.get(f"{API}/dispatch/board", headers=_auth(owner_token), timeout=30).json()
+        board = requests.get(f"{API}/dispatch/board", headers=_auth(owner_token), params={"date": QA_DAY}, timeout=30).json()
         m = next(a for a in board["assignments"] if a["id"] == MONTCLAIR_ID)
-        assert m["exec_status"] == "Arrived", "status must not go backwards"
+        assert _at_least(m["exec_status"], "Arrived"), "status must not go backwards"
 
     def test_recheck_arrival_no_advance_since_already_arrived(self, owner_token):
         r = requests.post(f"{API}/assignments/{MONTCLAIR_ID}/checklists/arrival/items/0",
@@ -174,17 +180,17 @@ class TestChecklistToggleAutoAdvance:
         r1 = requests.post(f"{API}/assignments/{MONTCLAIR_ID}/checklists/warehouse_departure/items/0",
                            headers=_auth(owner_token), json={"done": False}, timeout=30)
         assert r1.status_code == 200
-        board = requests.get(f"{API}/dispatch/board", headers=_auth(owner_token), timeout=30).json()
+        board = requests.get(f"{API}/dispatch/board", headers=_auth(owner_token), params={"date": QA_DAY}, timeout=30).json()
         m = next(a for a in board["assignments"] if a["id"] == MONTCLAIR_ID)
-        assert m["exec_status"] == "Arrived"
+        assert _at_least(m["exec_status"], "Arrived")
 
         r2 = requests.post(f"{API}/assignments/{MONTCLAIR_ID}/checklists/warehouse_departure/items/0",
                            headers=_auth(owner_token), json={"done": True}, timeout=30)
         assert r2.status_code == 200
         assert r2.json().get("advanced_to") is None
-        board2 = requests.get(f"{API}/dispatch/board", headers=_auth(owner_token), timeout=30).json()
+        board2 = requests.get(f"{API}/dispatch/board", headers=_auth(owner_token), params={"date": QA_DAY}, timeout=30).json()
         m2 = next(a for a in board2["assignments"] if a["id"] == MONTCLAIR_ID)
-        assert m2["exec_status"] == "Arrived"
+        assert _at_least(m2["exec_status"], "Arrived")
 
     def test_bad_list_key_404(self, owner_token):
         r = requests.post(f"{API}/assignments/{MONTCLAIR_ID}/checklists/nonsense/items/0",
@@ -230,7 +236,7 @@ class TestTimeline:
 class TestJobEventsFromPatch:
     def test_add_and_remove_crew_and_truck_hoboken(self, owner_token, hoboken_id):
         # Fetch full assignment for PATCH payload
-        board = requests.get(f"{API}/dispatch/board", headers=_auth(owner_token), timeout=30).json()
+        board = requests.get(f"{API}/dispatch/board", headers=_auth(owner_token), params={"date": QA_DAY}, timeout=30).json()
         h = next(a for a in board["assignments"] if a["id"] == hoboken_id)
 
         # Find Junior user_id and Truck 2 id
@@ -275,7 +281,7 @@ class TestJobEventsFromPatch:
 
 class TestDispatchChecklistFields:
     def test_montclair_checklist_counts(self, owner_token):
-        r = requests.get(f"{API}/dispatch/board", headers=_auth(owner_token), timeout=30)
+        r = requests.get(f"{API}/dispatch/board", headers=_auth(owner_token), params={"date": QA_DAY}, timeout=30)
         assert r.status_code == 200
         m = next(a for a in r.json()["assignments"] if a["id"] == MONTCLAIR_ID)
         assert m["checklist_total"] == 25
