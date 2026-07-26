@@ -31,7 +31,7 @@ const SecretInput = ({ testId, label, hint, isSet, value, onChange }) => (
 export const IntegrationsCard = () => {
   const [data, setData] = useState(null);
   const [sync, setSync] = useState(null);
-  const [form, setForm] = useState({ square_location_id: "", square_notification_url: "", openphone_number: "", default_truck_pickup: "" });
+  const [form, setForm] = useState({ square_location_id: "", square_notification_url: "", openphone_number: "", default_truck_pickup: "", owner_alert_phone: "" });
   const [secrets, setSecrets] = useState({ square_access_token: "", square_webhook_key: "", openphone_api_key: "" });
   const [saving, setSaving] = useState(false);
 
@@ -43,6 +43,7 @@ export const IntegrationsCard = () => {
         square_notification_url: d.square_notification_url || "",
         openphone_number: d.openphone_number || "",
         default_truck_pickup: d.default_truck_pickup || "",
+        owner_alert_phone: d.owner_alert_phone || "",
       });
     }).catch(() => {});
     squareSyncStatusApi().then(setSync).catch(() => {});
@@ -119,6 +120,12 @@ export const IntegrationsCard = () => {
           <Input data-testid="integr-truck-pickup-input" value={form.default_truck_pickup}
             onChange={(e) => setForm((s) => ({ ...s, default_truck_pickup: e.target.value }))} />
           <p className="text-[11px] text-slate-400 mt-0.5">New jobs start with this address. You can change it per job on the Jobs board.</p>
+        </div>
+        <div>
+          <Label>Your cell for portal alerts</Label>
+          <Input data-testid="integr-owner-phone-input" placeholder="+1 973 555 0123" value={form.owner_alert_phone}
+            onChange={(e) => setForm((s) => ({ ...s, owner_alert_phone: e.target.value }))} />
+          <p className="text-[11px] text-slate-400 mt-0.5">When a customer adds gate codes, uploads files, tips, or leaves a review, you get a text here (sent via OpenPhone).</p>
         </div>
         <Button data-testid="integr-save-btn" onClick={save} disabled={saving} className="gap-1.5 bg-[#1B2A4A] hover:bg-[#16233d]">
           {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save integrations

@@ -15,7 +15,7 @@ import { fmtMoney } from "@/lib/format";
 import { mapsUrl, fmtTime12 } from "@/lib/maps";
 import {
   listJobsApi, patchJobApi, squareSyncStatusApi, listUsersApi, listTrucksApi, createTruckApi,
-  listReviewRequestsApi, apiErrorMessage,
+  listReviewRequestsApi, jobPortalUploadsApi, portalUploadUrl, apiErrorMessage,
 } from "@/lib/api";
 
 const POSITIONS = ["Driver", "Lead", "Helper", "Packer"];
@@ -46,6 +46,53 @@ const PayRow = ({ label, info }) => {
 };
 
 const Money = ({ v }) => <>{fmtMoney(v)}</>;
+
+const PORTAL_LABELS = {
+  gate_code: "Gate code", elevator: "Elevator", parking: "Parking",
+  special_requests: "Requests", inventory_notes: "Inventory",
+};
+
+const PortalInfo = ({ job }) => {
+  const [uploads, setUploads] = useState(null);
+  const d = job.portal_details || {};
+  const rows = Object.entries(PORTAL_LABELS).filter(([k]) => d[k]);
+  if (!rows.length && !job.portal_review) return null;
+  const token = job.tracking?.token;
+  return (
+    <div data-testid={`portal-info-${job.invoice_number}`} className="bg-orange-50/70 border border-orange-100 rounded-md p-3 space-y-1 text-sm">
+      <p className="text-[11px] font-bold uppercase tracking-wide text-orange-700">From the customer portal</p>
+      {rows.map(([k, label]) => (
+        <p key={k} className="text-slate-700"><strong>{label}:</strong> {d[k]}</p>
+      ))}
+      {job.portal_review && (
+        <p data-testid={`portal-review-${job.invoice_number}`} className="text-slate-700">
+          <strong>Review:</strong> {"★".repeat(job.portal_review.rating)}{"☆".repeat(5 - job.portal_review.rating)}
+          {job.portal_review.text ? ` — "${job.portal_review.text}"` : ""}
+        </p>
+      )}
+      {uploads === null ? (
+        <button data-testid={`portal-uploads-btn-${job.invoice_number}`} className="text-xs font-semibold text-[#E8743B] hover:underline"
+          onClick={() => jobPortalUploadsApi(job.id).then((r) => setUploads(r.uploads)).catch(() => setUploads([]))}>
+          Show customer files
+        </button>
+      ) : uploads.length === 0 ? (
+        <p className="text-xs text-slate-400">No files uploaded yet.</p>
+      ) : (
+        <div className="flex flex-wrap gap-2 pt-1">
+          {uploads.map((u) => (
+            <a key={u.id} data-testid="portal-owner-upload" href={portalUploadUrl(token, u.id)} target="_blank" rel="noreferrer" className="block">
+              {(u.content_type || "").startsWith("image/") ? (
+                <img src={portalUploadUrl(token, u.id)} alt={u.filename} className="w-14 h-14 object-cover rounded border border-orange-200" />
+              ) : (
+                <span className="text-xs text-sky-700 underline">{u.filename}</span>
+              )}
+            </a>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
 
 const AddrLink = ({ label, addr, testId }) =>
   addr ? (
@@ -277,6 +324,7 @@ export default function JobsBoard() {
                 <AddrLink label="To" addr={job.dropoff_address} testId={`maps-to-${job.invoice_number}`} />
                 <AddrLink label="Truck pickup" addr={job.truck_pickup_location} testId={`maps-truck-${job.invoice_number}`} />
               </div>
+              <PortalInfo job={job} />
             </div>
           ))}
         </div>

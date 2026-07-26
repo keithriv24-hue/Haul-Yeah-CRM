@@ -1104,6 +1104,7 @@ class IntegrationsPayload(BaseModel):
     openphone_api_key: Optional[str] = None
     openphone_number: Optional[str] = None
     default_truck_pickup: Optional[str] = None
+    owner_alert_phone: Optional[str] = None
 
 
 async def _integration_settings_out() -> Dict[str, Any]:
@@ -1307,9 +1308,227 @@ async def track_job(token: str):
                 minutes_ago = None
             if live and minutes_ago is not None and minutes_ago <= 10:
                 position = {"lat": pings[0]["lat"], "lng": pings[0]["lng"]}
+    assignment = None
+    if crew_ids and job.get("job_date"):
+        assignment = await mongo_db.assignments.find_one(
+            {"job_date": job["job_date"], "crew.user_id": {"$in": crew_ids}})
+    if assignment and assignment.get("exec_status") and assignment["exec_status"] != "Assigned":
+        status = assignment["exec_status"]
+    elif job.get("crew"):
+        status = "Crew assigned"
+    else:
+        status = "Scheduled"
+    paid_full = (job.get("paid_in_full") or {}).get("status") == "paid"
+    quote = job.get("quote_total")
+    deposit = (job.get("deposit_paid") or {}).get("amount") or job.get("deposit_amount")
+    remaining = None
+    if paid_full:
+        remaining = 0.0
+    elif quote is not None:
+        try:
+            remaining = max(0.0, round(float(quote) - float(deposit or 0), 2))
+        except (TypeError, ValueError):
+            remaining = None
+    invoices = []
+    if job.get("lead_id"):
+        for inv in await mongo_db.square_invoices.find({"lead_id": job["lead_id"]}).to_list(10):
+            invoices.append({"invoice_number": inv.get("invoice_number"), "status": inv.get("status"),
+                             "amount": inv.get("amount"), "url": inv.get("public_url")})
+    uploads = await mongo_db.portal_uploads.find({"job_id": job["_id"]}).sort("created_at", -1).to_list(30)
+    business = await mongo_db.settings.find_one({"_id": "business"}) or {}
+    creds = await square_creds()
     return {"invoice_number": job.get("invoice_number"), "job_date": job.get("job_date"),
             "start_time": job.get("start_time"), "live": live, "position": position,
-            "updated_minutes_ago": minutes_ago}
+            "updated_minutes_ago": minutes_ago,
+            "customer_name": (job.get("customer") or {}).get("name", ""),
+            "status": status,
+            "pickup_address": job.get("pickup_address"), "dropoff_address": job.get("dropoff_address"),
+            "crew": [{"name": c.get("name", "Crew member"), "position": c.get("position", "Helper")}
+                     for c in job.get("crew", [])],
+            "truck_name": job.get("truck_name") or "",
+            "quote_total": quote, "deposit_amount": deposit, "paid_in_full": paid_full,
+            "remaining_balance": remaining, "invoices": invoices,
+            "details": {k: v for k, v in (job.get("portal_details") or {}).items() if k != "updated_at"},
+            "uploads": [{"id": u["_id"], "kind": u.get("kind"), "filename": u.get("filename"),
+                         "content_type": u.get("content_type")} for u in uploads],
+            "review_link": business.get("reviewLink", ""),
+            "review_submitted": bool(job.get("portal_review")),
+            "tips_enabled": bool(creds["token"] and creds["location_id"])}
+
+
+# ------- customer portal (phase D — extends the public tracking link)
+
+async def _job_by_token(token: str) -> Dict[str, Any]:
+    job = await mongo_db.jobs.find_one({"tracking.token": token})
+    if not job:
+        raise HTTPException(status_code=404,
+                            detail="This link is no longer active. Reply to our text and we'll send a new one.")
+    return job
+
+
+async def _owner_portal_ping(job: Dict[str, Any], title: str, body: str):
+    await notify(None, "owner", title, body, "portal", {"job_id": job["_id"]})
+    try:
+        integ = await get_integrations()
+        phone = (integ.get("owner_alert_phone") or "").strip()
+        if phone:
+            await openphone_send_sms(phone, f"{title} — {body}")
+    except Exception as exc:
+        logger.warning("owner portal sms failed: %s", exc)
+
+
+class PortalDetailsPayload(BaseModel):
+    gate_code: str = ""
+    elevator: str = ""
+    parking: str = ""
+    special_requests: str = ""
+    inventory_notes: str = ""
+
+
+@public_router.post("/track/{token}/details")
+async def portal_save_details(token: str, payload: PortalDetailsPayload):
+    job = await _job_by_token(token)
+    fields = ("gate_code", "elevator", "parking", "special_requests", "inventory_notes")
+    details = {k: (getattr(payload, k) or "").strip()[:600] for k in fields}
+    details["updated_at"] = now_iso()
+    await mongo_db.jobs.update_one({"_id": job["_id"]}, {"$set": {"portal_details": details}})
+    filled = [k.replace("_", " ") for k in fields if details[k]]
+    who = (job.get("customer") or {}).get("name") or "The customer"
+    await _owner_portal_ping(job, "Customer added move details",
+                             f"{who} (Job #{job.get('invoice_number')}) filled in: "
+                             + (", ".join(filled) if filled else "their move details") + ".")
+    return {"ok": True}
+
+
+@public_router.post("/track/{token}/uploads")
+async def portal_upload(token: str, kind: str = "photo", file: UploadFile = File(...)):
+    job = await _job_by_token(token)
+    if kind not in ("photo", "inventory"):
+        raise HTTPException(status_code=422, detail="Upload kind must be photo or inventory.")
+    ct = file.content_type or ""
+    if not (ct.startswith("image/") or ct == "application/pdf"):
+        raise HTTPException(status_code=422, detail="Photos or PDF files only, please.")
+    if await mongo_db.portal_uploads.count_documents({"job_id": job["_id"]}) >= 30:
+        raise HTTPException(status_code=422, detail="Upload limit reached for this move — text us instead!")
+    data = await file.read()
+    if len(data) > 15 * 1024 * 1024:
+        raise HTTPException(status_code=422, detail="That file is too big (15 MB max).")
+    ext = (file.filename or "upload").rsplit(".", 1)[-1].lower() if "." in (file.filename or "") else "bin"
+    path = f"haulyeah-crm/portal/{job['_id']}/{uuid4()}.{ext}"
+    key = await get_storage_key()
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        r = await client.put(f"{STORAGE_URL}/objects/{path}",
+                             headers={"X-Storage-Key": key, "Content-Type": ct}, content=data)
+    if r.status_code >= 300:
+        raise HTTPException(status_code=502, detail="The upload didn't stick. Try again.")
+    doc = {"_id": str(uuid4()), "job_id": job["_id"], "kind": kind,
+           "filename": (file.filename or "upload")[:120], "storage_path": r.json()["path"],
+           "content_type": ct, "created_at": now_iso()}
+    await mongo_db.portal_uploads.insert_one(doc)
+    last = job.get("portal_upload_notice_at") or ""
+    throttled = False
+    try:
+        if last and (datetime.now(timezone.utc) - datetime.fromisoformat(last)).total_seconds() < 900:
+            throttled = True
+    except ValueError:
+        pass
+    if not throttled:
+        await mongo_db.jobs.update_one({"_id": job["_id"]}, {"$set": {"portal_upload_notice_at": now_iso()}})
+        who = (job.get("customer") or {}).get("name") or "The customer"
+        await _owner_portal_ping(job, "Customer uploaded files",
+                                 f"{who} (Job #{job.get('invoice_number')}) added "
+                                 + ("an inventory file" if kind == "inventory" else "photos")
+                                 + " to their move. Check the Jobs board.")
+    return {"id": doc["_id"]}
+
+
+@public_router.get("/track/{token}/uploads/{upload_id}")
+async def portal_upload_view(token: str, upload_id: str):
+    job = await _job_by_token(token)
+    doc = await mongo_db.portal_uploads.find_one({"_id": upload_id, "job_id": job["_id"]})
+    if not doc:
+        raise HTTPException(status_code=404, detail="No such file.")
+    key = await get_storage_key()
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        r = await client.get(f"{STORAGE_URL}/objects/{doc['storage_path']}", headers={"X-Storage-Key": key})
+    if r.status_code >= 300:
+        raise HTTPException(status_code=404, detail="File missing.")
+    return Response(content=r.content, media_type=doc.get("content_type", "application/octet-stream"))
+
+
+class TipPayload(BaseModel):
+    amount: float
+    name: str = ""
+    note: str = ""
+
+
+@public_router.post("/track/{token}/tip")
+async def portal_tip(token: str, payload: TipPayload):
+    job = await _job_by_token(token)
+    try:
+        amt = round(float(payload.amount), 2)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=422, detail="Enter a tip amount first.")
+    if not (1 <= amt <= 1000):
+        raise HTTPException(status_code=422, detail="Tips can be $1 to $1,000.")
+    creds = await square_creds()
+    if not (creds["token"] and creds["location_id"]):
+        raise HTTPException(status_code=503, detail="Tipping isn't set up yet — but the crew says thanks anyway!")
+    tipper = (payload.name or "").strip()[:80]
+    body = {
+        "idempotency_key": uuid4().hex,
+        "quick_pay": {
+            "name": f"Crew tip — Job #{job.get('invoice_number') or ''}".strip(),
+            "price_money": {"amount": int(round(amt * 100)), "currency": "USD"},
+            "location_id": creds["location_id"],
+        },
+        "payment_note": f"Crew tip from {tipper or 'a happy customer'} — Job #{job.get('invoice_number')}",
+    }
+    data = await square_request("POST", "/v2/online-checkout/payment-links", body)
+    url = (data.get("payment_link") or {}).get("url")
+    if not url:
+        raise HTTPException(status_code=502, detail="Square didn't hand back a checkout link. Try again.")
+    await mongo_db.portal_tips.insert_one({
+        "_id": str(uuid4()), "job_id": job["_id"], "invoice_number": job.get("invoice_number"),
+        "amount": amt, "name": tipper, "note": (payload.note or "").strip()[:300],
+        "link_url": url, "created_at": now_iso()})
+    who = tipper or (job.get("customer") or {}).get("name") or "Someone"
+    await _owner_portal_ping(job, "Crew tip started",
+                             f"{who} opened a ${amt:,.2f} tip checkout for Job #{job.get('invoice_number')}. "
+                             "Watch Square for the payment.")
+    return {"url": url}
+
+
+class PortalReviewPayload(BaseModel):
+    rating: int
+    text: str = ""
+
+
+@public_router.post("/track/{token}/review")
+async def portal_review(token: str, payload: PortalReviewPayload):
+    job = await _job_by_token(token)
+    if not (1 <= payload.rating <= 5):
+        raise HTTPException(status_code=422, detail="Rating must be 1 to 5 stars.")
+    review = {"rating": payload.rating, "text": (payload.text or "").strip()[:600], "at": now_iso()}
+    await mongo_db.jobs.update_one({"_id": job["_id"]}, {"$set": {"portal_review": review}})
+    who = (job.get("customer") or {}).get("name") or "The customer"
+    stars = "★" * payload.rating + "☆" * (5 - payload.rating)
+    await _owner_portal_ping(job, f"New review — {payload.rating}/5",
+                             f"{who} (Job #{job.get('invoice_number')}) left {stars}"
+                             + (f': "{review["text"][:120]}"' if review["text"] else "."))
+    business = await mongo_db.settings.find_one({"_id": "business"}) or {}
+    return {"ok": True, "review_link": business.get("reviewLink", "") if payload.rating >= 4 else ""}
+
+
+@api_router.get("/jobs/{job_id}/portal-uploads")
+async def job_portal_uploads(job_id: str, p: Dict[str, Any] = Depends(require_owner)):
+    job = await mongo_db.jobs.find_one({"_id": job_id})
+    if not job:
+        raise HTTPException(status_code=404, detail="No such job.")
+    ups = await mongo_db.portal_uploads.find({"job_id": job_id}).sort("created_at", -1).to_list(50)
+    return {"token": (job.get("tracking") or {}).get("token"),
+            "uploads": [{"id": u["_id"], "kind": u.get("kind"), "filename": u.get("filename"),
+                         "content_type": u.get("content_type"), "created_at": u.get("created_at")} for u in ups]}
 
 
 class ReviewRequestPayload(BaseModel):

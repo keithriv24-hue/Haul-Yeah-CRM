@@ -128,6 +128,16 @@ export const teamNotificationsApi = () => axios.get(`${API}/team-notifications`)
 export const saveQuoteBreakdownApi = (leadId, breakdown) => axios.put(`${API}/quotes/${leadId}`, { breakdown }).then((r) => r.data);
 export const getQuoteBreakdownApi = (leadId) => axios.get(`${API}/quotes/${leadId}`).then((r) => r.data);
 export const trackApi = (token) => axios.get(`${API}/track/${token}`).then((r) => r.data);
+export const portalDetailsApi = (token, payload) => axios.post(`${API}/track/${token}/details`, payload).then((r) => r.data);
+export const portalUploadApi = (token, file, kind) => {
+  const fd = new FormData();
+  fd.append("file", file);
+  return axios.post(`${API}/track/${token}/uploads`, fd, { params: { kind } }).then((r) => r.data);
+};
+export const portalUploadUrl = (token, id) => `${API}/track/${token}/uploads/${id}`;
+export const portalTipApi = (token, payload) => axios.post(`${API}/track/${token}/tip`, payload).then((r) => r.data);
+export const portalReviewApi = (token, payload) => axios.post(`${API}/track/${token}/review`, payload).then((r) => r.data);
+export const jobPortalUploadsApi = (jobId) => axios.get(`${API}/jobs/${jobId}/portal-uploads`).then((r) => r.data);
 
 export const teamMembersApi = () => axios.get(`${API}/team/members`).then((r) => r.data);
 export const memberDetailApi = (id) => axios.get(`${API}/team/members/${id}`).then((r) => r.data);

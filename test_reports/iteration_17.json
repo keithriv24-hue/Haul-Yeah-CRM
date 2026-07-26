@@ -1,0 +1,50 @@
+{
+  "summary": "Phase D Customer Portal — verified public /track/{token} + write endpoints and owner-side portal wiring end-to-end. 17/18 backend tests pass (1 real bug), all frontend flows work in the browser. Found ONE backend bug: `owner_alert_phone` is accepted+persisted by PUT /api/settings/integrations but is missing from `INTEGRATION_PLAIN` in `_integration_settings_out()`, so both GET and PUT responses omit it → the new Integrations input reads back empty after every reload, breaking the SMS-target UX (and hiding whether SMS is armed).",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "GET/PUT /api/settings/integrations",
+        "issue": "`owner_alert_phone` never appears in the response body. PUT accepts it and $set's it into Mongo (payload.model_dump includes it), but `_integration_settings_out` iterates INTEGRATION_PLAIN = ('square_location_id','square_notification_url','openphone_number','default_truck_pickup') which does NOT include 'owner_alert_phone'. Fix: add 'owner_alert_phone' to INTEGRATION_PLAIN at /app/backend/server.py L1096 (or add a dedicated line in the output dict). Verified via pytest test_integrations_owner_alert_phone_roundtrip and by saving in the UI (Settings → Integrations) then reloading — the input is empty again despite Save success toast.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "IntegrationsCard.integr-owner-phone-input",
+        "issue": "Value does not persist visibly after save+reload because backend GET omits owner_alert_phone (backend bug above). Input itself renders and accepts input.",
+        "selector": "[data-testid='integr-owner-phone-input']",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration17_portal.py",
+    "/app/test_reports/pytest/iter17_portal.xml"
+  ],
+  "action_items": [
+    "Add 'owner_alert_phone' to INTEGRATION_PLAIN in /app/backend/server.py (~L1096) so GET/PUT /api/settings/integrations echoes it. This will fix both the API round-trip and the UI persistence for the new 'Your cell for portal alerts' input."
+  ],
+  "critical_code_review_comments": [
+    "server.py line 1096: INTEGRATION_PLAIN tuple was not updated when owner_alert_phone was added to IntegrationsPayload (L1107). Because _integration_settings_out only echoes fields listed in INTEGRATION_PLAIN, the new field is silently dropped from every read. The value IS persisted (PUT $set includes it), so the user's stored SMS phone can still fire real SMS on portal events even though the UI shows an empty field — a foot-gun that could leak the owner's number into notifications without them realizing it is armed. High-priority fix.",
+    "server.py L1428-1436 upload-throttle logic reads `job.get('portal_upload_notice_at')` from the pre-upload snapshot, so two rapid uploads inside a single request-batch (before the $set persists) can both bypass the 15-min throttle. Not observed in tests (sequential calls with awaits properly re-read the doc via _job_by_token), but worth pinning down if you ever batch-upload."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration17_portal.py (new)",
+    "Note: demo data preserved — parking restored to 'Driveway', review kept at 5★, owner_alert_phone left empty at end of test run."
+  ],
+  "success_rate": {
+    "backend": "94% (17/18)",
+    "frontend": "100% of Phase-D flows exercised worked (the visible IntegrationsCard bug is downstream of the backend bug)"
+  },
+  "test_credentials": "Owner HaulYeahAdmin / HaulYeah2026! (from /app/memory/test_credentials.md). Public portal token: afe748c700fc481497a5720e5d80acde (Job QA-1001, Dana Johnson).",
+  "seed_data_creation": "No new seeds. Test run left QA-1001 in the same demo state (details = gate #4321 / Driveway / 'Please wrap the TV'; 5★ review 'Great crew!'). Backend tests added 1 photo, 1 PDF inventory (throttled → only main-agent-original 'Customer uploaded files' bell entry remained near-recent, but portal_uploads collection now has ~9 files — main agent may want to trim if desired). Portal_tips gained 1 tiny $2 QA link (no charge).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "The lone backend failure (owner_alert_phone missing from GET/PUT response) is a 1-line fix — add the field name to INTEGRATION_PLAIN. Everything else in Phase D is solid: /api/track/{token} returns all expected fields with correct values (status='Crew assigned', quote 1200/deposit 300/remaining 900, tips_enabled true, review_submitted true, 1+ uploads, details prefilled). Details save overwrites + truncates at 600 chars. Uploads: image + PDF/inventory OK, .txt rejected 422, >15MB rejected 422, bad kind 422, wrong id/wrong-token both 404, GET streams with correct content-type. Tip: 1<=amt<=1000 real Square link created (verified square.link URL comes back). Review: 1..5 range enforced, 3★ returns empty review_link. Owner /api/jobs/{id}/portal-uploads returns token+uploads for owner, 403 for other principals (auth verified via no-auth 401 case; couldn't login as real crew because Javante/Junior passwords in test_credentials.md don't work in preview — confirmed independently). Notifications: 4 portal events (details, upload, tip, review) appear in bell dropdown at /dashboard when clicking [data-testid='notifications-bell-btn']. Track UI has no stale 'en route' banner (crew not clocked in). Jobs board card portal-info-QA-1001 renders Gate/Parking/Requests/Review with stars; portal-uploads-btn-QA-1001 lazy-loads thumbnails. NOTE: track-page renders 'Live crew tracking lights up here on moving day.' placeholder as the regression check requires.",
+  "rca_of_the_issue": "owner_alert_phone bug: In /app/backend/server.py, IntegrationsPayload (L1099-1107) was extended with `owner_alert_phone`, and the PUT handler (L1128) does `payload.model_dump()` and $set's the whole dict, so it is stored in Mongo correctly. However `_integration_settings_out()` (L1110-1118) hardcodes plain-text fields via the `INTEGRATION_PLAIN` tuple (L1096), which was NOT updated with 'owner_alert_phone'. Result: every GET/PUT response omits the field → the IntegrationsCard input reads empty even after a successful save. Reproduction: PUT /api/settings/integrations {\"owner_alert_phone\":\"+15550001234\"} → 200 but response body has no owner_alert_phone key; GET returns the same shape without it. Fix: change L1096 to INTEGRATION_PLAIN = ('square_location_id','square_notification_url','openphone_number','default_truck_pickup','owner_alert_phone'). Optional hardening: also strip/normalize the phone in the payload before saving."
+}
