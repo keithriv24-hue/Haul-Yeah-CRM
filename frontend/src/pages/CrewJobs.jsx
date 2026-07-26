@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { MapPin, Truck, Camera, Navigation, Flag, Play, Images, Loader2, CheckCircle2, ListChecks } from "lucide-react";
+import { MapPin, Truck, Camera, Navigation, Flag, Play, Images, Loader2, CheckCircle2, ListChecks, ClipboardCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { Checkbox } from "@/components/ui/checkbox";
 import { InstructionBanner, SearchBar, searchMatch } from "@/components/Bits";
 import { JobChecklists } from "@/components/JobChecklists";
+import { InspectionDialog } from "@/components/fleet/InspectionDialog";
 import { myJobsApi, setJobStatusApi, uploadJobPhotoApi, listJobPhotosApi, photoUrl, apiErrorMessage } from "@/lib/api";
 import { fmtDate, todayISO, mapsLink } from "@/lib/format";
 
@@ -80,14 +81,26 @@ const PhotoSection = ({ jobId }) => {
   );
 };
 
-const ChecklistSection = ({ jobId, onChanged }) => {
+const ChecklistSection = ({ job, onChanged }) => {
   const [open, setOpen] = useState(false);
+  const [inspOpen, setInspOpen] = useState(false);
   return (
     <div className="mt-3 border-t border-slate-100 pt-3">
-      <Button data-testid="job-checklists-toggle-btn" variant="outline" size="sm" className="gap-1.5 text-xs" onClick={() => setOpen((o) => !o)}>
-        <ListChecks className="w-3.5 h-3.5" /> {open ? "Hide checklists" : "Checklists"}
-      </Button>
-      {open && <JobChecklists assignmentId={jobId} onStatusAdvance={onChanged} />}
+      <div className="flex items-center gap-2">
+        <Button data-testid="job-checklists-toggle-btn" variant="outline" size="sm" className="gap-1.5 text-xs" onClick={() => setOpen((o) => !o)}>
+          <ListChecks className="w-3.5 h-3.5" /> {open ? "Hide checklists" : "Checklists"}
+        </Button>
+        {job.truck_id && (
+          <Button data-testid="job-inspection-btn" variant="outline" size="sm" className="gap-1.5 text-xs" onClick={() => setInspOpen(true)}>
+            <ClipboardCheck className="w-3.5 h-3.5" /> Daily inspection
+          </Button>
+        )}
+      </div>
+      {open && <JobChecklists assignmentId={job.id} truckId={job.truck_id} truckName={job.truck_name} onStatusAdvance={onChanged} />}
+      {job.truck_id && (
+        <InspectionDialog open={inspOpen} onOpenChange={setInspOpen} truckId={job.truck_id} truckName={job.truck_name}
+          assignmentId={job.id} onDone={onChanged} />
+      )}
     </div>
   );
 };
@@ -161,7 +174,7 @@ const JobCard = ({ job, onChanged }) => {
       {job.exec_status === "Complete" && job.completion_notes && (
         <p className="text-xs text-slate-500 mt-2 bg-slate-50 rounded p-2">Notes: {job.completion_notes}</p>
       )}
-      <ChecklistSection jobId={job.id} onChanged={onChanged} />
+      <ChecklistSection job={job} onChanged={onChanged} />
       <PhotoSection jobId={job.id} />
       <Dialog open={completeOpen} onOpenChange={setCompleteOpen}>
         <DialogContent data-testid="complete-job-dialog">

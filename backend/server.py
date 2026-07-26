@@ -2517,6 +2517,11 @@ class TruckPatchPayload(BaseModel):
     name: Optional[str] = None
     active: Optional[bool] = None
     plate: Optional[str] = None
+    mileage: Optional[float] = None
+    fleet_status: Optional[str] = None
+    registration: Optional[Dict[str, Any]] = None
+    insurance: Optional[Dict[str, Any]] = None
+    reminders: Optional[List[Dict[str, Any]]] = None
 
 
 @api_router.delete("/users/{user_id}")
@@ -2558,6 +2563,23 @@ async def patch_truck(truck_id: str, payload: TruckPatchPayload, p: Dict[str, An
         updates["active"] = payload.active
     if payload.plate is not None:
         updates["plate"] = payload.plate.strip()
+    if payload.mileage is not None:
+        updates["mileage"] = max(0.0, float(payload.mileage))
+    if payload.fleet_status is not None:
+        if payload.fleet_status not in FLEET_STATUSES:
+            raise HTTPException(status_code=422, detail="Status must be in_service, needs_attention, or in_shop.")
+        updates["fleet_status"] = payload.fleet_status
+    if payload.registration is not None:
+        updates["registration"] = {"number": str(payload.registration.get("number", ""))[:60],
+                                   "expires": str(payload.registration.get("expires", ""))[:10]}
+    if payload.insurance is not None:
+        updates["insurance"] = {"carrier": str(payload.insurance.get("carrier", ""))[:80],
+                                "policy": str(payload.insurance.get("policy", ""))[:60],
+                                "expires": str(payload.insurance.get("expires", ""))[:10]}
+    if payload.reminders is not None:
+        updates["reminders"] = [{"id": str(r.get("id") or uuid4()), "title": str(r.get("title", "")).strip()[:120],
+                                 "due_date": str(r.get("due_date", ""))[:10], "done": bool(r.get("done"))}
+                                for r in payload.reminders if str(r.get("title", "")).strip()][:30]
     if updates:
         await mongo_db.trucks.update_one({"_id": truck_id}, {"$set": updates})
         await audit(p, "edited truck", truck["name"], {"changes": updates})
@@ -2846,7 +2868,7 @@ def _crew_job_view(a: Dict[str, Any], user_id: str) -> Dict[str, Any]:
     return {
         "id": a["_id"], "job_name": a.get("job_name"), "job_date": a.get("job_date"),
         "arrival_time": a.get("arrival_time"), "start_address": a.get("start_address"),
-        "truck_name": a.get("truck_name"), "my_position": mine.get("position"),
+        "truck_name": a.get("truck_name"), "truck_id": a.get("truck_id"), "my_position": mine.get("position"),
         "exec_status": a.get("exec_status"), "status_history": a.get("status_history", []),
         "completion_notes": a.get("completion_notes", ""),
     }
@@ -3007,6 +3029,28 @@ def _checklist_done_count(state: Optional[Dict[str, Any]]) -> int:
     return n
 
 
+async def _maybe_complete_checklist(a: Dict[str, Any], list_key: str, p: Dict[str, Any]) -> Optional[str]:
+    template = next((t for t in CHECKLIST_TEMPLATES if t[0] == list_key), None)
+    if not template:
+        return None
+    state = await mongo_db.job_checklists.find_one({"_id": a["_id"]})
+    saved = (((state or {}).get("lists") or {}).get(list_key) or {})
+    saved_items = saved.get("items", {})
+    all_done = all((saved_items.get(str(i)) or {}).get("done") for i in range(len(template[2])))
+    if all_done and not saved.get("completed_at"):
+        await mongo_db.job_checklists.update_one(
+            {"_id": a["_id"]}, {"$set": {f"lists.{list_key}.completed_at": now_iso()}})
+        await log_job_event(a["_id"], "checklist", f"{template[1]} checklist completed", by=p["name"])
+        target = CHECKLIST_STATUS_ADVANCE.get(list_key)
+        if target and EXEC_STATUSES.index(target) > EXEC_STATUSES.index(a.get("exec_status") or "Assigned"):
+            await _apply_exec_status(a, target, p)
+            return target
+    elif not all_done and saved.get("completed_at"):
+        await mongo_db.job_checklists.update_one(
+            {"_id": a["_id"]}, {"$unset": {f"lists.{list_key}.completed_at": ""}})
+    return None
+
+
 @api_router.get("/assignments/{assignment_id}/checklists")
 async def get_job_checklists(assignment_id: str, request: Request):
     p = await current_principal(request)
@@ -3030,22 +3074,7 @@ async def toggle_checklist_item(assignment_id: str, list_key: str, idx: int, pay
     field = f"lists.{list_key}.items.{idx}"
     item_state = {"done": True, "by": p["name"], "at": now_iso()} if payload.done else {"done": False}
     await mongo_db.job_checklists.update_one({"_id": assignment_id}, {"$set": {field: item_state}}, upsert=True)
-    state = await mongo_db.job_checklists.find_one({"_id": assignment_id})
-    saved = ((state.get("lists") or {}).get(list_key) or {})
-    saved_items = saved.get("items", {})
-    all_done = all((saved_items.get(str(i)) or {}).get("done") for i in range(len(template[2])))
-    advanced_to = None
-    if all_done and not saved.get("completed_at"):
-        await mongo_db.job_checklists.update_one(
-            {"_id": assignment_id}, {"$set": {f"lists.{list_key}.completed_at": now_iso()}})
-        await log_job_event(assignment_id, "checklist", f"{template[1]} checklist completed", by=p["name"])
-        target = CHECKLIST_STATUS_ADVANCE.get(list_key)
-        if target and EXEC_STATUSES.index(target) > EXEC_STATUSES.index(a.get("exec_status") or "Assigned"):
-            await _apply_exec_status(a, target, p)
-            advanced_to = target
-    elif not all_done and saved.get("completed_at"):
-        await mongo_db.job_checklists.update_one(
-            {"_id": assignment_id}, {"$unset": {f"lists.{list_key}.completed_at": ""}})
+    advanced_to = await _maybe_complete_checklist(a, list_key, p)
     fresh = await mongo_db.job_checklists.find_one({"_id": assignment_id})
     return {"checklists": _checklists_out(fresh), "advanced_to": advanced_to}
 
@@ -3161,6 +3190,298 @@ async def serve_photo(photo_id: str, request: Request, auth: Optional[str] = Non
         a = await mongo_db.assignments.find_one({"_id": doc["assignment_id"]})
         if not a or not any(c["user_id"] == p["user_id"] for c in a.get("crew", [])):
             raise HTTPException(status_code=403, detail="Not yours to see.")
+    key = await get_storage_key()
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        r = await client.get(f"{STORAGE_URL}/objects/{doc['storage_path']}", headers={"X-Storage-Key": key})
+    if r.status_code >= 300:
+        raise HTTPException(status_code=404, detail="Photo file missing.")
+    return Response(content=r.content, media_type=doc.get("content_type", "image/jpeg"))
+
+
+# ------- fleet management (phase C — extends existing trucks)
+
+INSPECTION_ITEMS = [
+    ("lights", "Lights & signals working"),
+    ("tires", "Tires — pressure & tread OK"),
+    ("brakes", "Brakes feel right"),
+    ("fluids", "No leaks — oil / coolant OK"),
+    ("glass", "Mirrors & windshield clean, no cracks"),
+    ("wipers", "Horn & wipers working"),
+    ("equipment", "Straps, dollies & pads on board"),
+    ("interior", "Cab & box clean and secure"),
+]
+INSPECTION_LABELS = dict(INSPECTION_ITEMS)
+FLEET_STATUSES = ("in_service", "needs_attention", "in_shop")
+
+
+async def _truck_or_404(truck_id: str) -> Dict[str, Any]:
+    t = await mongo_db.trucks.find_one({"_id": truck_id})
+    if not t:
+        raise HTTPException(status_code=404, detail="No such truck.")
+    return t
+
+
+def _require_fleet_actor(p: Dict[str, Any]):
+    if p["role"] not in ("owner", "crew"):
+        raise HTTPException(status_code=403, detail="Only crew and the owner can do that.")
+
+
+def _expiry_state(date_str: Optional[str]) -> Optional[str]:
+    if not date_str:
+        return None
+    try:
+        d = datetime.fromisoformat(date_str[:10]).date()
+    except ValueError:
+        return None
+    today = datetime.now(ZoneInfo("America/New_York")).date()
+    if d < today:
+        return "expired"
+    if (d - today).days <= 30:
+        return "soon"
+    return "ok"
+
+
+@api_router.get("/fleet")
+async def fleet_overview(p: Dict[str, Any] = Depends(require_owner)):
+    trucks = await mongo_db.trucks.find({}).sort("name", 1).to_list(100)
+    ids = [t["_id"] for t in trucks]
+    today_et = _et_today()
+    latest: Dict[str, Dict[str, Any]] = {}
+    for i in await mongo_db.truck_inspections.find({"truck_id": {"$in": ids}}).sort("created_at", -1).to_list(500):
+        latest.setdefault(i["truck_id"], i)
+    damage_open: Dict[str, int] = {}
+    for d in await mongo_db.truck_damage.find({"truck_id": {"$in": ids}, "resolved": {"$ne": True}}).to_list(200):
+        damage_open[d["truck_id"]] = damage_open.get(d["truck_id"], 0) + 1
+    soon_cut = (datetime.fromisoformat(today_et) + timedelta(days=14)).date().isoformat()
+    out = []
+    for t in trucks:
+        li = latest.get(t["_id"])
+        reminders = t.get("reminders", [])
+        due = sum(1 for r in reminders if not r.get("done") and r.get("due_date") and r["due_date"] <= today_et)
+        upcoming = sum(1 for r in reminders if not r.get("done") and r.get("due_date") and today_et < r["due_date"] <= soon_cut)
+        out.append({
+            "id": t["_id"], "name": t["name"], "plate": t.get("plate", ""), "active": t.get("active", True),
+            "fleet_status": t.get("fleet_status", "in_service"), "mileage": t.get("mileage"),
+            "registration": t.get("registration") or {}, "insurance": t.get("insurance") or {},
+            "registration_state": _expiry_state((t.get("registration") or {}).get("expires")),
+            "insurance_state": _expiry_state((t.get("insurance") or {}).get("expires")),
+            "reminders": reminders, "reminders_due": due, "reminders_upcoming": upcoming,
+            "open_damage": damage_open.get(t["_id"], 0),
+            "last_inspection": {"date": li.get("date"), "passed": li.get("passed"), "by": li.get("by"),
+                                "inspected_today": li.get("date") == today_et} if li else None,
+        })
+    return {"trucks": out, "inspection_items": [{"key": k, "label": v} for k, v in INSPECTION_ITEMS]}
+
+
+class InspectionPayload(BaseModel):
+    items: Dict[str, bool]
+    odometer: Optional[float] = None
+    notes: Optional[str] = ""
+    assignment_id: Optional[str] = None
+
+
+@api_router.post("/trucks/{truck_id}/inspections")
+async def create_inspection(truck_id: str, payload: InspectionPayload, request: Request):
+    p = await current_principal(request)
+    _require_fleet_actor(p)
+    t = await _truck_or_404(truck_id)
+    items = {k: bool(payload.items.get(k, False)) for k, _ in INSPECTION_ITEMS}
+    failed = [k for k, _ in INSPECTION_ITEMS if not items[k]]
+    passed = not failed
+    doc = {"_id": str(uuid4()), "truck_id": truck_id, "truck_name": t["name"],
+           "date": _et_today(), "by": p["name"], "by_id": p["user_id"],
+           "items": items, "failed": failed, "passed": passed,
+           "odometer": payload.odometer, "notes": (payload.notes or "").strip()[:500],
+           "assignment_id": payload.assignment_id, "created_at": now_iso()}
+    await mongo_db.truck_inspections.insert_one(doc)
+    truck_updates: Dict[str, Any] = {}
+    if payload.odometer and (not t.get("mileage") or payload.odometer > t["mileage"]):
+        truck_updates["mileage"] = payload.odometer
+    if not passed and t.get("fleet_status", "in_service") == "in_service":
+        truck_updates["fleet_status"] = "needs_attention"
+    if truck_updates:
+        await mongo_db.trucks.update_one({"_id": truck_id}, {"$set": truck_updates})
+    if not passed:
+        await notify(None, "owner", f"Inspection flagged {t['name']}",
+                     f"{p['name']}'s daily inspection found issues: "
+                     + ", ".join(INSPECTION_LABELS[k] for k in failed)
+                     + ". The truck is marked needs-attention on the Fleet page.",
+                     "flag", {"truck_id": truck_id, "inspection_id": doc["_id"]})
+    if payload.assignment_id:
+        a = await mongo_db.assignments.find_one({"_id": payload.assignment_id})
+        if a and (p["role"] == "owner" or any(c["user_id"] == p["user_id"] for c in a.get("crew", []))):
+            await log_job_event(a["_id"], "checklist",
+                                f"Daily inspection filed for {t['name']}" + ("" if passed else " — issues flagged"),
+                                by=p["name"])
+            await mongo_db.job_checklists.update_one(
+                {"_id": a["_id"]},
+                {"$set": {"lists.warehouse_departure.items.0": {"done": True, "by": p["name"], "at": now_iso()}}},
+                upsert=True)
+            await _maybe_complete_checklist(a, "warehouse_departure", p)
+    await audit(p, "filed a truck inspection", t["name"], {"passed": passed, "failed": failed})
+    return {"id": doc["_id"], "passed": passed, "failed": failed, "date": doc["date"]}
+
+
+@api_router.get("/trucks/{truck_id}/inspections")
+async def list_inspections(truck_id: str, request: Request):
+    p = await current_principal(request)
+    _require_fleet_actor(p)
+    await _truck_or_404(truck_id)
+    limit = 50 if p["role"] == "owner" else 5
+    docs = await mongo_db.truck_inspections.find({"truck_id": truck_id}).sort("created_at", -1).to_list(limit)
+    photo_map: Dict[str, List[str]] = {}
+    for ph in await mongo_db.truck_photos.find({"ref_id": {"$in": [d["_id"] for d in docs]}}).to_list(200):
+        photo_map.setdefault(ph["ref_id"], []).append(ph["_id"])
+    return {"inspections": [{
+        "id": d["_id"], "date": d.get("date"), "by": d.get("by"), "passed": d.get("passed"),
+        "failed": [INSPECTION_LABELS.get(k, k) for k in d.get("failed", [])],
+        "odometer": d.get("odometer"), "notes": d.get("notes", ""),
+        "photos": photo_map.get(d["_id"], []), "created_at": d.get("created_at"),
+    } for d in docs]}
+
+
+class TruckLogPayload(BaseModel):
+    kind: str
+    date: Optional[str] = None
+    odometer: Optional[float] = None
+    cost: Optional[float] = None
+    gallons: Optional[float] = None
+    notes: str = ""
+
+
+@api_router.post("/trucks/{truck_id}/logs")
+async def add_truck_log(truck_id: str, payload: TruckLogPayload, p: Dict[str, Any] = Depends(require_owner)):
+    if payload.kind not in ("maintenance", "fuel"):
+        raise HTTPException(status_code=422, detail="Log kind must be maintenance or fuel.")
+    t = await _truck_or_404(truck_id)
+    doc = {"_id": str(uuid4()), "truck_id": truck_id, "kind": payload.kind,
+           "date": (payload.date or _et_today())[:10], "odometer": payload.odometer,
+           "cost": payload.cost, "gallons": payload.gallons if payload.kind == "fuel" else None,
+           "notes": payload.notes.strip()[:300], "by": p["name"], "created_at": now_iso()}
+    await mongo_db.truck_logs.insert_one(doc)
+    if payload.odometer and (not t.get("mileage") or payload.odometer > t["mileage"]):
+        await mongo_db.trucks.update_one({"_id": truck_id}, {"$set": {"mileage": payload.odometer}})
+    await audit(p, f"logged truck {payload.kind}", t["name"], {"cost": payload.cost})
+    return {"id": doc["_id"]}
+
+
+@api_router.get("/trucks/{truck_id}/logs")
+async def list_truck_logs(truck_id: str, p: Dict[str, Any] = Depends(require_owner)):
+    await _truck_or_404(truck_id)
+    docs = await mongo_db.truck_logs.find({"truck_id": truck_id}).sort([("date", -1), ("created_at", -1)]).to_list(200)
+    maint_cost = sum(d.get("cost") or 0 for d in docs if d["kind"] == "maintenance")
+    fuel_cost = sum(d.get("cost") or 0 for d in docs if d["kind"] == "fuel")
+    return {"logs": [{"id": d["_id"], "kind": d["kind"], "date": d.get("date"), "odometer": d.get("odometer"),
+                      "cost": d.get("cost"), "gallons": d.get("gallons"), "notes": d.get("notes", ""),
+                      "by": d.get("by", "")} for d in docs],
+            "totals": {"maintenance": round(maint_cost, 2), "fuel": round(fuel_cost, 2)}}
+
+
+@api_router.delete("/truck-logs/{log_id}")
+async def delete_truck_log(log_id: str, p: Dict[str, Any] = Depends(require_owner)):
+    res = await mongo_db.truck_logs.delete_one({"_id": log_id})
+    if not res.deleted_count:
+        raise HTTPException(status_code=404, detail="No such log entry.")
+    return {"deleted": True}
+
+
+class DamagePayload(BaseModel):
+    description: str
+    assignment_id: Optional[str] = None
+
+
+@api_router.post("/trucks/{truck_id}/damage")
+async def report_damage(truck_id: str, payload: DamagePayload, request: Request):
+    p = await current_principal(request)
+    _require_fleet_actor(p)
+    t = await _truck_or_404(truck_id)
+    desc = payload.description.strip()
+    if not desc:
+        raise HTTPException(status_code=422, detail="Describe the damage first.")
+    doc = {"_id": str(uuid4()), "truck_id": truck_id, "truck_name": t["name"], "description": desc[:600],
+           "by": p["name"], "by_id": p["user_id"], "resolved": False, "assignment_id": payload.assignment_id,
+           "created_at": now_iso()}
+    await mongo_db.truck_damage.insert_one(doc)
+    if p["role"] != "owner":
+        await notify(None, "owner", f"Damage reported on {t['name']}",
+                     f"{p['name']} reported: {desc[:140]}. Photos and details are on the Fleet page.",
+                     "flag", {"truck_id": truck_id, "damage_id": doc["_id"]})
+    if payload.assignment_id:
+        a = await mongo_db.assignments.find_one({"_id": payload.assignment_id})
+        if a and (p["role"] == "owner" or any(c["user_id"] == p["user_id"] for c in a.get("crew", []))):
+            await log_job_event(a["_id"], "truck", f"Damage reported on {t['name']}", by=p["name"])
+    await audit(p, "reported truck damage", t["name"])
+    return {"id": doc["_id"]}
+
+
+@api_router.get("/trucks/{truck_id}/damage")
+async def list_damage(truck_id: str, p: Dict[str, Any] = Depends(require_owner)):
+    await _truck_or_404(truck_id)
+    docs = await mongo_db.truck_damage.find({"truck_id": truck_id}).sort("created_at", -1).to_list(100)
+    photo_map: Dict[str, List[str]] = {}
+    for ph in await mongo_db.truck_photos.find({"ref_id": {"$in": [d["_id"] for d in docs]}}).to_list(200):
+        photo_map.setdefault(ph["ref_id"], []).append(ph["_id"])
+    return {"reports": [{"id": d["_id"], "description": d.get("description", ""), "by": d.get("by", ""),
+                         "resolved": d.get("resolved", False), "resolved_at": d.get("resolved_at"),
+                         "photos": photo_map.get(d["_id"], []), "created_at": d.get("created_at")}
+                        for d in docs]}
+
+
+class DamagePatchPayload(BaseModel):
+    resolved: bool
+
+
+@api_router.patch("/truck-damage/{damage_id}")
+async def patch_damage(damage_id: str, payload: DamagePatchPayload, p: Dict[str, Any] = Depends(require_owner)):
+    d = await mongo_db.truck_damage.find_one({"_id": damage_id})
+    if not d:
+        raise HTTPException(status_code=404, detail="No such damage report.")
+    await mongo_db.truck_damage.update_one(
+        {"_id": damage_id},
+        {"$set": {"resolved": payload.resolved, "resolved_at": now_iso() if payload.resolved else None}})
+    await audit(p, "resolved truck damage" if payload.resolved else "reopened truck damage", d.get("truck_name", ""))
+    return {"ok": True}
+
+
+@api_router.post("/trucks/{truck_id}/photos")
+async def upload_truck_photo(truck_id: str, request: Request, kind: str = "inspection",
+                             ref_id: str = "", file: UploadFile = File(...)):
+    p = await current_principal(request)
+    _require_fleet_actor(p)
+    await _truck_or_404(truck_id)
+    if kind not in ("inspection", "damage", "general"):
+        raise HTTPException(status_code=422, detail="Photo kind must be inspection, damage, or general.")
+    if not (file.content_type or "").startswith("image/"):
+        raise HTTPException(status_code=422, detail="Only photos can be uploaded here.")
+    data = await file.read()
+    if len(data) > 15 * 1024 * 1024:
+        raise HTTPException(status_code=422, detail="That photo is too big (15 MB max).")
+    ext = (file.filename or "photo.jpg").rsplit(".", 1)[-1].lower() if "." in (file.filename or "") else "jpg"
+    path = f"haulyeah-crm/trucks/{truck_id}/{uuid4()}.{ext}"
+    key = await get_storage_key()
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        r = await client.put(f"{STORAGE_URL}/objects/{path}",
+                             headers={"X-Storage-Key": key, "Content-Type": file.content_type or "image/jpeg"},
+                             content=data)
+    if r.status_code >= 300:
+        raise HTTPException(status_code=502, detail="The photo didn't upload. Try again.")
+    doc = {"_id": str(uuid4()), "truck_id": truck_id, "kind": kind, "ref_id": ref_id or None,
+           "user_name": p["name"], "storage_path": r.json()["path"],
+           "content_type": file.content_type or "image/jpeg", "created_at": now_iso()}
+    await mongo_db.truck_photos.insert_one(doc)
+    return {"id": doc["_id"]}
+
+
+@dl_router.get("/truck-photos/{photo_id}")
+async def serve_truck_photo(photo_id: str, request: Request, auth: Optional[str] = None):
+    if auth:
+        p = await principal_from_token_string(auth)
+    else:
+        p = await current_principal(request)
+    _require_fleet_actor(p)
+    doc = await mongo_db.truck_photos.find_one({"_id": photo_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="No such photo.")
     key = await get_storage_key()
     async with httpx.AsyncClient(timeout=60.0) as client:
         r = await client.get(f"{STORAGE_URL}/objects/{doc['storage_path']}", headers={"X-Storage-Key": key})

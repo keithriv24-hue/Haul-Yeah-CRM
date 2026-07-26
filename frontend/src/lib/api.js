@@ -62,6 +62,21 @@ export const dispatchBoardApi = (date) => axios.get(`${API}/dispatch/board`, { p
 export const jobChecklistsApi = (id) => axios.get(`${API}/assignments/${id}/checklists`).then((r) => r.data);
 export const toggleChecklistItemApi = (id, listKey, idx, done) => axios.post(`${API}/assignments/${id}/checklists/${listKey}/items/${idx}`, { done }).then((r) => r.data);
 export const jobTimelineApi = (id) => axios.get(`${API}/assignments/${id}/timeline`).then((r) => r.data);
+export const fleetApi = () => axios.get(`${API}/fleet`).then((r) => r.data);
+export const truckInspectionsApi = (id) => axios.get(`${API}/trucks/${id}/inspections`).then((r) => r.data);
+export const createInspectionApi = (id, payload) => axios.post(`${API}/trucks/${id}/inspections`, payload).then((r) => r.data);
+export const truckLogsApi = (id) => axios.get(`${API}/trucks/${id}/logs`).then((r) => r.data);
+export const addTruckLogApi = (id, payload) => axios.post(`${API}/trucks/${id}/logs`, payload).then((r) => r.data);
+export const deleteTruckLogApi = (logId) => axios.delete(`${API}/truck-logs/${logId}`).then((r) => r.data);
+export const truckDamageApi = (id) => axios.get(`${API}/trucks/${id}/damage`).then((r) => r.data);
+export const reportDamageApi = (id, payload) => axios.post(`${API}/trucks/${id}/damage`, payload).then((r) => r.data);
+export const patchDamageApi = (damageId, resolved) => axios.patch(`${API}/truck-damage/${damageId}`, { resolved }).then((r) => r.data);
+export const uploadTruckPhotoApi = (truckId, file, kind, refId) => {
+  const fd = new FormData();
+  fd.append("file", file);
+  return axios.post(`${API}/trucks/${truckId}/photos`, fd, { params: { kind, ref_id: refId || "" } }).then((r) => r.data);
+};
+export const truckPhotoUrl = (id) => `${API}/truck-photos/${id}?auth=${localStorage.getItem("hy_token")}`;
 export const deleteAssignmentApi = (id) => axios.delete(`${API}/assignments/${id}`).then((r) => r.data);
 export const myJobsApi = () => axios.get(`${API}/crew/my-jobs`).then((r) => r.data.jobs);
 export const setJobStatusApi = (id, status, notes, delay_factors) =>

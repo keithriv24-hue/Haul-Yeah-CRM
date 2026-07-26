@@ -405,7 +405,9 @@ export default function Dispatch() {
                 <TabsTrigger data-testid="detail-tab-checklists" value="checklists" className="flex-1">Checklists</TabsTrigger>
               </TabsList>
               <TabsContent value="timeline"><JobTimeline assignmentId={detail.id} /></TabsContent>
-              <TabsContent value="checklists"><JobChecklists assignmentId={detail.id} onStatusAdvance={load} /></TabsContent>
+              <TabsContent value="checklists">
+                <JobChecklists assignmentId={detail.id} truckId={detail.truck_id} truckName={detail.truck_name} onStatusAdvance={load} />
+              </TabsContent>
             </Tabs>
           )}
         </DialogContent>

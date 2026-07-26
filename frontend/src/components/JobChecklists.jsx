@@ -3,12 +3,17 @@ import { toast } from "sonner";
 import { CheckCircle2, ChevronDown, ChevronRight } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
+import { InspectionDialog } from "@/components/fleet/InspectionDialog";
 import { jobChecklistsApi, toggleChecklistItemApi, apiErrorMessage } from "@/lib/api";
 
-export const JobChecklists = ({ assignmentId, onStatusAdvance }) => {
+export const JobChecklists = ({ assignmentId, truckId, truckName, onStatusAdvance }) => {
   const [lists, setLists] = useState(null);
   const [openKey, setOpenKey] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [inspOpen, setInspOpen] = useState(false);
+
+  const reload = () =>
+    jobChecklistsApi(assignmentId).then((d) => setLists(d.checklists)).catch(() => {});
 
   useEffect(() => {
     jobChecklistsApi(assignmentId)
@@ -21,6 +26,10 @@ export const JobChecklists = ({ assignmentId, onStatusAdvance }) => {
   }, [assignmentId]);
 
   const toggle = async (listKey, idx, done) => {
+    if (listKey === "warehouse_departure" && idx === 0 && done && truckId) {
+      setInspOpen(true);
+      return;
+    }
     setBusy(true);
     try {
       const d = await toggleChecklistItemApi(assignmentId, listKey, idx, done);
@@ -38,6 +47,8 @@ export const JobChecklists = ({ assignmentId, onStatusAdvance }) => {
   if (lists === null) return <p className="text-xs text-slate-400 mt-2">Loading checklists…</p>;
   return (
     <div data-testid="job-checklists" className="mt-2 space-y-1.5">
+      <InspectionDialog open={inspOpen} onOpenChange={setInspOpen} truckId={truckId} truckName={truckName}
+        assignmentId={assignmentId} onDone={() => { reload(); onStatusAdvance && onStatusAdvance(); }} />
       {lists.map((l) => {
         const open = openKey === l.key;
         const complete = l.done_count === l.total;

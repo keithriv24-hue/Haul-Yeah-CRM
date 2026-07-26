@@ -27,6 +27,7 @@ import DaysOff from "@/pages/DaysOff";
 import CrewToday from "@/pages/CrewToday";
 import JobsBoard from "@/pages/JobsBoard";
 import Dispatch from "@/pages/Dispatch";
+import Fleet from "@/pages/Fleet";
 import MarketingDashboard from "@/pages/MarketingDashboard";
 import Team from "@/pages/Team";
 import MemberProfile from "@/pages/MemberProfile";
@@ -128,6 +129,7 @@ function RoleRoutes() {
         <Route path="/projects" element={<Projects />} />
         <Route path="/crew" element={<Crew />} />
         <Route path="/dispatch" element={<Dispatch />} />
+        <Route path="/fleet" element={<Fleet />} />
         <Route path="/jobs" element={<JobsBoard />} />
         <Route path="/marketing" element={<MarketingDashboard />} />
         <Route path="/day-sheet" element={<DaySheet />} />
