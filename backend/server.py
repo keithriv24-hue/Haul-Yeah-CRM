@@ -1093,7 +1093,8 @@ async def square_webhook(request: Request):
 
 
 INTEGRATION_SECRETS = ("square_access_token", "square_webhook_key", "openphone_api_key")
-INTEGRATION_PLAIN = ("square_location_id", "square_notification_url", "openphone_number", "default_truck_pickup")
+INTEGRATION_PLAIN = ("square_location_id", "square_notification_url", "openphone_number", "default_truck_pickup",
+                     "owner_alert_phone")
 
 
 class IntegrationsPayload(BaseModel):
