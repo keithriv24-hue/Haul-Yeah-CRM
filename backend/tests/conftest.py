@@ -29,6 +29,8 @@ def _refresh_qa_seed_dates() -> None:
     db.jobs.update_one(
         {"tracking.token": QA_TRACK_TOKEN},
         {"$set": {"job_date": TRACK_JOB_DATE}})
+    # prune test-artifact portal uploads so the 30-file cap never wedges the QA job
+    db.portal_uploads.delete_many({"filename": {"$in": ["a.png", "i.pdf", "big.png", "qa_regress.png"]}})
     client.close()
 
 
