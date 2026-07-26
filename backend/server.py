@@ -13,7 +13,7 @@ import time
 from collections import deque
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
@@ -358,8 +358,40 @@ def _user_public(user: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+async def _login_user_account(payload: LoginPayload, email: str, lock_key: str,
+                              fail: Callable[[str], None]) -> Dict[str, Any]:
+    user = await mongo_db.users.find_one({"email": email})
+    if not user or not verify_password(payload.password, user.get("password_hash", "")):
+        fail("Wrong email or password. Try again.")
+    if not user.get("active", True):
+        raise HTTPException(status_code=403, detail="This account is turned off. Talk to the owner.")
+    _login_attempts.pop(lock_key, None)
+    user_roles = user.get("roles") or [user["role"]]
+    return {
+        "token": make_user_token(user), "role": user["role"],
+        "can_switch": user["role"] == "owner" or len(user_roles) > 1,
+        "user": _user_public(user),
+    }
+
+
+def _login_shared_password(payload: LoginPayload, lock_key: str,
+                           fail: Callable[[str], None]) -> Dict[str, Any]:
+    if not any(os.environ.get(v) for v in ROLE_ENV.values()):
+        raise HTTPException(status_code=503, detail="No login passwords are set on the server.")
+    role = None
+    for r in ROLES:
+        expected = os.environ.get(ROLE_ENV[r], "")
+        if expected and hmac.compare_digest(payload.password, expected):
+            role = r
+            break
+    if role is None:
+        fail("Wrong password. Try again.")
+    _login_attempts.pop(lock_key, None)
+    return {"token": make_token(role), "role": role, "can_switch": role == "owner", "user": None}
+
+
 @auth_router.post("/login")
-async def login(payload: LoginPayload, request: Request):
+async def login(payload: LoginPayload, request: Request) -> Dict[str, Any]:
     ip = request.client.host if request.client else "unknown"
     now = time.time()
     lock_key = f"{ip}:{(payload.email or '').strip().lower()}"
@@ -377,31 +409,8 @@ async def login(payload: LoginPayload, request: Request):
 
     email = (payload.email or "").strip().lower()
     if email:
-        user = await mongo_db.users.find_one({"email": email})
-        if not user or not verify_password(payload.password, user.get("password_hash", "")):
-            fail("Wrong email or password. Try again.")
-        if not user.get("active", True):
-            raise HTTPException(status_code=403, detail="This account is turned off. Talk to the owner.")
-        _login_attempts.pop(lock_key, None)
-        user_roles = user.get("roles") or [user["role"]]
-        return {
-            "token": make_user_token(user), "role": user["role"],
-            "can_switch": user["role"] == "owner" or len(user_roles) > 1,
-            "user": _user_public(user),
-        }
-
-    if not any(os.environ.get(v) for v in ROLE_ENV.values()):
-        raise HTTPException(status_code=503, detail="No login passwords are set on the server.")
-    role = None
-    for r in ROLES:
-        expected = os.environ.get(ROLE_ENV[r], "")
-        if expected and hmac.compare_digest(payload.password, expected):
-            role = r
-            break
-    if role is None:
-        fail("Wrong password. Try again.")
-    _login_attempts.pop(lock_key, None)
-    return {"token": make_token(role), "role": role, "can_switch": role == "owner", "user": None}
+        return await _login_user_account(payload, email, lock_key, fail)
+    return _login_shared_password(payload, lock_key, fail)
 
 
 class SwitchPayload(BaseModel):
@@ -710,52 +719,34 @@ async def square_status(role: str = Depends(require_auth)):
     return {"configured": await square_is_configured(), "environment": os.environ.get("SQUARE_ENVIRONMENT", "sandbox").strip().lower()}
 
 
-@api_router.post("/square/invoice")
-async def send_square_invoice(payload: SquareInvoicePayload, role: str = Depends(require_auth)):
-    if role != "owner":
-        raise HTTPException(status_code=403, detail="Only the owner can send invoices.")
-    if payload.amount <= 0:
-        raise HTTPException(status_code=422, detail="The invoice amount must be more than $0.")
-    if "@" not in payload.email:
-        raise HTTPException(status_code=422, detail="This lead needs a valid email before you can send an invoice.")
-    location_id = (await square_creds())["location_id"]
-
+def _square_customer_body(payload: SquareInvoicePayload) -> Dict[str, Any]:
     name_parts = payload.name.strip().split(None, 1)
-    cust_body: Dict[str, Any] = {
+    body: Dict[str, Any] = {
         "idempotency_key": str(uuid4()),
         "given_name": name_parts[0] if name_parts else "Customer",
         "email_address": payload.email.strip(),
     }
     if len(name_parts) > 1:
-        cust_body["family_name"] = name_parts[1]
+        body["family_name"] = name_parts[1]
     phone = normalize_phone(payload.phone)
     if phone:
-        cust_body["phone_number"] = phone
-    cust = await square_request("POST", "/v2/customers", cust_body)
-    customer_id = cust["customer"]["id"]
+        body["phone_number"] = phone
+    return body
 
+
+def _square_order_lines(payload: SquareInvoicePayload) -> List[Dict[str, Any]]:
     items = [i for i in (payload.line_items or []) if i.name.strip() and i.amount > 0]
     if items and abs(sum(i.amount for i in items) - payload.amount) < 0.01:
         cents = [int(round(i.amount * 100)) for i in items]
         cents[-1] += int(round(payload.amount * 100)) - sum(cents)
-        order_lines = [{"name": i.name.strip()[:255], "quantity": "1",
-                        "base_price_money": {"amount": c, "currency": "USD"}}
-                       for i, c in zip(items, cents) if c > 0]
-    else:
-        order_lines = [{"name": payload.description.strip()[:255] or "Moving services", "quantity": "1",
-                        "base_price_money": {"amount": int(round(payload.amount * 100)), "currency": "USD"}}]
+        return [{"name": i.name.strip()[:255], "quantity": "1",
+                 "base_price_money": {"amount": c, "currency": "USD"}}
+                for i, c in zip(items, cents) if c > 0]
+    return [{"name": payload.description.strip()[:255] or "Moving services", "quantity": "1",
+             "base_price_money": {"amount": int(round(payload.amount * 100)), "currency": "USD"}}]
 
-    order_body = {
-        "idempotency_key": str(uuid4()),
-        "order": {
-            "location_id": location_id,
-            "customer_id": customer_id,
-            "line_items": order_lines,
-        },
-    }
-    order = await square_request("POST", "/v2/orders", order_body)
-    order_id = order["order"]["id"]
 
+async def _publish_square_invoice(location_id: str, customer_id: str, order_id: str) -> Dict[str, Any]:
     due_date = (datetime.now(timezone.utc) + timedelta(days=7)).date().isoformat()
     inv_body = {
         "idempotency_key": str(uuid4()),
@@ -771,10 +762,12 @@ async def send_square_invoice(payload: SquareInvoicePayload, role: str = Depends
     }
     inv = await square_request("POST", "/v2/invoices", inv_body)
     invoice = inv["invoice"]
-
     pub = await square_request("POST", f"/v2/invoices/{invoice['id']}/publish",
                                {"version": invoice["version"], "idempotency_key": str(uuid4())})
-    published = pub["invoice"]
+    return pub["invoice"]
+
+
+async def _record_square_invoice(payload: SquareInvoicePayload, published: Dict[str, Any]) -> None:
     await mongo_db.square_invoices.insert_one({
         "lead_id": payload.lead_id,
         "invoice_id": published["id"],
@@ -788,6 +781,31 @@ async def send_square_invoice(payload: SquareInvoicePayload, role: str = Depends
         "created_at": datetime.now(timezone.utc).isoformat(),
         "checked_at": time.time(),
     })
+
+
+@api_router.post("/square/invoice")
+async def send_square_invoice(payload: SquareInvoicePayload, role: str = Depends(require_auth)) -> Dict[str, Any]:
+    if role != "owner":
+        raise HTTPException(status_code=403, detail="Only the owner can send invoices.")
+    if payload.amount <= 0:
+        raise HTTPException(status_code=422, detail="The invoice amount must be more than $0.")
+    if "@" not in payload.email:
+        raise HTTPException(status_code=422, detail="This lead needs a valid email before you can send an invoice.")
+    location_id = (await square_creds())["location_id"]
+
+    cust = await square_request("POST", "/v2/customers", _square_customer_body(payload))
+    customer_id = cust["customer"]["id"]
+    order_body = {
+        "idempotency_key": str(uuid4()),
+        "order": {
+            "location_id": location_id,
+            "customer_id": customer_id,
+            "line_items": _square_order_lines(payload),
+        },
+    }
+    order = await square_request("POST", "/v2/orders", order_body)
+    published = await _publish_square_invoice(location_id, customer_id, order["order"]["id"])
+    await _record_square_invoice(payload, published)
     return {
         "invoice_id": published["id"],
         "invoice_number": published.get("invoice_number"),
@@ -858,23 +876,22 @@ def _infer_purpose(inv: Dict[str, Any]) -> str:
     return "deposit"
 
 
-async def ensure_job_for_deposit(inv: Dict[str, Any], mark_full: bool = False, notify_owner: bool = True) -> None:
-    paid_at = inv.get("paid_at") or now_iso()
-    existing = await mongo_db.jobs.find_one({"deposit_invoice_id": inv["invoice_id"]})
-    if existing:
-        updates: Dict[str, Any] = {}
-        if (existing.get("deposit_paid") or {}).get("status") != "paid":
-            updates["deposit_paid"] = {"status": "paid", "amount": inv.get("amount"), "paid_at": paid_at}
-        if mark_full and (existing.get("paid_in_full") or {}).get("status") != "paid":
-            updates["paid_in_full"] = {"status": "paid", "amount": inv.get("amount"), "paid_at": paid_at,
-                                       "invoice_number": inv.get("invoice_number")}
-        if updates:
-            await mongo_db.jobs.update_one({"_id": existing["_id"]}, {"$set": updates})
-        return
-    lead = await fetch_lead_details(inv.get("lead_id"))
-    integrations = await get_integrations()
+async def _sync_existing_deposit_job(existing: Dict[str, Any], inv: Dict[str, Any],
+                                     mark_full: bool, paid_at: str) -> None:
+    updates: Dict[str, Any] = {}
+    if (existing.get("deposit_paid") or {}).get("status") != "paid":
+        updates["deposit_paid"] = {"status": "paid", "amount": inv.get("amount"), "paid_at": paid_at}
+    if mark_full and (existing.get("paid_in_full") or {}).get("status") != "paid":
+        updates["paid_in_full"] = {"status": "paid", "amount": inv.get("amount"), "paid_at": paid_at,
+                                   "invoice_number": inv.get("invoice_number")}
+    if updates:
+        await mongo_db.jobs.update_one({"_id": existing["_id"]}, {"$set": updates})
+
+
+def _job_doc_from_invoice(inv: Dict[str, Any], lead: Dict[str, Any], integrations: Dict[str, Any],
+                          paid_at: str, mark_full: bool) -> Dict[str, Any]:
     customer = inv.get("customer") or {}
-    job = {
+    return {
         "_id": str(uuid4()),
         "invoice_number": inv.get("invoice_number") or "—",
         "deposit_invoice_id": inv["invoice_id"],
@@ -900,6 +917,17 @@ async def ensure_job_for_deposit(inv: Dict[str, Any], mark_full: bool = False, n
         "tracking": {"token": uuid4().hex, "sms_sent": False, "sms_sent_at": None},
         "created_at": now_iso(), "assigned_at": None,
     }
+
+
+async def ensure_job_for_deposit(inv: Dict[str, Any], mark_full: bool = False, notify_owner: bool = True) -> None:
+    paid_at = inv.get("paid_at") or now_iso()
+    existing = await mongo_db.jobs.find_one({"deposit_invoice_id": inv["invoice_id"]})
+    if existing:
+        await _sync_existing_deposit_job(existing, inv, mark_full, paid_at)
+        return
+    lead = await fetch_lead_details(inv.get("lead_id"))
+    integrations = await get_integrations()
+    job = _job_doc_from_invoice(inv, lead, integrations, paid_at, mark_full)
     await mongo_db.jobs.insert_one(job)
     if notify_owner:
         who = job["customer"]["name"] or "the customer"
@@ -908,39 +936,52 @@ async def ensure_job_for_deposit(inv: Dict[str, Any], mark_full: bool = False, n
                      "success", {"job_id": job["_id"]})
 
 
+async def _alert_payment_landed(inv: Dict[str, Any], purpose: str) -> None:
+    try:
+        who = (inv.get("customer") or {}).get("name") or f"invoice #{inv.get('invoice_number') or '?'}"
+        stage = {"deposit": "Deposit", "full": "Full payment"}.get(purpose, "Payment")
+        await create_alert("payment", f"Money landed: {stage} from {who}",
+                           f"${(inv.get('amount') or 0):,.2f} paid on invoice #{inv.get('invoice_number') or '—'}.",
+                           lead_id=inv.get("lead_id"), lead_name=who, source="square",
+                           dedupe_key=f"payment:{inv['invoice_id']}")
+    except Exception as exc:
+        logger.warning("payment alert failed: %s", exc)
+
+
+async def _mark_job_paid_in_full(inv: Dict[str, Any], notify_owner: bool) -> None:
+    job = await mongo_db.jobs.find_one({"lead_id": inv["lead_id"]}) if inv.get("lead_id") else None
+    if not job or (job.get("paid_in_full") or {}).get("status") == "paid":
+        return
+    await mongo_db.jobs.update_one({"_id": job["_id"]}, {"$set": {"paid_in_full": {
+        "status": "paid", "amount": inv.get("amount"), "paid_at": inv.get("paid_at") or now_iso(),
+        "invoice_number": inv.get("invoice_number")}}})
+    if notify_owner:
+        await notify(None, "owner", "Paid in full",
+                     f"Job #{job['invoice_number']} is fully paid (${(inv.get('amount') or 0):,.2f}).",
+                     "success", {"job_id": job["_id"]})
+
+
+async def _mark_job_payment_pending(inv: Dict[str, Any]) -> None:
+    job = await mongo_db.jobs.find_one({"lead_id": inv["lead_id"]}) if inv.get("lead_id") else None
+    if job and (job.get("paid_in_full") or {}).get("status") == "unpaid":
+        await mongo_db.jobs.update_one({"_id": job["_id"]}, {"$set": {"paid_in_full": {
+            "status": "pending", "amount": inv.get("amount"), "paid_at": None,
+            "invoice_number": inv.get("invoice_number")}}})
+
+
 async def apply_invoice_to_jobs(inv: Dict[str, Any], notify_owner: bool = True) -> None:
     status = inv.get("status")
     purpose = _infer_purpose(inv)
     if status == "PAID":
-        try:
-            who = (inv.get("customer") or {}).get("name") or f"invoice #{inv.get('invoice_number') or '?'}"
-            stage = {"deposit": "Deposit", "full": "Full payment"}.get(purpose, "Payment")
-            await create_alert("payment", f"Money landed: {stage} from {who}",
-                               f"${(inv.get('amount') or 0):,.2f} paid on invoice #{inv.get('invoice_number') or '—'}.",
-                               lead_id=inv.get("lead_id"), lead_name=who, source="square",
-                               dedupe_key=f"payment:{inv['invoice_id']}")
-        except Exception as exc:
-            logger.warning("payment alert failed: %s", exc)
+        await _alert_payment_landed(inv, purpose)
         if inv.get("lead_id") and purpose != "deposit":
             await mark_lead_commission_payment(inv["lead_id"], "fully")
         if purpose in ("deposit", "full"):
             await ensure_job_for_deposit(inv, mark_full=(purpose == "full"), notify_owner=notify_owner)
             return
-        job = await mongo_db.jobs.find_one({"lead_id": inv["lead_id"]}) if inv.get("lead_id") else None
-        if job and (job.get("paid_in_full") or {}).get("status") != "paid":
-            await mongo_db.jobs.update_one({"_id": job["_id"]}, {"$set": {"paid_in_full": {
-                "status": "paid", "amount": inv.get("amount"), "paid_at": inv.get("paid_at") or now_iso(),
-                "invoice_number": inv.get("invoice_number")}}})
-            if notify_owner:
-                await notify(None, "owner", "Paid in full",
-                             f"Job #{job['invoice_number']} is fully paid (${(inv.get('amount') or 0):,.2f}).",
-                             "success", {"job_id": job["_id"]})
+        await _mark_job_paid_in_full(inv, notify_owner)
     elif status == "PAYMENT_PENDING" and purpose != "deposit":
-        job = await mongo_db.jobs.find_one({"lead_id": inv["lead_id"]}) if inv.get("lead_id") else None
-        if job and (job.get("paid_in_full") or {}).get("status") == "unpaid":
-            await mongo_db.jobs.update_one({"_id": job["_id"]}, {"$set": {"paid_in_full": {
-                "status": "pending", "amount": inv.get("amount"), "paid_at": None,
-                "invoice_number": inv.get("invoice_number")}}})
+        await _mark_job_payment_pending(inv)
 
 
 async def refresh_invoice_doc(d: Dict[str, Any], now: float) -> None:
@@ -999,51 +1040,64 @@ async def backfill_jobs_from_paid_invoices():
 public_router = APIRouter(prefix="/api")
 
 
+async def _update_known_invoice_from_webhook(d: Dict[str, Any], invoice: Dict[str, Any],
+                                             new_status: Optional[str], event: Dict[str, Any]) -> None:
+    updates: Dict[str, Any] = {"checked_at": time.time()}
+    if new_status:
+        updates["status"] = new_status
+    if new_status == "PAID" and d.get("status") != "PAID":
+        updates["paid_at"] = event.get("created_at") or now_iso()
+    if new_status == "PAID" and d.get("lead_id") and not d.get("deposit_synced"):
+        if await mark_lead_deposit_paid(d["lead_id"]):
+            updates["deposit_synced"] = True
+    d.update(updates)
+    await mongo_db.square_invoices.update_one({"invoice_id": invoice.get("id")}, {"$set": updates})
+
+
+def _invoice_doc_from_webhook(invoice: Dict[str, Any], new_status: Optional[str],
+                              event: Dict[str, Any]) -> Dict[str, Any]:
+    amount_cents = ((invoice.get("payment_requests") or [{}])[0].get("computed_amount_money") or {}).get("amount")
+    primary = invoice.get("primary_recipient") or {}
+    return {
+        "lead_id": None,
+        "invoice_id": invoice.get("id"),
+        "invoice_number": invoice.get("invoice_number"),
+        "amount": round(amount_cents / 100, 2) if amount_cents else 0,
+        "status": new_status,
+        "public_url": invoice.get("public_url"),
+        "purpose": None, "quote_total": None,
+        "customer": {
+            "name": " ".join(x for x in [primary.get("given_name"), primary.get("family_name")] if x),
+            "email": primary.get("email_address") or "",
+            "phone": primary.get("phone_number") or "",
+        },
+        "paid_at": (event.get("created_at") or now_iso()) if new_status == "PAID" else None,
+        "created_at": invoice.get("created_at") or now_iso(),
+        "checked_at": time.time(),
+    }
+
+
+async def _handle_invoice_event(invoice: Dict[str, Any], event: Dict[str, Any]) -> None:
+    inv_id = invoice.get("id")
+    if not inv_id:
+        return
+    new_status = invoice.get("status")
+    d = await mongo_db.square_invoices.find_one({"invoice_id": inv_id}, {"_id": 0})
+    if d:
+        await _update_known_invoice_from_webhook(d, invoice, new_status, event)
+    else:
+        d = _invoice_doc_from_webhook(invoice, new_status, event)
+        await mongo_db.square_invoices.insert_one(dict(d))
+        d.pop("_id", None)
+    if new_status in ("PAID", "PAYMENT_PENDING"):
+        await apply_invoice_to_jobs(d)
+
+
 async def handle_square_event(event: Dict[str, Any]) -> None:
     etype = event.get("type", "")
     obj = (event.get("data") or {}).get("object") or {}
     if etype.startswith("invoice."):
-        invoice = obj.get("invoice") or obj
-        inv_id = invoice.get("id")
-        if not inv_id:
-            return
-        new_status = invoice.get("status")
-        d = await mongo_db.square_invoices.find_one({"invoice_id": inv_id}, {"_id": 0})
-        if d:
-            updates: Dict[str, Any] = {"checked_at": time.time()}
-            if new_status:
-                updates["status"] = new_status
-            if new_status == "PAID" and d.get("status") != "PAID":
-                updates["paid_at"] = event.get("created_at") or now_iso()
-            if new_status == "PAID" and d.get("lead_id") and not d.get("deposit_synced"):
-                if await mark_lead_deposit_paid(d["lead_id"]):
-                    updates["deposit_synced"] = True
-            d.update(updates)
-            await mongo_db.square_invoices.update_one({"invoice_id": inv_id}, {"$set": updates})
-        else:
-            amount_cents = ((invoice.get("payment_requests") or [{}])[0].get("computed_amount_money") or {}).get("amount")
-            primary = invoice.get("primary_recipient") or {}
-            d = {
-                "lead_id": None,
-                "invoice_id": inv_id,
-                "invoice_number": invoice.get("invoice_number"),
-                "amount": round(amount_cents / 100, 2) if amount_cents else 0,
-                "status": new_status,
-                "public_url": invoice.get("public_url"),
-                "purpose": None, "quote_total": None,
-                "customer": {
-                    "name": " ".join(x for x in [primary.get("given_name"), primary.get("family_name")] if x),
-                    "email": primary.get("email_address") or "",
-                    "phone": primary.get("phone_number") or "",
-                },
-                "paid_at": (event.get("created_at") or now_iso()) if new_status == "PAID" else None,
-                "created_at": invoice.get("created_at") or now_iso(),
-                "checked_at": time.time(),
-            }
-            await mongo_db.square_invoices.insert_one(dict(d))
-            d.pop("_id", None)
-        if new_status in ("PAID", "PAYMENT_PENDING"):
-            await apply_invoice_to_jobs(d)
+        await _handle_invoice_event(obj.get("invoice") or obj, event)
     elif etype == "payment.updated":
         docs = await mongo_db.square_invoices.find(
             {"status": {"$nin": list(SQUARE_TERMINAL_STATUSES)}}, {"_id": 0}).to_list(100)
@@ -1053,7 +1107,7 @@ async def handle_square_event(event: Dict[str, Any]) -> None:
 
 
 @public_router.post("/webhooks/square")
-async def square_webhook(request: Request):
+async def square_webhook(request: Request) -> Dict[str, Any]:
     raw = await request.body()
     signature = request.headers.get("x-square-hmacsha256-signature", "")
     doc = await get_integrations()
@@ -1148,7 +1202,7 @@ async def square_sync_status(p: Dict[str, Any] = Depends(require_owner)):
 # ------- Owner Jobs board
 
 @api_router.get("/jobs")
-async def list_jobs(p: Dict[str, Any] = Depends(require_owner)):
+async def list_jobs(p: Dict[str, Any] = Depends(require_owner)) -> Dict[str, Any]:
     docs = await mongo_db.jobs.find({}).to_list(500)
     docs.sort(key=lambda j: (j.get("job_date") or "9999-12-31", j.get("start_time") or ""))
     return {"jobs": [_job_out(j) for j in docs]}
@@ -1171,21 +1225,23 @@ class JobPatchPayload(BaseModel):
     customer_email: Optional[str] = None
 
 
-@api_router.patch("/jobs/{job_id}")
-async def patch_job(job_id: str, payload: JobPatchPayload, p: Dict[str, Any] = Depends(require_owner)):
-    job = await mongo_db.jobs.find_one({"_id": job_id})
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found.")
+async def _resolve_job_crew(slots: List[JobCrewSlot]) -> List[Dict[str, Any]]:
+    crew_list = []
+    for slot in slots:
+        u = await mongo_db.users.find_one({"_id": slot.user_id})
+        if not u:
+            continue
+        crew_list.append({"user_id": slot.user_id, "name": u.get("name", ""),
+                          "position": (slot.position or "Helper").strip() or "Helper"})
+    return crew_list
+
+
+async def _job_updates_from_payload(payload: JobPatchPayload,
+                                    job: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
     updates: Dict[str, Any] = {}
     new_crew_ids: List[str] = []
     if payload.crew is not None:
-        crew_list = []
-        for slot in payload.crew:
-            u = await mongo_db.users.find_one({"_id": slot.user_id})
-            if not u:
-                continue
-            crew_list.append({"user_id": slot.user_id, "name": u.get("name", ""),
-                              "position": (slot.position or "Helper").strip() or "Helper"})
+        crew_list = await _resolve_job_crew(payload.crew)
         updates["crew"] = crew_list
         old_ids = {c["user_id"] for c in job.get("crew", [])}
         new_crew_ids = [c["user_id"] for c in crew_list if c["user_id"] not in old_ids]
@@ -1208,18 +1264,32 @@ async def patch_job(job_id: str, payload: JobPatchPayload, p: Dict[str, Any] = D
         if payload.customer_email is not None:
             cust["email"] = payload.customer_email.strip()
         updates["customer"] = cust
+    return updates, new_crew_ids
+
+
+async def _notify_new_crew_members(job: Dict[str, Any], job_id: str, new_crew_ids: List[str]) -> None:
+    when = job.get("job_date") or "date TBD"
+    if job.get("start_time"):
+        when += f" at {job['start_time']}"
+    for c in job.get("crew", []):
+        if c["user_id"] in new_crew_ids:
+            await notify(c["user_id"], None, "You're on a job",
+                         f"Job #{job['invoice_number']} — {when}. Your role: {c['position']}. Open Today for details.",
+                         "info", {"job_id": job_id})
+
+
+@api_router.patch("/jobs/{job_id}")
+async def patch_job(job_id: str, payload: JobPatchPayload,
+                    p: Dict[str, Any] = Depends(require_owner)) -> Dict[str, Any]:
+    job = await mongo_db.jobs.find_one({"_id": job_id})
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    updates, new_crew_ids = await _job_updates_from_payload(payload, job)
     if updates:
         updates["assigned_at"] = now_iso()
         await mongo_db.jobs.update_one({"_id": job_id}, {"$set": updates})
         job.update(updates)
-        when = job.get("job_date") or "date TBD"
-        if job.get("start_time"):
-            when += f" at {job['start_time']}"
-        for c in job.get("crew", []):
-            if c["user_id"] in new_crew_ids:
-                await notify(c["user_id"], None, "You're on a job",
-                             f"Job #{job['invoice_number']} — {when}. Your role: {c['position']}. Open Today for details.",
-                             "info", {"job_id": job_id})
+        await _notify_new_crew_members(job, job_id, new_crew_ids)
         await audit(p, "updated job assignment", f"job {job.get('invoice_number')}", {"fields": list(updates.keys())})
     return _job_out(job)
 
@@ -1289,7 +1359,7 @@ async def send_new_tracking_link(job_id: str, request: Request, p: Dict[str, Any
 
 
 @public_router.get("/track/{token}")
-async def track_job(token: str):
+async def track_job(token: str) -> Dict[str, Any]:
     job = await mongo_db.jobs.find_one({"tracking.token": token})
     if not job:
         raise HTTPException(status_code=404, detail="This tracking link is no longer active. Reply to our text and we'll send a new one.")
@@ -1309,16 +1379,32 @@ async def track_job(token: str):
                 minutes_ago = None
             if live and minutes_ago is not None and minutes_ago <= 10:
                 position = {"lat": pings[0]["lat"], "lng": pings[0]["lng"]}
-    assignment = None
+    status = await _track_status(job, crew_ids)
+    money = _track_money(job)
+    portal = await _track_portal_bits(job)
+    return {"invoice_number": job.get("invoice_number"), "job_date": job.get("job_date"),
+            "start_time": job.get("start_time"), "live": live, "position": position,
+            "updated_minutes_ago": minutes_ago,
+            "customer_name": (job.get("customer") or {}).get("name", ""),
+            "status": status,
+            "pickup_address": job.get("pickup_address"), "dropoff_address": job.get("dropoff_address"),
+            "crew": [{"name": c.get("name", "Crew member"), "position": c.get("position", "Helper")}
+                     for c in job.get("crew", [])],
+            "truck_name": job.get("truck_name") or "",
+            **money, **portal}
+
+
+# ------- customer portal (phase D — extends the public tracking link)
+
+async def _track_status(job: Dict[str, Any], crew_ids: List[str]) -> str:
     if crew_ids and job.get("job_date"):
-        assignment = await mongo_db.assignments.find_one(
-            {"job_date": job["job_date"], "crew.user_id": {"$in": crew_ids}})
-    if assignment and assignment.get("exec_status") and assignment["exec_status"] != "Assigned":
-        status = assignment["exec_status"]
-    elif job.get("crew"):
-        status = "Crew assigned"
-    else:
-        status = "Scheduled"
+        a = await mongo_db.assignments.find_one({"job_date": job["job_date"], "crew.user_id": {"$in": crew_ids}})
+        if a and a.get("exec_status") and a["exec_status"] != "Assigned":
+            return a["exec_status"]
+    return "Crew assigned" if job.get("crew") else "Scheduled"
+
+
+def _track_money(job: Dict[str, Any]) -> Dict[str, Any]:
     paid_full = (job.get("paid_in_full") or {}).get("status") == "paid"
     quote = job.get("quote_total")
     deposit = (job.get("deposit_paid") or {}).get("amount") or job.get("deposit_amount")
@@ -1330,6 +1416,11 @@ async def track_job(token: str):
             remaining = max(0.0, round(float(quote) - float(deposit or 0), 2))
         except (TypeError, ValueError):
             remaining = None
+    return {"quote_total": quote, "deposit_amount": deposit, "paid_in_full": paid_full,
+            "remaining_balance": remaining}
+
+
+async def _track_portal_bits(job: Dict[str, Any]) -> Dict[str, Any]:
     invoices = []
     if job.get("lead_id"):
         for inv in await mongo_db.square_invoices.find({"lead_id": job["lead_id"]}).to_list(10):
@@ -1338,17 +1429,7 @@ async def track_job(token: str):
     uploads = await mongo_db.portal_uploads.find({"job_id": job["_id"]}).sort("created_at", -1).to_list(30)
     business = await mongo_db.settings.find_one({"_id": "business"}) or {}
     creds = await square_creds()
-    return {"invoice_number": job.get("invoice_number"), "job_date": job.get("job_date"),
-            "start_time": job.get("start_time"), "live": live, "position": position,
-            "updated_minutes_ago": minutes_ago,
-            "customer_name": (job.get("customer") or {}).get("name", ""),
-            "status": status,
-            "pickup_address": job.get("pickup_address"), "dropoff_address": job.get("dropoff_address"),
-            "crew": [{"name": c.get("name", "Crew member"), "position": c.get("position", "Helper")}
-                     for c in job.get("crew", [])],
-            "truck_name": job.get("truck_name") or "",
-            "quote_total": quote, "deposit_amount": deposit, "paid_in_full": paid_full,
-            "remaining_balance": remaining, "invoices": invoices,
+    return {"invoices": invoices,
             "details": {k: v for k, v in (job.get("portal_details") or {}).items() if k != "updated_at"},
             "uploads": [{"id": u["_id"], "kind": u.get("kind"), "filename": u.get("filename"),
                          "content_type": u.get("content_type")} for u in uploads],
@@ -1357,7 +1438,6 @@ async def track_job(token: str):
             "tips_enabled": bool(creds["token"] and creds["location_id"])}
 
 
-# ------- customer portal (phase D — extends the public tracking link)
 
 async def _job_by_token(token: str) -> Dict[str, Any]:
     job = await mongo_db.jobs.find_one({"tracking.token": token})
@@ -1387,7 +1467,7 @@ class PortalDetailsPayload(BaseModel):
 
 
 @public_router.post("/track/{token}/details")
-async def portal_save_details(token: str, payload: PortalDetailsPayload):
+async def portal_save_details(token: str, payload: PortalDetailsPayload) -> Dict[str, Any]:
     job = await _job_by_token(token)
     fields = ("gate_code", "elevator", "parking", "special_requests", "inventory_notes")
     details = {k: (getattr(payload, k) or "").strip()[:600] for k in fields}
@@ -1401,50 +1481,62 @@ async def portal_save_details(token: str, payload: PortalDetailsPayload):
     return {"ok": True}
 
 
-@public_router.post("/track/{token}/uploads")
-async def portal_upload(token: str, kind: str = "photo", file: UploadFile = File(...)):
-    job = await _job_by_token(token)
+async def _validate_portal_upload(job: Dict[str, Any], kind: str, content_type: str) -> None:
     if kind not in ("photo", "inventory"):
         raise HTTPException(status_code=422, detail="Upload kind must be photo or inventory.")
-    ct = file.content_type or ""
-    if not (ct.startswith("image/") or ct == "application/pdf"):
+    if not (content_type.startswith("image/") or content_type == "application/pdf"):
         raise HTTPException(status_code=422, detail="Photos or PDF files only, please.")
     if await mongo_db.portal_uploads.count_documents({"job_id": job["_id"]}) >= 30:
         raise HTTPException(status_code=422, detail="Upload limit reached for this move — text us instead!")
-    data = await file.read()
-    if len(data) > 15 * 1024 * 1024:
-        raise HTTPException(status_code=422, detail="That file is too big (15 MB max).")
-    ext = (file.filename or "upload").rsplit(".", 1)[-1].lower() if "." in (file.filename or "") else "bin"
+
+
+async def _store_portal_upload(job: Dict[str, Any], kind: str, filename: str,
+                               content_type: str, data: bytes) -> Dict[str, Any]:
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "bin"
     path = f"haulyeah-crm/portal/{job['_id']}/{uuid4()}.{ext}"
     key = await get_storage_key()
     async with httpx.AsyncClient(timeout=120.0) as client:
         r = await client.put(f"{STORAGE_URL}/objects/{path}",
-                             headers={"X-Storage-Key": key, "Content-Type": ct}, content=data)
+                             headers={"X-Storage-Key": key, "Content-Type": content_type}, content=data)
     if r.status_code >= 300:
         raise HTTPException(status_code=502, detail="The upload didn't stick. Try again.")
     doc = {"_id": str(uuid4()), "job_id": job["_id"], "kind": kind,
-           "filename": (file.filename or "upload")[:120], "storage_path": r.json()["path"],
-           "content_type": ct, "created_at": now_iso()}
+           "filename": filename[:120], "storage_path": r.json()["path"],
+           "content_type": content_type, "created_at": now_iso()}
     await mongo_db.portal_uploads.insert_one(doc)
+    return doc
+
+
+async def _notify_portal_upload(job: Dict[str, Any], kind: str) -> None:
     last = job.get("portal_upload_notice_at") or ""
-    throttled = False
     try:
         if last and (datetime.now(timezone.utc) - datetime.fromisoformat(last)).total_seconds() < 900:
-            throttled = True
+            return
     except ValueError:
         pass
-    if not throttled:
-        await mongo_db.jobs.update_one({"_id": job["_id"]}, {"$set": {"portal_upload_notice_at": now_iso()}})
-        who = (job.get("customer") or {}).get("name") or "The customer"
-        await _owner_portal_ping(job, "Customer uploaded files",
-                                 f"{who} (Job #{job.get('invoice_number')}) added "
-                                 + ("an inventory file" if kind == "inventory" else "photos")
-                                 + " to their move. Check the Jobs board.")
+    await mongo_db.jobs.update_one({"_id": job["_id"]}, {"$set": {"portal_upload_notice_at": now_iso()}})
+    who = (job.get("customer") or {}).get("name") or "The customer"
+    await _owner_portal_ping(job, "Customer uploaded files",
+                             f"{who} (Job #{job.get('invoice_number')}) added "
+                             + ("an inventory file" if kind == "inventory" else "photos")
+                             + " to their move. Check the Jobs board.")
+
+
+@public_router.post("/track/{token}/uploads")
+async def portal_upload(token: str, kind: str = "photo", file: UploadFile = File(...)) -> Dict[str, Any]:
+    job = await _job_by_token(token)
+    ct = file.content_type or ""
+    await _validate_portal_upload(job, kind, ct)
+    data = await file.read()
+    if len(data) > 15 * 1024 * 1024:
+        raise HTTPException(status_code=422, detail="That file is too big (15 MB max).")
+    doc = await _store_portal_upload(job, kind, file.filename or "upload", ct, data)
+    await _notify_portal_upload(job, kind)
     return {"id": doc["_id"]}
 
 
 @public_router.get("/track/{token}/uploads/{upload_id}")
-async def portal_upload_view(token: str, upload_id: str):
+async def portal_upload_view(token: str, upload_id: str) -> Response:
     job = await _job_by_token(token)
     doc = await mongo_db.portal_uploads.find_one({"_id": upload_id, "job_id": job["_id"]})
     if not doc:
@@ -2631,7 +2723,7 @@ class UserCreatePayload(BaseModel):
     password: Optional[str] = None
 
 
-DEFAULT_STARTING_PASSWORD = "haulyeah123"
+DEFAULT_STARTING_PASSWORD = os.environ.get("DEFAULT_STARTING_PASSWORD", "").strip() or "haulyeah123"
 
 
 class UserPatchPayload(BaseModel):
@@ -3716,6 +3808,7 @@ class PunchPayload(BaseModel):
     lat: Optional[float] = None
     lng: Optional[float] = None
     accuracy: Optional[float] = None
+    assignment_id: Optional[str] = None
 
 
 async def _todays_assignment(user_id: str) -> Optional[Dict[str, Any]]:
@@ -3757,7 +3850,12 @@ async def clock_in(payload: PunchPayload, request: Request, p: Dict[str, Any] = 
         raise HTTPException(status_code=409, detail="You're already clocked in.")
     now = datetime.now(timezone.utc)
     coords = {"lat": payload.lat, "lng": payload.lng} if payload.lat is not None and payload.lng is not None else None
-    assignment = await _todays_assignment(p["user_id"])
+    assignment = None
+    if payload.assignment_id:
+        assignment = await mongo_db.assignments.find_one(
+            {"_id": payload.assignment_id, "crew.user_id": p["user_id"]})
+    if not assignment:
+        assignment = await _todays_assignment(p["user_id"])
     position = "Helper"
     if assignment:
         mine = next((c for c in assignment.get("crew", []) if c["user_id"] == p["user_id"]), None)
@@ -5979,7 +6077,6 @@ async def _ops_facts() -> Dict[str, Any]:
     todays = [a for a in assignments if a["job_date"] == today]
     behind, needs_crew, late_risk = [], [], []
     active = complete = 0
-    aid_list = [a["_id"] for a in todays]
     open_entries = await mongo_db.time_entries.find({"clock_out": None}).to_list(100)
     open_by_aid: Dict[str, int] = {}
     for e in open_entries:

@@ -20,16 +20,17 @@ import uuid
 import pytest
 import requests
 from dotenv import load_dotenv
+from test_config import OWNER_PASSWORD
 
 load_dotenv("/app/frontend/.env")
 load_dotenv("/app/backend/.env")
 
 BASE_URL = os.environ["REACT_APP_BACKEND_URL"].rstrip("/")
 
-OWNER = {"email": "HaulYeahAdmin", "password": "HaulYeah2026!"}
-SALES = {"email": "TestSalesAdmin", "password": "HaulYeah2026!"}
-MARKETING = {"email": "TestMarketingAdmin", "password": "HaulYeah2026!"}
-CREW = {"email": "TestCrewAdmin", "password": "HaulYeah2026!"}
+OWNER = {"email": "HaulYeahAdmin", "password": OWNER_PASSWORD}
+SALES = {"email": "TestSalesAdmin", "password": OWNER_PASSWORD}
+MARKETING = {"email": "TestMarketingAdmin", "password": OWNER_PASSWORD}
+CREW = {"email": "TestCrewAdmin", "password": OWNER_PASSWORD}
 
 
 def _login(payload):
@@ -96,7 +97,7 @@ class TestRoleGates:
     def test_sales_can_mark_read(self, sales_h):
         r = requests.post(f"{BASE_URL}/api/alerts/read", headers=sales_h, timeout=10)
         assert r.status_code == 200
-        assert r.json().get("ok") is True
+        assert r.json().get("ok") == True
 
     def test_marketing_can_mark_read(self, marketing_h):
         r = requests.post(f"{BASE_URL}/api/alerts/read", headers=marketing_h, timeout=10)
@@ -142,7 +143,7 @@ class TestZapierWebhook:
         title = f"QA Review {uuid.uuid4().hex[:6]}"
         r = requests.post(webhook_url, json={"kind": "review", "title": title, "body": "test-body"}, timeout=10)
         assert r.status_code == 200, r.text
-        assert r.json().get("ok") is True
+        assert r.json().get("ok") == True
 
         # Verify it appears in the feed with source=zapier
         r2 = requests.get(f"{BASE_URL}/api/alerts?limit=200", headers=owner_h, timeout=10)

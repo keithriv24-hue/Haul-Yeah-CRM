@@ -1,0 +1,39 @@
+{
+  "summary": "Post-refactor regression spot-check per E1's request. Wrote /app/backend/tests/test_iteration18_refactor_regression.py covering all 8 flows from the review (login refactor incl. legacy blank-email + wrong-pw + auth/me, PATCH /api/jobs/{id} refactor, public /api/track/{token} + bad-token 404, portal_upload PNG + bad-kind + non-image, crew clock-in with explicit assignment_id + clock-out, dispatch board today+QA jobs, square/status owner/crew RBAC). 16/16 pass. No behavior regressions detected in the refactored code paths.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration18_refactor_regression.py",
+    "/app/test_reports/pytest/iter18_refactor.xml"
+  ],
+  "action_items": [
+    "None — refactors of login, patch_job, portal_upload, clock_in(assignment_id), dispatch_board, square_status all behave identically to pre-refactor per spec.",
+    "Housekeeping (not from refactor): iter-17 seed left 30 portal_uploads on QA-1001 (test artifacts a.png/i.pdf/qa_regress.png) which had hit the 30-file /api/track/{token}/uploads cap — I cleaned those out (kept 2 non-test uploads); future portal upload tests should self-clean via DELETE on the created upload id."
+  ],
+  "critical_code_review_comments": [
+    "server.py L1526 portal_upload signature declares `kind: str = \"photo\"` with no Form/Query annotation, so FastAPI treats it as a QUERY parameter. That has always been the contract (test_iteration17_portal.py uses params={...}), but the review request wording implies form-data; if E1 intended form-data, wrap it as `kind: str = Form(\"photo\")`. Otherwise everything is fine.",
+    "server.py L1470-1490 _validate_portal_upload uses a hard-coded 30-count cap on portal_uploads per job. Testing agents keep hitting it in this same demo job (QA-1001). Consider (a) a `TEST_` filename allow-list bypass, or (b) auto-purge oldest uploads>30 days when saving, so QA drift doesn't wedge the endpoint.",
+    "server.py L361-390 refactored _login_user_account/_login_shared_password look clean and correct — brute-force lockout counter still increments per fail, resets on success, 5→15min lock preserved. Note the `user: None` shape for shared-password logins is unchanged (no `ok:true` key at top level — response is {token, role, can_switch, user}), which is fine but slightly inconsistent with /api/auth/me which does include `ok:true`.",
+    "server.py L3850 clock_in with PunchPayload.assignment_id — verified working: when body includes assignment_id, punch is attached to that assignment and clock-out closes cleanly."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration18_refactor_regression.py (new)",
+    "Data cleanup: removed 31 test-artifact rows from portal_uploads (filenames a.png / i.pdf / qa_regress.png) belonging to QA-1001; 2 legitimate uploads remain."
+  ],
+  "success_rate": {
+    "backend": "100% (16/16 refactor-regression tests pass)",
+    "frontend": "N/A (backend-only run per E1 instructions)"
+  },
+  "test_credentials": "Owner HaulYeahAdmin / HaulYeah2026!; Crew Javante javante@haulyeahmoves.com / JavCrew2026!. Confirmed: login accepts these via the `email` field (not `username`) — /app/memory/test_credentials.md labels it 'Username' but the API field name is 'email' and lookup is case-insensitive.",
+  "seed_data_creation": "None. Cleaned pre-existing test artifacts from portal_uploads (see updated_files).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Refactor regression pass is green. If you re-run iter17_portal.py or iter18 tests repeatedly, keep an eye on QA-1001 portal_uploads count (cap = 30 at server.py L1489); prune between runs if you cross 25+. Owner login field name in JSON body is `email` (not `username`), even though credentials file calls it 'Username'. Dispatch board returns date + is_today at top level, and QA Montclair/Hoboken assignments are re-seeded to today by /app/backend/tests/conftest.py on every pytest invocation — do NOT rely on their assignment_ids being stable across runs. Square is LIVE — /square/status is safe to hit, do not touch /square/invoices/*."
+}

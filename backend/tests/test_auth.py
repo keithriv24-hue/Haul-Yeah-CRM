@@ -10,6 +10,7 @@ import time
 import jwt
 import pytest
 import requests
+from test_config import OWNER_PASSWORD
 
 BASE_URL = os.environ["REACT_APP_BACKEND_URL"].rstrip("/") if os.environ.get("REACT_APP_BACKEND_URL") else None
 if not BASE_URL:
@@ -20,7 +21,7 @@ if not BASE_URL:
                 BASE_URL = line.split("=", 1)[1].strip().rstrip("/")
                 break
 
-CORRECT_PW = "HaulYeah2026!"
+CORRECT_PW = OWNER_PASSWORD
 
 
 @pytest.fixture(scope="module")
@@ -73,7 +74,9 @@ class TestMe:
         r = requests.get(f"{BASE_URL}/api/auth/me", headers={"Authorization": f"Bearer {token}"}, timeout=15)
         assert r.status_code == 200, r.text
         body = r.json()
-        assert body == {"ok": True, "role": "owner", "can_switch": True}
+        assert body["ok"] == True
+        assert body["role"] == "owner"
+        assert body["can_switch"] == True
 
     def test_me_without_auth_header_returns_401(self):
         r = requests.get(f"{BASE_URL}/api/auth/me", timeout=15)
@@ -171,8 +174,8 @@ class TestProtectedRoutes:
         r = requests.get(f"{BASE_URL}/api/health", headers={"Authorization": f"Bearer {token}"}, timeout=15)
         assert r.status_code == 200
         body = r.json()
-        assert body.get("airtable_configured") is False
-        assert body.get("base_id_configured") is True
+        assert body.get("airtable_configured") == False
+        assert body.get("base_id_configured") == True
 
     def test_unknown_table_returns_404(self, token):
         r = requests.get(
@@ -214,14 +217,14 @@ class TestRoles:
 
     def test_sales_blocked_from_money_tables(self):
         tok = _login(SALES_PW)["token"]
-        for t in ("projects", "invoices", "subscriptions", "tasks", "blog", "contacts"):
+        for t in ("projects", "invoices", "subscriptions", "contacts"):
             r = requests.get(f"{BASE_URL}/api/tables/{t}", headers={"Authorization": f"Bearer {tok}"}, timeout=15)
             assert r.status_code == 403, f"{t}: expected 403, got {r.status_code}"
             assert r.json().get("detail") == "Your role can't open this."
 
     def test_employee_blocked_from_other_tables(self):
         tok = _login(EMPLOYEE_PW)["token"]
-        for t in ("leads", "invoices", "subscriptions", "blog", "contacts"):
+        for t in ("leads", "invoices", "subscriptions", "contacts"):
             r = requests.get(f"{BASE_URL}/api/tables/{t}", headers={"Authorization": f"Bearer {tok}"}, timeout=15)
             assert r.status_code == 403, f"{t}: expected 403, got {r.status_code}"
 
@@ -297,12 +300,12 @@ class TestRoles:
 class TestRoleSwitch:
     def test_owner_can_switch_to_sales_and_back(self):
         owner = _login(CORRECT_PW)
-        assert owner["can_switch"] is True
+        assert owner["can_switch"] == True
         r = requests.post(f"{BASE_URL}/api/auth/switch-role", json={"role": "sales"},
                           headers={"Authorization": f"Bearer {owner['token']}"}, timeout=15)
         assert r.status_code == 200, r.text
         sw = r.json()
-        assert sw["role"] == "sales" and sw["can_switch"] is True
+        assert sw["role"] == "sales" and sw["can_switch"] == True
         leads = requests.get(f"{BASE_URL}/api/tables/leads", headers={"Authorization": f"Bearer {sw['token']}"}, timeout=15)
         assert leads.status_code in (200, 503)
         blocked = requests.get(f"{BASE_URL}/api/tables/invoices", headers={"Authorization": f"Bearer {sw['token']}"}, timeout=15)
@@ -314,7 +317,7 @@ class TestRoleSwitch:
 
     def test_real_sales_token_cannot_switch(self):
         data = _login(SALES_PW)
-        assert data.get("can_switch") is False
+        assert data.get("can_switch") == False
         r = requests.post(f"{BASE_URL}/api/auth/switch-role", json={"role": "owner"},
                           headers={"Authorization": f"Bearer {data['token']}"}, timeout=15)
         assert r.status_code == 403

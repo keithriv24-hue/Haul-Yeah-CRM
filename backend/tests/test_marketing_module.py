@@ -1,7 +1,7 @@
 """Backend tests for the Marketing module (iteration 6).
 
 Covers:
-- New user creation without password + login uses default 'haulyeah123'
+- New user creation without password + login uses default STARTING_PASSWORD
 - switch-role to 'marketing' + marketing token permissions matrix
 - Ad spend CRUD + validation
 - Thresholds get (marketing) / put (owner-only) + non-negative
@@ -9,10 +9,10 @@ Covers:
 """
 import os
 import uuid
-import time
 import pytest
 import requests
 from pymongo import MongoClient
+from test_config import OWNER_EMAIL as CONFIG_OWNER_EMAIL, OWNER_PASSWORD, STARTING_PASSWORD
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://haul-yeah-staging.preview.emergentagent.com").rstrip("/")
 API = f"{BASE_URL}/api"
@@ -20,9 +20,9 @@ API = f"{BASE_URL}/api"
 MONGO_URL = os.environ.get("MONGO_URL", "mongodb://localhost:27017")
 DB_NAME = os.environ.get("DB_NAME", "test_database")
 
-OWNER_EMAIL = "HaulYeahOwner"
-OWNER_PASSWORD = "HaulYeah2026!"
-DEFAULT_STARTING = "haulyeah123"
+OWNER_EMAIL = CONFIG_OWNER_EMAIL
+OWNER_PASSWORD = OWNER_PASSWORD
+DEFAULT_STARTING = STARTING_PASSWORD
 
 
 # ---------- Fixtures ----------
@@ -64,7 +64,7 @@ def marketing_headers(marketing_token):
 # ---------- 1. New user creation without password ----------
 
 class TestUserDefaultPassword:
-    """POST /api/users without password auto-assigns 'haulyeah123' + must_change_password=true."""
+    """POST /api/users without password auto-assigns STARTING_PASSWORD + must_change_password=true."""
 
     TEST_EMAIL = f"TEST_qamkt_{uuid.uuid4().hex[:8]}@test.com"
     _created_id = None
@@ -76,13 +76,13 @@ class TestUserDefaultPassword:
         body = r.json()
         assert body.get("email", "").lower() == self.TEST_EMAIL.lower()
         assert "marketing" in body.get("roles", [])
-        assert body.get("must_change_password") is True
+        assert body.get("must_change_password") == True
         # Save id for cleanup via mongo
         TestUserDefaultPassword._created_id = body.get("id") or body.get("user_id")
         # Verify persisted
         doc = mongo.users.find_one({"email": self.TEST_EMAIL.lower()})
         assert doc is not None
-        assert doc.get("must_change_password") is True
+        assert doc.get("must_change_password") == True
         TestUserDefaultPassword._created_id = doc["_id"]
 
     def test_login_with_default_password(self):
@@ -90,7 +90,7 @@ class TestUserDefaultPassword:
         assert r.status_code == 200, r.text
         body = r.json()
         assert "token" in body
-        assert body.get("user", {}).get("must_change_password") is True
+        assert body.get("user", {}).get("must_change_password") == True
 
     def test_cleanup_user(self, mongo):
         if TestUserDefaultPassword._created_id:
@@ -111,7 +111,7 @@ class TestMarketingPermissions:
         assert "funnel" in data
         assert "totals" in data
         # Airtable is unavailable in preview so airtable_available should be False
-        assert data.get("airtable_available") is False
+        assert data.get("airtable_available") == False
 
     def test_marketing_ad_spend_list(self, marketing_headers):
         r = requests.get(f"{API}/marketing/ad-spend", headers=marketing_headers, timeout=15)
@@ -232,7 +232,7 @@ class TestReviewRequestsPatch:
         r1 = requests.patch(f"{API}/review-requests/{rid}", json={"review_received": True},
                             headers=marketing_headers, timeout=15)
         assert r1.status_code == 200, r1.text
-        assert r1.json().get("review", {}).get("received") is True
+        assert r1.json().get("review", {}).get("received") == True
         # Set stars=4
         r2 = requests.patch(f"{API}/review-requests/{rid}", json={"stars": 4},
                             headers=marketing_headers, timeout=15)

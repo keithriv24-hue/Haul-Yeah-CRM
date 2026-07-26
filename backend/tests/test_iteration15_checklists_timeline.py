@@ -9,12 +9,16 @@ Assumes QA demo state per handoff:
 """
 import os
 import time
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 import pytest
 import requests
+from test_config import JAVANTE_PASSWORD, JUNIOR_PASSWORD, OWNER_PASSWORD, STARTING_PASSWORD
 
 BASE = os.environ.get("REACT_APP_BACKEND_URL").rstrip("/")
 API = f"{BASE}/api"
-QA_DAY = "2026-07-21"
+QA_DAY = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
 EXEC_ORDER = ["Assigned", "En Route", "Arrived", "In Progress", "Complete"]
 
 
@@ -22,15 +26,15 @@ def _at_least(status, target):
     return EXEC_ORDER.index(status) >= EXEC_ORDER.index(target)
 
 OWNER_EMAIL = "HaulYeahAdmin"
-OWNER_PW = "HaulYeah2026!"
+OWNER_PW = OWNER_PASSWORD
 JAVANTE_EMAIL = "javante@haulyeahmoves.com"
-JAVANTE_PW = "JavCrew2026!"
+JAVANTE_PW = JAVANTE_PASSWORD
 JUNIOR_EMAIL = "junior@haulyeahmoves.com"
-JUNIOR_PW = "JunCrew2026!"
+JUNIOR_PW = JUNIOR_PASSWORD
 TESTCREW = "TestCrewAdmin"
-TESTCREW_PW = "HaulYeah2026!"
+TESTCREW_PW = OWNER_PASSWORD
 TESTSALES = "TestSalesAdmin"
-TESTSALES_PW = "HaulYeah2026!"
+TESTSALES_PW = OWNER_PASSWORD
 
 MONTCLAIR_ID = "3b2a0120-9dfb-4fe1-88cd-d5a6025ea61d"
 
@@ -304,11 +308,11 @@ class TestUsernameLoginAndCreateUser:
         TestUsernameLoginAndCreateUser._created_user_id = body["id"]
 
     def test_username_login_ok(self):
-        r = requests.post(f"{API}/auth/login", json={"email": "qalogintest", "password": "haulyeah123"}, timeout=30)
+        r = requests.post(f"{API}/auth/login", json={"email": "qalogintest", "password": STARTING_PASSWORD}, timeout=30)
         assert r.status_code == 200, r.text
         body = r.json()
         assert body.get("token")
-        assert body["user"]["must_change_password"] is True
+        assert body["user"]["must_change_password"] == True
 
     def test_create_with_space_422(self, owner_token):
         r = requests.post(f"{API}/users", headers=_auth(owner_token),

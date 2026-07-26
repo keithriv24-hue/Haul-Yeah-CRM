@@ -9,16 +9,17 @@ import os
 import time
 import pytest
 import requests
+from test_config import JAVANTE_PASSWORD, JUNIOR_PASSWORD, OWNER_PASSWORD, STARTING_PASSWORD
 
 BASE = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
 API = f"{BASE}/api"
 
-OWNER_CREDS = {"email": "HaulYeahAdmin", "password": "HaulYeah2026!"}
-JAVANTE_CREDS = {"email": "javante@haulyeahmoves.com", "password": "JavCrew2026!"}
-JUNIOR_CREDS = {"email": "junior@haulyeahmoves.com", "password": "JunCrew2026!"}
-GHOST_CREW = {"email": "TestCrewAdmin", "password": "HaulYeah2026!"}
-GHOST_SALES = {"email": "TestSalesAdmin", "password": "HaulYeah2026!"}
-GHOST_MKT = {"email": "TestMarketingAdmin", "password": "HaulYeah2026!"}
+OWNER_CREDS = {"email": "HaulYeahAdmin", "password": OWNER_PASSWORD}
+JAVANTE_CREDS = {"email": "javante@haulyeahmoves.com", "password": JAVANTE_PASSWORD}
+JUNIOR_CREDS = {"email": "junior@haulyeahmoves.com", "password": JUNIOR_PASSWORD}
+GHOST_CREW = {"email": "TestCrewAdmin", "password": OWNER_PASSWORD}
+GHOST_SALES = {"email": "TestSalesAdmin", "password": OWNER_PASSWORD}
+GHOST_MKT = {"email": "TestMarketingAdmin", "password": OWNER_PASSWORD}
 
 TEST_LEAD_A = "recQATEST1"
 TEST_LEAD_B = "recQATEST2"
@@ -96,7 +97,7 @@ def junior_id(users_map):
 class TestLoginRename:
     def test_old_owner_username_fails(self):
         r = requests.post(f"{API}/auth/login",
-                          json={"email": "HaulYeahOwner", "password": "HaulYeah2026!"},
+                          json={"email": "HaulYeahOwner", "password": OWNER_PASSWORD},
                           timeout=30)
         assert r.status_code == 401, f"expected 401 old username, got {r.status_code}"
 
@@ -160,7 +161,7 @@ class TestCommissionLifecycle:
         r = requests.get(f"{API}/commissions/report", headers=_hdr(owner_tok), timeout=30)
         assert r.status_code == 200
         body = r.json()
-        assert body["is_owner"] is True
+        assert body["is_owner"] == True
         rep = next((x for x in body["reps"] if x["user_id"] == javante_id), None)
         assert rep is not None, "javante should have a rep row"
         assert rep["pending"] >= 420.0
@@ -298,7 +299,7 @@ class TestRepScoping:
                          headers=_hdr(javante_sales_tok), timeout=30)
         assert r.status_code == 200, r.text
         body = r.json()
-        assert body["is_owner"] is False
+        assert body["is_owner"] == False
         # all rows should be javante's
         for row in body["rows"]:
             assert row["closed_by"] == javante_id
@@ -380,7 +381,7 @@ class TestAvailability:
             assert r5.status_code == 200
             day = r5.json()["days"][0]
             assert day["needed"] >= 2, day
-            assert day["short"] is True, day
+            assert day["short"] == True, day
         finally:
             # cleanup: restore availability + delete assignment
             requests.post(f"{API}/availability/set",
@@ -416,7 +417,7 @@ class TestProfileTask:
         email = f"qa_temp_{int(time.time())}@haulyeahmoves.com"
         create = requests.post(f"{API}/users",
                                json={"name": "QA Temp", "email": email,
-                                     "roles": ["crew"], "password": "haulyeah123"},
+                                     "roles": ["crew"], "password": STARTING_PASSWORD},
                                headers=_hdr(owner_tok), timeout=30)
         assert create.status_code == 200, create.text
         temp_id = create.json()["id"]
@@ -424,12 +425,12 @@ class TestProfileTask:
         try:
             # Login as temp user
             login_r = requests.post(f"{API}/auth/login",
-                                    json={"email": email, "password": "haulyeah123"},
+                                    json={"email": email, "password": STARTING_PASSWORD},
                                     timeout=30)
             assert login_r.status_code == 200, login_r.text
             temp_tok = login_r.json()["token"]
             # must_change_password flag exposed
-            assert login_r.json()["user"]["must_change_password"] is True
+            assert login_r.json()["user"]["must_change_password"] == True
 
             # Profile task should be open for a newly created user
             r = requests.get(f"{API}/profile-task", headers=_hdr(temp_tok), timeout=30)

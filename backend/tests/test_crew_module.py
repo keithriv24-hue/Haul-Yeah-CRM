@@ -9,14 +9,15 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 import requests
+from test_config import JAVANTE_PASSWORD, JUNIOR_PASSWORD, OWNER_EMAIL, OWNER_PASSWORD
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://haul-yeah-staging.preview.emergentagent.com").rstrip("/")
 
-OWNER_USERNAME = "HaulYeahOwner"
-OWNER_PASSWORD = "HaulYeah2026!"
-LEGACY_OWNER_PASSWORD = "HaulYeah2026!"
+OWNER_USERNAME = OWNER_EMAIL
+OWNER_PASSWORD = OWNER_PASSWORD
+LEGACY_OWNER_PASSWORD = OWNER_PASSWORD
 JAVANTE_EMAIL = "javante@haulyeahmoves.com"
-JAVANTE_PASSWORD = "JavCrew2026!"
+JAVANTE_PASSWORD = JAVANTE_PASSWORD
 JUNIOR_EMAIL = "junior@haulyeahmoves.com"
 
 
@@ -72,21 +73,23 @@ def first_truck_id(owner_headers):
 
 @pytest.fixture(scope="session")
 def qa_assignment(owner_headers, javante_user_id, first_truck_id):
-    today = datetime.now(timezone.utc).date().isoformat()
+    # tomorrow keeps this module clear of the QA Dispatch seed jobs pinned to today
+    day = (datetime.now(timezone.utc) + timedelta(days=1)).date().isoformat()
     payload = {
         "job_name": "TEST QA Move",
-        "job_date": today,
+        "job_date": day,
         "arrival_time": "09:00",
         "start_address": "123 Main St, Montclair NJ",
         "end_address": "",
         "truck_id": first_truck_id,
         "crew": [{"user_id": javante_user_id, "position": "Driver"}],
+        "ignore_warnings": True,
     }
     r = requests.post(f"{BASE_URL}/api/assignments", json=payload, headers=owner_headers, timeout=20)
     assert r.status_code in (200, 201), r.text
     data = r.json()
     aid = data["id"]
-    yield {"id": aid, "date": today, "javante_id": javante_user_id, "truck_id": first_truck_id}
+    yield {"id": aid, "date": day, "javante_id": javante_user_id, "truck_id": first_truck_id}
     requests.delete(f"{BASE_URL}/api/assignments/{aid}", headers=owner_headers, timeout=15)
 
 
@@ -97,8 +100,8 @@ class TestAuth:
         assert r.status_code == 200
         d = r.json()
         assert d["role"] == "owner"
-        assert d["user"]["email"].lower() == "haulyeahowner"
-        assert d["user"].get("must_change_password") is False
+        assert d["user"]["email"].lower() == OWNER_EMAIL.lower()
+        assert d["user"].get("must_change_password") == False
 
     def test_owner_legacy_login_blank_username(self):
         r = requests.post(f"{BASE_URL}/api/auth/login", json={"password": LEGACY_OWNER_PASSWORD}, timeout=15)
@@ -115,16 +118,16 @@ class TestAuth:
         assert r.status_code == 200
         d = r.json()
         assert d["role"] == "crew"
-        assert d["user"].get("must_change_password") is False
+        assert d["user"].get("must_change_password") == False
 
     def test_junior_still_needs_change_or_already_done(self):
         """Junior may still be must_change or already reset by prior E2E. We accept either."""
         r = _login(JUNIOR_EMAIL, "HaulCrew2026!")
         if r.status_code == 200:
-            assert r.json()["user"].get("must_change_password") is True
+            assert r.json()["user"].get("must_change_password") == True
         else:
             # E2E already ran and changed to JunCrew2026!
-            r2 = _login(JUNIOR_EMAIL, "JunCrew2026!")
+            r2 = _login(JUNIOR_EMAIL, JUNIOR_PASSWORD)
             assert r2.status_code == 200
 
     def test_wrong_password_401(self):
@@ -139,7 +142,7 @@ class TestUsersTrucks:
         assert r.status_code == 200
         users = r.json()["users"]
         emails = {u.get("email", "").lower() for u in users}
-        assert "haulyeahowner" in emails
+        assert OWNER_EMAIL.lower() in emails
         assert JAVANTE_EMAIL in emails
         for u in users:
             assert "_id" not in u
@@ -156,6 +159,7 @@ class TestUsersTrucks:
             if u.get("email", "").lower() == email.lower():
                 requests.patch(f"{BASE_URL}/api/users/{u['id']}",
                                json={"active": False}, headers=owner_headers, timeout=15)
+                requests.delete(f"{BASE_URL}/api/users/{u['id']}", headers=owner_headers, timeout=15)
 
         r = requests.post(
             f"{BASE_URL}/api/users",
@@ -179,7 +183,7 @@ class TestUsersTrucks:
         dr = requests.patch(f"{BASE_URL}/api/users/{uid}",
                             json={"active": False}, headers=owner_headers, timeout=15)
         assert dr.status_code == 200
-        assert dr.json().get("active") is False
+        assert dr.json().get("active") == False
 
     def test_crew_rates_roundtrip(self, owner_headers):
         r = requests.get(f"{BASE_URL}/api/settings/crew-rates", headers=owner_headers, timeout=15)
@@ -204,7 +208,7 @@ class TestUsersTrucks:
         t = requests.patch(f"{BASE_URL}/api/trucks/{tid}", json={"active": False},
                           headers=owner_headers, timeout=15)
         assert t.status_code == 200
-        assert t.json().get("active") is False
+        assert t.json().get("active") == False
 
 
 # ------------------ assignments / conflicts ------------------
@@ -373,7 +377,7 @@ class TestAvailability:
         assert r.status_code == 200, r.text
         g = requests.get(f"{BASE_URL}/api/crew/availability", headers=javante_headers, timeout=15)
         assert g.status_code == 200
-        assert g.json()["availability"].get(next_week) is False
+        assert g.json()["availability"].get(next_week) == False
 
     def test_owner_availability_visible(self, owner_headers):
         next_week = (datetime.now(timezone.utc).date() + timedelta(days=7)).isoformat()

@@ -20,21 +20,31 @@ Covers all bullets from the review-request:
 """
 import os
 import uuid
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
 import pytest
 import requests
 from dotenv import load_dotenv
+from test_config import OWNER_PASSWORD
 
 load_dotenv("/app/frontend/.env")
 load_dotenv("/app/backend/.env")
 
 BASE_URL = os.environ["REACT_APP_BACKEND_URL"].rstrip("/")
-TODAY_ET = "2026-07-21"  # ET today per handoff note
-FUTURE_DAY = "2026-07-25"
+NOW_ET = datetime.now(ZoneInfo("America/New_York"))
+TODAY_ET = NOW_ET.strftime("%Y-%m-%d")
+FUTURE_DAY = (NOW_ET + timedelta(days=30)).strftime("%Y-%m-%d")
+# Hoboken QA job arrives 14:30; board marks it behind 15 min after arrival
+HOBOKEN_BEHIND = NOW_ET > NOW_ET.replace(hour=14, minute=45, second=0, microsecond=0)
+# An arrival time safely in the future for today (never behind)
+FUTURE_ARRIVAL = ((NOW_ET + timedelta(hours=1)).strftime("%H:%M")
+                  if NOW_ET.hour < 22 else "23:59")
 
-OWNER = {"email": "HaulYeahAdmin", "password": "HaulYeah2026!"}
-SALES = {"email": "TestSalesAdmin", "password": "HaulYeah2026!"}
-MARKETING = {"email": "TestMarketingAdmin", "password": "HaulYeah2026!"}
-CREW = {"email": "TestCrewAdmin", "password": "HaulYeah2026!"}
+OWNER = {"email": "HaulYeahAdmin", "password": OWNER_PASSWORD}
+SALES = {"email": "TestSalesAdmin", "password": OWNER_PASSWORD}
+MARKETING = {"email": "TestMarketingAdmin", "password": OWNER_PASSWORD}
+CREW = {"email": "TestCrewAdmin", "password": OWNER_PASSWORD}
 
 
 def _login(payload):
@@ -76,13 +86,13 @@ class TestDispatchBoardOwner:
 
     def test_board_is_today_and_date(self, board_today):
         assert board_today["date"] == TODAY_ET
-        assert board_today["is_today"] is True
+        assert board_today["is_today"] == True
 
     def test_board_counts_match_qa_state(self, board_today):
         c = board_today["counts"]
         assert c["total"] == 2
-        # Hoboken (Assigned, past arrival) stays behind; Montclair may have auto-advanced via iter15 checklists
-        assert c["behind"] >= 1
+        # Hoboken (Assigned) goes behind only once its 14:30 arrival + grace has passed
+        assert c["behind"] >= (1 if HOBOKEN_BEHIND else 0)
         assert c["needs_crew"] == 1
 
     def test_board_revenue_today_zero_square_live(self, board_today):
@@ -94,7 +104,7 @@ class TestDispatchBoardOwner:
         assert "QA Dispatch Move — Montclair" in names
         assert "QA Dispatch Move — Hoboken" in names
         hoboken = next(a for a in board_today["assignments"] if a["job_name"] == "QA Dispatch Move — Hoboken")
-        assert hoboken["behind"] is (True if board_today["is_today"] else False)
+        assert hoboken["behind"] == HOBOKEN_BEHIND
         assert hoboken["exec_status"] == "Assigned"
 
     def test_montclair_has_crew_and_truck(self, board_today):
@@ -169,9 +179,9 @@ class TestDateParam:
         assert r.status_code == 200
         d = r.json()
         assert d["date"] == FUTURE_DAY
-        assert d["is_today"] is False
+        assert d["is_today"] == False
         for a in d["assignments"]:
-            assert a["behind"] is False, "non-today assignments must never be behind"
+            assert a["behind"] == False, "non-today assignments must never be behind"
 
     def test_date_param_preserves_pools(self, owner_h):
         r = requests.get(f"{BASE_URL}/api/dispatch/board", params={"date": FUTURE_DAY},
@@ -195,7 +205,7 @@ class TestBehindLogic:
             "project_id": None,
             "job_name": f"TEST_dispatch_future_{uuid.uuid4().hex[:6]}",
             "job_date": TODAY_ET,
-            "arrival_time": "23:45",  # >15min after 21:13 → future
+            "arrival_time": FUTURE_ARRIVAL,  # safely in the future → never behind
             "start_address": "",
             "end_address": "",
             "truck_id": None,
@@ -216,7 +226,7 @@ class TestBehindLogic:
         rec = next((a for a in b["assignments"]
                     if a.get("id", a.get("_id")) == TestBehindLogic.tmp_id), None)
         assert rec is not None
-        assert rec["behind"] is False
+        assert rec["behind"] == False
 
     def test_in_progress_excluded_from_behind_counted_active(self, owner_h):
         assert TestBehindLogic.tmp_id
@@ -244,7 +254,7 @@ class TestBehindLogic:
         rec = next((a for a in b["assignments"]
                     if a.get("id", a.get("_id")) == TestBehindLogic.tmp_id), None)
         assert rec is not None
-        assert rec["behind"] is False, "In Progress is never behind"
+        assert rec["behind"] == False, "In Progress is never behind"
         assert rec["exec_status"] == "In Progress"
         # counts.active should include this record (>=1)
         assert b["counts"]["active"] >= 1

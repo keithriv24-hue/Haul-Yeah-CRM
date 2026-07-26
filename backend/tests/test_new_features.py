@@ -15,12 +15,13 @@ import time
 from datetime import datetime, timezone
 import pytest
 import requests
+from test_config import JAVANTE_PASSWORD, OWNER_EMAIL, OWNER_PASSWORD
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://haul-yeah-staging.preview.emergentagent.com").rstrip("/")
-OWNER_USERNAME = "HaulYeahOwner"
-OWNER_PASSWORD = "HaulYeah2026!"
+OWNER_USERNAME = OWNER_EMAIL
+OWNER_PASSWORD = OWNER_PASSWORD
 JAVANTE_EMAIL = "javante@haulyeahmoves.com"
-JAVANTE_PASSWORD = "JavCrew2026!"
+JAVANTE_PASSWORD = JAVANTE_PASSWORD
 
 
 def _login(username, password):
@@ -61,7 +62,7 @@ class TestTrucksPlateAndDelete:
         tid = d["id"]
         assert d["name"] == "TEST_QA_Truck_ZZ"
         assert d["plate"] == "QAP-9999"
-        assert d["active"] is True
+        assert d["active"] == True
 
         # VERIFY via list
         r2 = requests.get(f"{BASE_URL}/api/trucks", headers=owner_headers, timeout=15)
@@ -79,7 +80,7 @@ class TestTrucksPlateAndDelete:
         # DELETE
         r4 = requests.delete(f"{BASE_URL}/api/trucks/{tid}", headers=owner_headers, timeout=15)
         assert r4.status_code == 200, r4.text
-        assert r4.json().get("deleted") is True
+        assert r4.json().get("deleted") == True
 
         # verify gone
         r5 = requests.get(f"{BASE_URL}/api/trucks", headers=owner_headers, timeout=15)
@@ -99,7 +100,7 @@ class TestTimelogStatus:
         d = r.json()
         assert "configured" in d
         # Preview env has AIRTABLE_API_KEY empty → configured must be False
-        assert d["configured"] is False, f"Expected configured=False in preview env, got: {d}"
+        assert d["configured"] == False, f"Expected configured=False in preview env, got: {d}"
         assert "pending" in d
         assert isinstance(d["pending"], int)
         assert "pending_jobs" in d
@@ -283,7 +284,7 @@ class TestTimelogQueueAfterPunch:
             time.sleep(2)  # allow the queued sync_timelog task to run
             r2 = requests.get(f"{BASE_URL}/api/timelog/status", headers=owner_headers, timeout=15)
             d = r2.json()
-            assert d["configured"] is False
+            assert d["configured"] == False
             assert d["pending"] >= baseline_pending + 1
             # find our pending job (matched by job_name+date since API doesn't return assignment_id)
             ours = [pj for pj in d["pending_jobs"]

@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional
 
 import pytest
 import requests
+from test_config import JAVANTE_PASSWORD, JUNIOR_PASSWORD, OWNER_EMAIL, OWNER_PASSWORD
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
 assert BASE_URL, "REACT_APP_BACKEND_URL must be set"
@@ -36,32 +37,32 @@ def _hdr(token: str) -> Dict[str, str]:
 
 @pytest.fixture(scope="session")
 def owner_token():
-    return _login("HaulYeahOwner", "HaulYeah2026!")
+    return _login(OWNER_EMAIL, OWNER_PASSWORD)
 
 
 @pytest.fixture(scope="session")
 def javante_token():
-    return _login("javante@haulyeahmoves.com", "JavCrew2026!")
+    return _login("javante@haulyeahmoves.com", JAVANTE_PASSWORD)
 
 
 @pytest.fixture(scope="session")
 def junior_token():
-    return _login("junior@haulyeahmoves.com", "JunCrew2026!")
+    return _login("junior@haulyeahmoves.com", JUNIOR_PASSWORD)
 
 
 @pytest.fixture(scope="session")
 def ghost_crew_token():
-    return _login("TestCrewAdmin", "HaulYeah2026!")
+    return _login("TestCrewAdmin", OWNER_PASSWORD)
 
 
 @pytest.fixture(scope="session")
 def ghost_sales_token():
-    return _login("TestSalesAdmin", "HaulYeah2026!")
+    return _login("TestSalesAdmin", OWNER_PASSWORD)
 
 
 @pytest.fixture(scope="session")
 def ghost_marketing_token():
-    return _login("TestMarketingAdmin", "HaulYeah2026!")
+    return _login("TestMarketingAdmin", OWNER_PASSWORD)
 
 
 @pytest.fixture(scope="session")
@@ -110,7 +111,7 @@ class TestChallenges:
         r = requests.get(f"{API}/challenges", headers=_hdr(owner_token), timeout=15)
         assert r.status_code == 200
         j = r.json()
-        assert j["is_owner"] is True
+        assert j["is_owner"] == True
         names = {c["name"] for c in j["challenges"]}
         assert any(n.startswith("Full House") for n in names)
         assert "King of the Weekend" in names
@@ -121,7 +122,7 @@ class TestChallenges:
         r = requests.get(f"{API}/challenges", headers=_hdr(ghost_crew_token), timeout=15)
         assert r.status_code == 200
         j = r.json()
-        assert j["is_owner"] is False
+        assert j["is_owner"] == False
         teams = {c["team"] for c in j["challenges"]}
         assert teams == {"crew"}, f"crew user saw teams={teams}"
 
@@ -165,7 +166,7 @@ class TestPrivacy:
                          headers=_hdr(ghost_crew_token), timeout=15)
         assert r.status_code == 200
         j = r.json()
-        assert j.get("can_see_numbers") is False
+        assert j.get("can_see_numbers") == False
         assert "stats" not in j
         assert "progress" not in j
 
@@ -173,14 +174,14 @@ class TestPrivacy:
         r = requests.get(f"{API}/team/members/{user_ids['junior']}",
                          headers=_hdr(owner_token), timeout=15)
         j = r.json()
-        assert j.get("can_see_numbers") is True
+        assert j.get("can_see_numbers") == True
         assert "stats" in j and "progress" in j
 
     def test_self_sees_stats(self, junior_token, user_ids):
         r = requests.get(f"{API}/team/members/{user_ids['junior']}",
                          headers=_hdr(junior_token), timeout=15)
         j = r.json()
-        assert j.get("is_self") is True
+        assert j.get("is_self") == True
         assert "stats" in j and "progress" in j
 
 
@@ -295,8 +296,8 @@ class TestCreditFlowE2E:
             crew_gallery = post["gallery"]["crew"]
             fh = next((b for b in crew_gallery if b["id"] == "first-haul"), None)
             btw = next((b for b in crew_gallery if b["id"] == "behind-the-wheel"), None)
-            assert fh and fh["unlocked"] is True
-            assert btw and btw["unlocked"] is True
+            assert fh and fh["unlocked"] == True
+            assert btw and btw["unlocked"] == True
 
             # Leaderboard has junior with count >= 1
             lb = requests.get(f"{API}/leaderboard",
@@ -305,7 +306,7 @@ class TestCreditFlowE2E:
             assert row is not None and row["count"] >= 1
 
             # Notifications for junior include badge type
-            junior_tok = _login("junior@haulyeahmoves.com", "JunCrew2026!")
+            junior_tok = _login("junior@haulyeahmoves.com", JUNIOR_PASSWORD)
             notif = requests.get(f"{API}/notifications",
                                   headers=_hdr(junior_tok), timeout=10).json()
             items = notif.get("items") or notif.get("notifications") or []
@@ -328,7 +329,7 @@ class TestCrewPromptFlow:
         # Create assignment
         r = requests.post(f"{API}/assignments",
                           json={"project_id": "recQA_iter10", "job_name": "QA Prompt Job",
-                                "job_date": TODAY,
+                                "job_date": TODAY, "ignore_warnings": True,
                                 "crew": [{"user_id": javante_id, "position": "Driver"}]},
                           headers=_hdr(owner_token), timeout=15)
         assert r.status_code == 200, r.text
@@ -362,7 +363,7 @@ class TestCrewPromptFlow:
                                     json={"approve": False},
                                     headers=_hdr(owner_token), timeout=10)
             assert resolve.status_code == 200
-            assert resolve.json()["ok"] is True
+            assert resolve.json()["ok"] == True
         finally:
             requests.delete(f"{API}/assignments/{aid}",
                              headers=_hdr(owner_token), timeout=10)

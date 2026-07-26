@@ -1,10 +1,13 @@
 """Phase D customer portal — public /track endpoints + owner portal-uploads."""
-import io
 import os
-import time
 import pytest
 import requests
 from pathlib import Path
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+from test_config import OWNER_PASSWORD
+
+TRACK_JOB_DATE = (datetime.now(ZoneInfo("America/New_York")) + timedelta(days=3)).strftime("%Y-%m-%d")
 
 def _load_backend_url():
     env = Path("/app/frontend/.env").read_text()
@@ -21,7 +24,7 @@ TOKEN = "afe748c700fc481497a5720e5d80acde"
 def owner():
     s = requests.Session()
     r = s.post(f"{BASE}/api/auth/login",
-               json={"username": "HaulYeahAdmin", "password": "HaulYeah2026!"})
+               json={"username": "HaulYeahAdmin", "password": OWNER_PASSWORD})
     assert r.status_code == 200, r.text
     tok = r.json().get("access_token") or r.json().get("token")
     s.headers["Authorization"] = f"Bearer {tok}"
@@ -35,14 +38,14 @@ def test_track_public_ok():
     d = r.json()
     assert d["invoice_number"] == "QA-1001"
     assert d["customer_name"] == "Dana Johnson"
-    assert d["job_date"] == "2026-07-29"
+    assert d["job_date"] == TRACK_JOB_DATE
     assert d["status"] == "Crew assigned"
     assert d["quote_total"] == 1200
     assert d["deposit_amount"] == 300
-    assert d["paid_in_full"] is False
+    assert d["paid_in_full"] == False
     assert d["remaining_balance"] == 900
-    assert d["tips_enabled"] is True
-    assert d["review_submitted"] is True
+    assert d["tips_enabled"] == True
+    assert d["review_submitted"] == True
     assert d["invoices"] == []
     assert any("Javante" in c.get("name", "") for c in d["crew"])
     assert d["truck_name"] == "Truck 1"
@@ -201,7 +204,7 @@ def test_owner_portal_uploads_forbidden_for_crew():
     # exposed in preview — verify with (a) no auth -> 401 and (b) sales-switched token -> 403.
     ow = requests.Session()
     lr = ow.post(f"{BASE}/api/auth/login",
-                 json={"username": "HaulYeahAdmin", "password": "HaulYeah2026!"}).json()
+                 json={"username": "HaulYeahAdmin", "password": OWNER_PASSWORD}).json()
     ow.headers["Authorization"] = f"Bearer {lr.get('access_token') or lr.get('token')}"
     jobs = ow.get(f"{BASE}/api/jobs").json().get("jobs", [])
     jid = next(j["id"] for j in jobs if j.get("invoice_number") == "QA-1001")

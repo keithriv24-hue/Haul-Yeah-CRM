@@ -13,11 +13,15 @@ Run: pytest /app/backend/tests/test_iteration16_fleet.py -v -n 0
 """
 import io
 import os
-import time
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 import pytest
 import requests
+from test_config import JAVANTE_PASSWORD, JUNIOR_PASSWORD, OWNER_PASSWORD
 
 BASE_URL = os.environ["REACT_APP_BACKEND_URL"].rstrip("/")
+TODAY_ET = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
 
 MONTCLAIR_ID = "3b2a0120-9dfb-4fe1-88cd-d5a6025ea61d"
 
@@ -44,17 +48,17 @@ def _switch(owner_tok, role):
 
 @pytest.fixture(scope="module")
 def owner_token():
-    return _login("HaulYeahAdmin", "HaulYeah2026!")
+    return _login("HaulYeahAdmin", OWNER_PASSWORD)
 
 
 @pytest.fixture(scope="module")
 def javante_token():
-    return _login("javante@haulyeahmoves.com", "JavCrew2026!")
+    return _login("javante@haulyeahmoves.com", JAVANTE_PASSWORD)
 
 
 @pytest.fixture(scope="module")
 def junior_token():
-    return _login("junior@haulyeahmoves.com", "JunCrew2026!")
+    return _login("junior@haulyeahmoves.com", JUNIOR_PASSWORD)
 
 
 @pytest.fixture(scope="module")
@@ -112,14 +116,14 @@ class TestFleetOverview:
         assert t2["mileage"] == 84310
         assert t2["registration"].get("number") == "NJ-REG-1234"
         assert t2["registration"].get("expires") == "2026-08-10"
-        # 2026-07-26 -> 2026-08-10 is 15 days -> 'soon'
+        # 2026-07-26 -> 2026-08-10 == 15 days -> 'soon'
         assert t2["registration_state"] in ("soon", "expired"), t2["registration_state"]
         # 2027-01-15 -> ok (>30 days out)
         assert t2["insurance_state"] == "ok"
         assert t2["reminders_due"] >= 1
         assert t2["open_damage"] >= 1
         assert t2["last_inspection"] is not None
-        assert t2["last_inspection"]["passed"] is False
+        assert t2["last_inspection"]["passed"] == False
 
 
 # ---------------- 2. PATCH /api/trucks/{id} extended ----------------
@@ -160,7 +164,7 @@ class TestTruckPatchExtended:
         assert r.status_code == 200
         data = r.json()
         assert data["name"] == orig
-        assert data["active"] is True
+        assert data["active"] == True
 
     def test_crew_cannot_patch(self, javante_token, truck_map):
         t3 = truck_map.get("Truck 3")
@@ -183,12 +187,12 @@ class TestInspections:
                           json={"items": items, "odometer": new_mi, "notes": "TEST all pass"}, timeout=15)
         assert r.status_code == 200, r.text
         j = r.json()
-        assert j["passed"] is True
+        assert j["passed"] == True
         assert j["failed"] == []
-        # verify mileage bump
+        # verify mileage bump (>= because TestTruckLogs may concurrently log odometer 56000 on another worker)
         r1 = requests.get(f"{BASE_URL}/api/fleet", headers=_h(owner_token), timeout=15)
         fresh = next(t for t in r1.json()["trucks"] if t["id"] == t3["id"])
-        assert fresh["mileage"] == new_mi
+        assert fresh["mileage"] >= new_mi
 
     def test_crew_fail_flips_status_and_notifies(self, junior_token, owner_token, truck_map):
         t3 = truck_map.get("Truck 3")
@@ -201,7 +205,7 @@ class TestInspections:
                           json={"items": items, "notes": "TEST failed brakes"}, timeout=15)
         assert r.status_code == 200, r.text
         j = r.json()
-        assert j["passed"] is False
+        assert j["passed"] == False
         assert "brakes" in j["failed"]
         # verify status flipped
         r1 = requests.get(f"{BASE_URL}/api/fleet", headers=_h(owner_token), timeout=15)
@@ -251,13 +255,13 @@ class TestInspectionChecklistIntegration:
         assert r.status_code == 200, r.text
         # 2) Get Montclair assignment to find truck id
         rb = requests.get(f"{BASE_URL}/api/dispatch/board", headers=_h(owner_token),
-                          params={"date": "2026-07-21"}, timeout=15)
+                          params={"date": TODAY_ET}, timeout=15)
         assert rb.status_code == 200
         montclair = None
         for a in rb.json().get("assignments", []):
             if a["id"] == MONTCLAIR_ID:
                 montclair = a; break
-        assert montclair is not None, "Montclair not on 2026-07-21 board"
+        assert montclair is not None, f"Montclair not on {TODAY_ET} board"
         truck_id = montclair.get("truck_id") or montclair.get("truck", {}).get("id")
         assert truck_id, f"no truck on Montclair: {montclair}"
 
@@ -273,7 +277,7 @@ class TestInspectionChecklistIntegration:
                               json={"items": items, "assignment_id": MONTCLAIR_ID,
                                     "notes": "TEST montclair integration"}, timeout=15)
         assert r_ins.status_code == 200, r_ins.text
-        assert r_ins.json()["passed"] is True
+        assert r_ins.json()["passed"] == True
 
         # 5) Verify checklist item 0 done
         r_cl = requests.get(f"{BASE_URL}/api/assignments/{MONTCLAIR_ID}/checklists",
@@ -285,7 +289,7 @@ class TestInspectionChecklistIntegration:
         else:
             wh = lists["warehouse_departure"]
         item0 = wh["items"][0]
-        assert item0["done"] is True, f"item 0 not done: {item0}"
+        assert item0["done"] == True, f"item 0 not done: {item0}"
 
         # 6) Verify timeline event
         r_tl = requests.get(f"{BASE_URL}/api/assignments/{MONTCLAIR_ID}/timeline",
@@ -297,7 +301,7 @@ class TestInspectionChecklistIntegration:
 
         # 7) Ensure exec_status did not regress
         rb2 = requests.get(f"{BASE_URL}/api/dispatch/board", headers=_h(owner_token),
-                           params={"date": "2026-07-21"}, timeout=15)
+                           params={"date": TODAY_ET}, timeout=15)
         m2 = next(a for a in rb2.json()["assignments"] if a["id"] == MONTCLAIR_ID)
         assert m2.get("exec_status") in ("In Progress", "Loading", "Loaded"), m2.get("exec_status")
 

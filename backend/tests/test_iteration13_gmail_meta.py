@@ -20,16 +20,17 @@ import os
 import pytest
 import requests
 from dotenv import load_dotenv
+from test_config import OWNER_PASSWORD
 
 load_dotenv("/app/frontend/.env")
 load_dotenv("/app/backend/.env")
 
 BASE_URL = os.environ["REACT_APP_BACKEND_URL"].rstrip("/")
 
-OWNER = {"email": "HaulYeahAdmin", "password": "HaulYeah2026!"}
-SALES = {"email": "TestSalesAdmin", "password": "HaulYeah2026!"}
-MARKETING = {"email": "TestMarketingAdmin", "password": "HaulYeah2026!"}
-CREW = {"email": "TestCrewAdmin", "password": "HaulYeah2026!"}
+OWNER = {"email": "HaulYeahAdmin", "password": OWNER_PASSWORD}
+SALES = {"email": "TestSalesAdmin", "password": OWNER_PASSWORD}
+MARKETING = {"email": "TestMarketingAdmin", "password": OWNER_PASSWORD}
+CREW = {"email": "TestCrewAdmin", "password": OWNER_PASSWORD}
 
 
 def _login(payload):
@@ -61,8 +62,8 @@ class TestMetaStatus:
         r = requests.get(f"{BASE_URL}/api/meta/status", headers=owner_h, timeout=10)
         assert r.status_code == 200
         d = r.json()
-        assert d["configured"] is False
-        assert d["connected"] is False
+        assert d["configured"] == False
+        assert d["connected"] == False
         assert d["pages"] == []
         assert "redirect_uri" in d
         assert d["redirect_uri"].endswith("/api/meta/oauth/callback")
@@ -71,8 +72,8 @@ class TestMetaStatus:
         r = requests.get(f"{BASE_URL}/api/meta/status", headers=marketing_h, timeout=10)
         assert r.status_code == 200
         d = r.json()
-        assert d["configured"] is False
-        assert d["connected"] is False
+        assert d["configured"] == False
+        assert d["connected"] == False
         assert d["pages"] == []
         assert "redirect_uri" not in d, "marketing should NOT see redirect_uri"
 
@@ -205,13 +206,13 @@ class TestGmailStatus:
         r = requests.get(f"{BASE_URL}/api/gmail/status", headers=owner_h, timeout=10)
         assert r.status_code == 200
         d = r.json()
-        assert d["configured"] is False
+        assert d["configured"] == False
         assert "redirect_uri" in d
         assert d["redirect_uri"].endswith("/api/gmail/oauth/callback")
         ids = {mb["id"] for mb in d["mailboxes"]}
         assert ids == {"contact", "owner"}, f"owner should see both mailboxes, got {ids}"
         for mb in d["mailboxes"]:
-            assert mb["connected"] is False
+            assert mb["connected"] == False
 
     def test_sales_sees_only_contact_no_redirect_uri(self, sales_h):
         r = requests.get(f"{BASE_URL}/api/gmail/status", headers=sales_h, timeout=10)
