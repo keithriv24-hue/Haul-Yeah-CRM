@@ -359,16 +359,26 @@ class TestUnscheduledClockInFlag:
         ro = requests.post(f"{API}/crew/clock-out", headers=_auth(testcrew_token), json={}, timeout=30)
         assert ro.status_code == 200
 
-    def test_javante_scheduled_no_flag(self, javante_token):
-        # ensure not clocked in
+    def test_javante_scheduled_no_flag(self, javante_token, owner_token):
+        # create a temp assignment for the LIVE ET today so Javante counts as scheduled
+        from zoneinfo import ZoneInfo
+        from datetime import datetime
+        today_et = datetime.now(ZoneInfo("America/New_York")).date().isoformat()
+        payload = requests.get(f"{API}/users", headers=_auth(owner_token), timeout=30).json()
+        users = payload.get("users", payload) if isinstance(payload, dict) else payload
+        jav_id = next(u["id"] for u in users if "javante" in (u.get("email") or "").lower())
+        ra = requests.post(f"{API}/assignments", headers=_auth(owner_token), timeout=30, json={
+            "job_name": "TEMP iter15 flag test", "job_date": today_et, "arrival_time": "",
+            "crew": [{"user_id": jav_id, "position": "Helper"}], "ignore_warnings": True})
+        assert ra.status_code == 200, ra.text
+        temp_id = ra.json()["id"]
         try:
             requests.post(f"{API}/crew/clock-out", headers=_auth(javante_token), json={}, timeout=30)
-        except Exception:
-            pass
-        r = requests.post(f"{API}/crew/clock-in", headers=_auth(javante_token), json={}, timeout=30)
-        if r.status_code != 200:
-            pytest.skip(f"javante clock-in failed: {r.text}")
-        body = r.json()
-        assert "not_scheduled_today" not in (body.get("flags") or []), body.get("flags")
-        # clock out
-        requests.post(f"{API}/crew/clock-out", headers=_auth(javante_token), json={}, timeout=30)
+            r = requests.post(f"{API}/crew/clock-in", headers=_auth(javante_token), json={}, timeout=30)
+            if r.status_code != 200:
+                pytest.skip(f"javante clock-in failed: {r.text}")
+            body = r.json()
+            assert "not_scheduled_today" not in (body.get("flags") or []), body.get("flags")
+            requests.post(f"{API}/crew/clock-out", headers=_auth(javante_token), json={}, timeout=30)
+        finally:
+            requests.delete(f"{API}/assignments/{temp_id}", headers=_auth(owner_token), timeout=30)
