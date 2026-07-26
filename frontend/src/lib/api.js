@@ -138,6 +138,7 @@ export const portalUploadUrl = (token, id) => `${API}/track/${token}/uploads/${i
 export const portalTipApi = (token, payload) => axios.post(`${API}/track/${token}/tip`, payload).then((r) => r.data);
 export const portalReviewApi = (token, payload) => axios.post(`${API}/track/${token}/review`, payload).then((r) => r.data);
 export const jobPortalUploadsApi = (jobId) => axios.get(`${API}/jobs/${jobId}/portal-uploads`).then((r) => r.data);
+export const opsBriefApi = (refresh) => axios.get(`${API}/ai/ops-brief`, { params: refresh ? { refresh: 1 } : {} }).then((r) => r.data);
 
 export const teamMembersApi = () => axios.get(`${API}/team/members`).then((r) => r.data);
 export const memberDetailApi = (id) => axios.get(`${API}/team/members/${id}`).then((r) => r.data);

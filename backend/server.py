@@ -5969,6 +5969,186 @@ async def meta_refresh(request: Request):
     return {"ok": True, "new_items": new}
 
 
+# ------- ai operations brief (phase F — panel on existing owner dashboard)
+
+async def _ops_facts() -> Dict[str, Any]:
+    today = _et_today()
+    now_et = datetime.now(ZoneInfo("America/New_York"))
+    tomorrow = (now_et + timedelta(days=1)).date().isoformat()
+    assignments = await mongo_db.assignments.find({"job_date": {"$in": [today, tomorrow]}}).to_list(200)
+    todays = [a for a in assignments if a["job_date"] == today]
+    behind, needs_crew, late_risk = [], [], []
+    active = complete = 0
+    aid_list = [a["_id"] for a in todays]
+    open_entries = await mongo_db.time_entries.find({"clock_out": None}).to_list(100)
+    open_by_aid: Dict[str, int] = {}
+    for e in open_entries:
+        if e.get("assignment_id"):
+            open_by_aid[e["assignment_id"]] = open_by_aid.get(e["assignment_id"], 0) + 1
+    for a in todays:
+        status = a.get("exec_status") or "Assigned"
+        if status == "Complete":
+            complete += 1
+        elif status != "Assigned":
+            active += 1
+        if not a.get("crew"):
+            needs_crew.append(a.get("job_name"))
+        if a.get("arrival_time") and status in ("Assigned", "En Route"):
+            try:
+                hh, mm = a["arrival_time"].split(":")[:2]
+                sched = now_et.replace(hour=int(hh), minute=int(mm), second=0, microsecond=0)
+                if now_et > sched + timedelta(minutes=15):
+                    behind.append(f"{a.get('job_name')} (arrival was {a['arrival_time']})")
+                elif timedelta(0) <= sched - now_et <= timedelta(minutes=60) and not open_by_aid.get(a["_id"]):
+                    late_risk.append(f"{a.get('job_name')} arrives {a['arrival_time']} and nobody is clocked in yet")
+            except ValueError:
+                pass
+    # revenue today
+    revenue_today = 0.0
+    for inv in await mongo_db.square_invoices.find(
+            {"status": "PAID", "paid_at": {"$ne": None}}, {"_id": 0, "amount": 1, "paid_at": 1}).to_list(1000):
+        try:
+            d_et = datetime.fromisoformat(str(inv["paid_at"]).replace("Z", "+00:00")).astimezone(
+                ZoneInfo("America/New_York")).date().isoformat()
+        except ValueError:
+            continue
+        if d_et == today:
+            revenue_today += inv.get("amount") or 0
+    # crews working + unscheduled + overtime
+    clocked, unscheduled = [], []
+    for e in open_entries:
+        nm = e.get("user_name", "Someone")
+        clocked.append(nm)
+        if "not_scheduled_today" in (e.get("flags") or []):
+            unscheduled.append(nm)
+    hours_today: Dict[str, float] = {}
+    for e in await mongo_db.time_entries.find({"clock_in.at": {"$gte": f"{today}T00:00:00"}}).to_list(300):
+        nm = e.get("user_name", "Someone")
+        if e.get("hours"):
+            hours_today[nm] = hours_today.get(nm, 0) + e["hours"]
+        elif e.get("clock_in") and not e.get("clock_out"):
+            try:
+                start = datetime.fromisoformat(e["clock_in"]["at"].replace("Z", "+00:00"))
+                hours_today[nm] = hours_today.get(nm, 0) + (datetime.now(timezone.utc) - start).total_seconds() / 3600
+            except ValueError:
+                pass
+    overtime = [f"{nm}: {h:.1f}h today" for nm, h in hours_today.items() if h > 8]
+    # fleet flags
+    fleet_attention, fleet_shop, reminders_due, expired_docs = [], [], [], []
+    trucks = await mongo_db.trucks.find({"active": {"$ne": False}}).to_list(100)
+    for t in trucks:
+        if t.get("fleet_status") == "needs_attention":
+            fleet_attention.append(t["name"])
+        if t.get("fleet_status") == "in_shop":
+            fleet_shop.append(t["name"])
+        for r in t.get("reminders", []):
+            if not r.get("done") and r.get("due_date") and r["due_date"] <= today:
+                reminders_due.append(f"{t['name']}: {r.get('title')}")
+        for label, doc_key in (("registration", "registration"), ("insurance", "insurance")):
+            st = _expiry_state((t.get(doc_key) or {}).get("expires"))
+            if st in ("expired", "soon"):
+                expired_docs.append(f"{t['name']} {label} {'EXPIRED' if st == 'expired' else 'expires soon'}")
+    open_damage = await mongo_db.truck_damage.count_documents({"resolved": {"$ne": True}})
+    # outstanding balances
+    unpaid, outstanding_total = [], 0.0
+    async for j in mongo_db.jobs.find({"deposit_paid.status": "paid", "paid_in_full.status": {"$ne": "paid"},
+                                       "quote_total": {"$ne": None}}):
+        try:
+            rem = max(0.0, float(j["quote_total"]) - float((j.get("deposit_paid") or {}).get("amount") or 0))
+        except (TypeError, ValueError):
+            continue
+        if rem > 0:
+            outstanding_total += rem
+            unpaid.append(f"Job #{j.get('invoice_number')} ({(j.get('customer') or {}).get('name', '?')}): ${rem:,.0f} due")
+    # schedule conflicts (today + tomorrow)
+    conflicts = []
+    for day in (today, tomorrow):
+        day_assignments = [a for a in assignments if a["job_date"] == day]
+        seen: Dict[str, List[str]] = {}
+        for a in day_assignments:
+            for c in a.get("crew", []):
+                seen.setdefault(c.get("name", "?"), []).append(a.get("job_name", "?"))
+        for nm, jobs_list in seen.items():
+            if len(jobs_list) > 1:
+                conflicts.append(f"{nm} is on {len(jobs_list)} jobs {('today' if day == today else 'tomorrow')}: {', '.join(jobs_list)}")
+        crew_ids_by_user = {c["user_id"]: c.get("name", "?") for a in day_assignments for c in a.get("crew", [])}
+        if crew_ids_by_user:
+            async for off in mongo_db.availability.find({"date": day, "available": False,
+                                                         "user_id": {"$in": list(crew_ids_by_user)}}):
+                conflicts.append(f"{crew_ids_by_user[off['user_id']]} is scheduled {('today' if day == today else 'tomorrow')} but marked OFF")
+    # customer issues
+    issues = []
+    cutoff = (now_et - timedelta(days=14)).date().isoformat()
+    async for j in mongo_db.jobs.find({"portal_review.rating": {"$lte": 3}}):
+        rv = j.get("portal_review") or {}
+        if (rv.get("at") or "") >= cutoff:
+            issues.append(f"Job #{j.get('invoice_number')} left {rv.get('rating')}/5" + (f": \"{(rv.get('text') or '')[:80]}\"" if rv.get("text") else ""))
+    if open_damage:
+        issues.append(f"{open_damage} unresolved truck damage report{'s' if open_damage > 1 else ''}")
+    return {
+        "date": today,
+        "jobs_today": {"total": len(todays), "active": active, "complete": complete,
+                       "names": [a.get("job_name") for a in todays],
+                       "behind": behind, "needs_crew": needs_crew},
+        "revenue_today": round(revenue_today, 2),
+        "crews_working": {"clocked_in": clocked, "unscheduled_clock_ins": unscheduled},
+        "fleet": {"needs_attention": fleet_attention, "in_shop": fleet_shop,
+                  "maintenance_due": reminders_due, "document_warnings": expired_docs,
+                  "open_damage_reports": open_damage},
+        "money": {"outstanding_balance_total": round(outstanding_total, 2), "unpaid_jobs": unpaid[:10]},
+        "schedule_conflicts": conflicts,
+        "overtime_warnings": overtime,
+        "late_job_risk": late_risk,
+        "customer_issues": issues,
+    }
+
+
+async def _generate_ops_brief(facts: Dict[str, Any]) -> str:
+    from emergentintegrations.llm.chat import LlmChat, UserMessage
+    chat = LlmChat(
+        api_key=os.environ.get("EMERGENT_LLM_KEY", "").strip(),
+        session_id=f"ops-brief-{uuid4().hex[:8]}",
+        system_message=(
+            "You are the operations brain for Haul Yeah Moving, a small weekend moving company in New Jersey. "
+            "You get a JSON snapshot of today's operations. Write the owner (Keith) a punchy brief: "
+            "3 to 6 short bullet lines, plain text, each starting with '- '. Most urgent first. "
+            "Use specific names, job names and dollar amounts from the data. "
+            "Start a bullet with 'DO:' when it needs action today (behind jobs, no-crew jobs, conflicts, expired docs, unpaid balances). "
+            "If it's genuinely a quiet day, say so in one line and point at the best money move. "
+            "No headings, no markdown besides the dashes, no fluff, never invent data."
+        ),
+    ).with_model("openai", "gpt-5.4")
+    resp = await chat.send_message(UserMessage(text=json.dumps(facts, default=str)))
+    return (str(resp) or "").strip()[:2500]
+
+
+@api_router.get("/ai/ops-brief")
+async def ai_ops_brief(refresh: int = 0, p: Dict[str, Any] = Depends(require_owner)):
+    facts = await _ops_facts()
+    cached = await mongo_db.ai_briefs.find_one({"_id": "ops"})
+    now = datetime.now(timezone.utc)
+    text, generated_at, from_cache = "", None, False
+    if cached and not refresh:
+        try:
+            age = (now - datetime.fromisoformat(cached["generated_at"])).total_seconds()
+            if cached.get("date") == facts["date"] and age < 1800 and cached.get("text"):
+                text, generated_at, from_cache = cached["text"], cached["generated_at"], True
+        except (KeyError, ValueError):
+            pass
+    if not from_cache:
+        try:
+            text = await _generate_ops_brief(facts)
+            generated_at = now.isoformat()
+            await mongo_db.ai_briefs.update_one(
+                {"_id": "ops"}, {"$set": {"date": facts["date"], "generated_at": generated_at, "text": text}},
+                upsert=True)
+        except Exception as exc:
+            logger.warning("ops brief generation failed: %s", exc)
+            text = (cached or {}).get("text", "")
+            generated_at = (cached or {}).get("generated_at")
+    return {"facts": facts, "brief": text, "generated_at": generated_at, "cached": from_cache}
+
+
 # ------- startup seeding
 
 @app.on_event("startup")
