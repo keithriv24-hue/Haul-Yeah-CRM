@@ -1,12 +1,13 @@
 import React, { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { CheckCircle2, ChevronDown, ChevronRight } from "lucide-react";
+import { CheckCircle2, ChevronDown, ChevronRight, Clock } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { InspectionDialog } from "@/components/fleet/InspectionDialog";
 import { jobChecklistsApi, toggleChecklistItemApi, apiErrorMessage } from "@/lib/api";
 
-export const JobChecklists = ({ assignmentId, truckId, truckName, onStatusAdvance }) => {
+export const JobChecklists = ({ assignmentId, truckId, truckName, onStatusAdvance, clockedIn }) => {
+  const locked = clockedIn === false;
   const [lists, setLists] = useState(null);
   const [openKey, setOpenKey] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -26,6 +27,10 @@ export const JobChecklists = ({ assignmentId, truckId, truckName, onStatusAdvanc
   }, [assignmentId]);
 
   const toggle = async (listKey, idx, done) => {
+    if (locked) {
+      toast.error("Clock in first — checklists unlock once you're on the clock.");
+      return;
+    }
     if (listKey === "warehouse_departure" && idx === 0 && done && truckId) {
       setInspOpen(true);
       return;
@@ -47,6 +52,11 @@ export const JobChecklists = ({ assignmentId, truckId, truckName, onStatusAdvanc
   if (lists === null) return <p className="text-xs text-slate-400 mt-2">Loading checklists…</p>;
   return (
     <div data-testid="job-checklists" className="mt-2 space-y-1.5">
+      {locked && (
+        <p data-testid="checklists-clock-in-notice" className="flex items-center gap-1.5 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+          <Clock className="w-3.5 h-3.5 shrink-0" /> Clock in first — checklists unlock once you're on the clock.
+        </p>
+      )}
       <InspectionDialog open={inspOpen} onOpenChange={setInspOpen} truckId={truckId} truckName={truckName}
         assignmentId={assignmentId} onDone={() => { reload(); onStatusAdvance && onStatusAdvance(); }} />
       {lists.map((l) => {
@@ -78,7 +88,7 @@ export const JobChecklists = ({ assignmentId, truckId, truckName, onStatusAdvanc
                     <Checkbox
                       data-testid="checklist-item-checkbox"
                       checked={it.done}
-                      disabled={busy}
+                      disabled={busy || locked}
                       onCheckedChange={(v) => toggle(l.key, it.idx, !!v)}
                       className="mt-0.5"
                     />

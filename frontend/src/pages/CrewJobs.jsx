@@ -9,7 +9,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { InstructionBanner, SearchBar, searchMatch } from "@/components/Bits";
 import { JobChecklists } from "@/components/JobChecklists";
 import { InspectionDialog } from "@/components/fleet/InspectionDialog";
-import { myJobsApi, setJobStatusApi, uploadJobPhotoApi, listJobPhotosApi, photoUrl, apiErrorMessage } from "@/lib/api";
+import { myJobsApi, myTimeApi, setJobStatusApi, uploadJobPhotoApi, listJobPhotosApi, photoUrl, apiErrorMessage } from "@/lib/api";
 import { fmtDate, todayISO, mapsLink } from "@/lib/format";
 
 const NEXT_LABEL = { "En Route": "I'm on the way", Arrived: "I've arrived", "In Progress": "Start the job", Complete: "Finish the job" };
@@ -81,7 +81,7 @@ const PhotoSection = ({ jobId }) => {
   );
 };
 
-const ChecklistSection = ({ job, onChanged }) => {
+const ChecklistSection = ({ job, onChanged, clockedIn }) => {
   const [open, setOpen] = useState(false);
   const [inspOpen, setInspOpen] = useState(false);
   return (
@@ -96,7 +96,7 @@ const ChecklistSection = ({ job, onChanged }) => {
           </Button>
         )}
       </div>
-      {open && <JobChecklists assignmentId={job.id} truckId={job.truck_id} truckName={job.truck_name} onStatusAdvance={onChanged} />}
+      {open && <JobChecklists assignmentId={job.id} truckId={job.truck_id} truckName={job.truck_name} onStatusAdvance={onChanged} clockedIn={clockedIn} />}
       {job.truck_id && (
         <InspectionDialog open={inspOpen} onOpenChange={setInspOpen} truckId={job.truck_id} truckName={job.truck_name}
           assignmentId={job.id} onDone={onChanged} />
@@ -105,7 +105,7 @@ const ChecklistSection = ({ job, onChanged }) => {
   );
 };
 
-const JobCard = ({ job, onChanged }) => {
+const JobCard = ({ job, onChanged, clockedIn }) => {
   const [busy, setBusy] = useState(false);
   const [completeOpen, setCompleteOpen] = useState(false);
   const [notes, setNotes] = useState("");
@@ -174,7 +174,7 @@ const JobCard = ({ job, onChanged }) => {
       {job.exec_status === "Complete" && job.completion_notes && (
         <p className="text-xs text-slate-500 mt-2 bg-slate-50 rounded p-2">Notes: {job.completion_notes}</p>
       )}
-      <ChecklistSection job={job} onChanged={onChanged} />
+      <ChecklistSection job={job} onChanged={onChanged} clockedIn={clockedIn} />
       <PhotoSection jobId={job.id} />
       <Dialog open={completeOpen} onOpenChange={setCompleteOpen}>
         <DialogContent data-testid="complete-job-dialog">
@@ -209,8 +209,12 @@ const JobCard = ({ job, onChanged }) => {
 export default function CrewJobs() {
   const [jobs, setJobs] = useState(null);
   const [query, setQuery] = useState("");
+  const [clockedIn, setClockedIn] = useState(undefined);
 
-  const load = useCallback(() => myJobsApi().then(setJobs).catch(() => setJobs([])), []);
+  const load = useCallback(() => {
+    myJobsApi().then(setJobs).catch(() => setJobs([]));
+    myTimeApi().then((d) => setClockedIn(!!d.clocked_in)).catch(() => setClockedIn(undefined));
+  }, []);
   useEffect(() => {
     load();
   }, [load]);
@@ -227,7 +231,7 @@ export default function CrewJobs() {
       {items.length === 0 ? (
         <p className="text-sm text-slate-400 bg-white border border-dashed border-slate-200 rounded-lg p-4">Nothing here.</p>
       ) : (
-        <div className="space-y-3">{items.map((j) => <JobCard key={j.id} job={j} onChanged={load} />)}</div>
+        <div className="space-y-3">{items.map((j) => <JobCard key={j.id} job={j} onChanged={load} clockedIn={clockedIn} />)}</div>
       )}
     </div>
   );

@@ -265,10 +265,10 @@ class TestInspectionChecklistIntegration:
         truck_id = montclair.get("truck_id") or montclair.get("truck", {}).get("id")
         assert truck_id, f"no truck on Montclair: {montclair}"
 
-        # 3) Uncheck warehouse_departure item 0 as Javante
+        # 3) Uncheck warehouse_departure item 0 as owner (crew toggles now require being clocked in)
         r_un = requests.post(
             f"{BASE_URL}/api/assignments/{MONTCLAIR_ID}/checklists/warehouse_departure/items/0",
-            headers=_h(javante_token), json={"done": False}, timeout=15)
+            headers=_h(owner_token), json={"done": False}, timeout=15)
         assert r_un.status_code == 200, r_un.text
 
         # 4) File inspection with assignment_id

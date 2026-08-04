@@ -3380,6 +3380,10 @@ async def toggle_checklist_item(assignment_id: str, list_key: str, idx: int, pay
                                 request: Request):
     p = await current_principal(request)
     a = await _assignment_for_member_or_owner(assignment_id, p)
+    if p["role"] != "owner":
+        on_clock = await mongo_db.time_entries.find_one({"user_id": p["user_id"], "clock_out": None})
+        if not on_clock:
+            raise HTTPException(status_code=403, detail="Clock in first — checklists unlock once you're on the clock.")
     template = next((t for t in CHECKLIST_TEMPLATES if t[0] == list_key), None)
     if not template or not (0 <= idx < len(template[2])):
         raise HTTPException(status_code=404, detail="No such checklist item.")
@@ -5838,6 +5842,22 @@ def _meta_configured() -> bool:
     return bool(os.environ.get("META_APP_ID", "").strip() and os.environ.get("META_APP_SECRET", "").strip())
 
 
+def meta_capi_config() -> Dict[str, str]:
+    """Meta Conversions API settings, all read from the environment (secrets panel)."""
+    return {
+        "dataset_id": os.environ.get("META_DATASET_ID", "").strip(),
+        "access_token": os.environ.get("META_CAPI_ACCESS_TOKEN", "").strip(),
+        "app_id": os.environ.get("META_APP_ID", "").strip(),
+        "app_secret": os.environ.get("META_APP_SECRET", "").strip(),
+        "test_event_code": os.environ.get("META_TEST_EVENT_CODE", "").strip(),
+    }
+
+
+def meta_capi_configured() -> bool:
+    cfg = meta_capi_config()
+    return bool(cfg["dataset_id"] and cfg["access_token"])
+
+
 def _meta_gate(p: Dict[str, Any]):
     if p["role"] not in META_ROLES:
         raise HTTPException(status_code=403, detail="You don't have access to the social feed.")
@@ -6294,6 +6314,13 @@ async def seed_on_startup():
     asyncio.create_task(invoice_sync_loop())
     asyncio.create_task(lead_alert_loop())
     asyncio.create_task(meta_poll_loop())
+    capi = meta_capi_config()
+    logger.info("Meta CAPI env: dataset_id=%s access_token=%s app_id=%s app_secret=%s test_event_code=%s",
+                "set" if capi["dataset_id"] else "unset",
+                "set" if capi["access_token"] else "unset",
+                "set" if capi["app_id"] else "unset",
+                "set" if capi["app_secret"] else "unset",
+                "set" if capi["test_event_code"] else "unset")
     try:
         await backfill_jobs_from_paid_invoices()
     except Exception as exc:

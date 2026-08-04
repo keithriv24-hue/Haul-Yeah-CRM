@@ -336,6 +336,43 @@ class TestUsernameLoginAndCreateUser:
         assert r.status_code in (200, 204)
 
 
+# ------------------- crew must be clocked in to toggle checklists -------------------
+
+class TestChecklistClockInGate:
+    def test_crew_toggle_requires_clock_in(self, owner_token, junior_token):
+        from datetime import datetime, timedelta
+        from zoneinfo import ZoneInfo
+        tomorrow = (datetime.now(ZoneInfo("America/New_York")) + timedelta(days=1)).date().isoformat()
+        users = requests.get(f"{API}/users", headers=_auth(owner_token), timeout=30).json()["users"]
+        junior_id = next(u["id"] for u in users if (u.get("email") or "").lower() == JUNIOR_EMAIL)
+        ra = requests.post(f"{API}/assignments", headers=_auth(owner_token), timeout=30, json={
+            "job_name": "TEMP iter15 clockgate", "job_date": tomorrow, "arrival_time": "",
+            "crew": [{"user_id": junior_id, "position": "Helper"}], "ignore_warnings": True})
+        assert ra.status_code == 200, ra.text
+        aid = ra.json()["id"]
+        try:
+            # ensure Junior starts off the clock
+            requests.post(f"{API}/crew/clock-out", headers=_auth(junior_token), json={}, timeout=30)
+            r_blocked = requests.post(f"{API}/assignments/{aid}/checklists/loading/items/0",
+                                      headers=_auth(junior_token), json={"done": True}, timeout=30)
+            assert r_blocked.status_code == 403, r_blocked.text
+            assert "clock in" in (r_blocked.json().get("detail") or "").lower()
+
+            rin = requests.post(f"{API}/crew/clock-in", headers=_auth(junior_token), json={}, timeout=30)
+            assert rin.status_code == 200, rin.text
+            r_ok = requests.post(f"{API}/assignments/{aid}/checklists/loading/items/0",
+                                 headers=_auth(junior_token), json={"done": True}, timeout=30)
+            assert r_ok.status_code == 200, r_ok.text
+            requests.post(f"{API}/crew/clock-out", headers=_auth(junior_token), json={}, timeout=30)
+
+            # owner is never gated
+            r_owner = requests.post(f"{API}/assignments/{aid}/checklists/loading/items/0",
+                                    headers=_auth(owner_token), json={"done": False}, timeout=30)
+            assert r_owner.status_code == 200, r_owner.text
+        finally:
+            requests.delete(f"{API}/assignments/{aid}", headers=_auth(owner_token), timeout=30)
+
+
 # ------------------- unscheduled clock-in flag -------------------
 
 class TestUnscheduledClockInFlag:
