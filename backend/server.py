@@ -977,6 +977,12 @@ async def apply_invoice_to_jobs(inv: Dict[str, Any], notify_owner: bool = True) 
         if inv.get("lead_id") and purpose != "deposit":
             await mark_lead_commission_payment(inv["lead_id"], "fully")
         if purpose in ("deposit", "full"):
+            cust = inv.get("customer") or {}
+            await queue_capi_event("Purchase", f"deposit:{inv['invoice_id']}",
+                                   _capi_user_data(email=cust.get("email") or "",
+                                                   phone=cust.get("phone") or "",
+                                                   external_id=inv.get("lead_id") or ""),
+                                   {"currency": "USD", "value": round(float(inv.get("amount") or 0), 2)})
             await ensure_job_for_deposit(inv, mark_full=(purpose == "full"), notify_owner=notify_owner)
             return
         await _mark_job_paid_in_full(inv, notify_owner)
@@ -5496,6 +5502,10 @@ async def zapier_webhook(payload: ZapierAlertPayload, token: str = ""):
     dedupe = f"zap:{payload.external_id}" if payload.external_id else None
     await create_alert(kind, title, payload.body or "", lead_id=payload.lead_id,
                        lead_name=payload.lead_name, source="zapier", dedupe_key=dedupe)
+    if kind == "new_lead":
+        ident = payload.lead_id or payload.external_id
+        if ident:
+            await queue_capi_event("Lead", f"lead:{ident}", _capi_user_data(external_id=ident))
     return {"ok": True}
 
 
@@ -5513,6 +5523,11 @@ async def lead_alert_loop():
                                        "Call them fast — under 5 minutes wins the job.",
                                        lead_id=rec["id"], lead_name=name, source="airtable",
                                        created_at=rec.get("createdTime"), dedupe_key=f"new_lead:{rec['id']}")
+                    f = rec.get("fields") or {}
+                    await queue_capi_event("Lead", f"lead:{rec['id']}",
+                                           _capi_user_data(email=f.get(LEAD_F["email"]) or "",
+                                                           phone=f.get(LEAD_F["phone"]) or "",
+                                                           external_id=rec["id"]))
         except HTTPException:
             pass
         except Exception as exc:
@@ -5856,6 +5871,120 @@ def meta_capi_config() -> Dict[str, str]:
 def meta_capi_configured() -> bool:
     cfg = meta_capi_config()
     return bool(cfg["dataset_id"] and cfg["access_token"])
+
+
+# ------- Meta Conversions API (server-side Lead + Purchase events)
+
+CAPI_GRAPH_VERSION = "v26.0"
+
+
+def _capi_hash(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _capi_user_data(email: str = "", phone: str = "", external_id: str = "") -> Dict[str, Any]:
+    """Meta-normalized, SHA-256 hashed customer identifiers. Raw PII never leaves the server."""
+    data: Dict[str, Any] = {}
+    if (email or "").strip():
+        data["em"] = [_capi_hash(email.strip().lower())]
+    digits = "".join(ch for ch in (phone or "") if ch.isdigit()).lstrip("0")
+    if digits:
+        data["ph"] = [_capi_hash(digits)]
+    if external_id:
+        data["external_id"] = [_capi_hash(external_id)]
+    return data
+
+
+async def _capi_post(event: Dict[str, Any]) -> Dict[str, Any]:
+    cfg = meta_capi_config()
+    url = f"https://graph.facebook.com/{CAPI_GRAPH_VERSION}/{cfg['dataset_id']}/events"
+    params = {"access_token": cfg["access_token"]}
+    if cfg["app_secret"]:
+        params["appsecret_proof"] = hmac.new(cfg["app_secret"].encode("utf-8"),
+                                             cfg["access_token"].encode("utf-8"), hashlib.sha256).hexdigest()
+    body: Dict[str, Any] = {"data": [event]}
+    if cfg["test_event_code"]:
+        body["test_event_code"] = cfg["test_event_code"]
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        resp = await client.post(url, params=params, json=body)
+    try:
+        data = resp.json()
+    except ValueError:
+        data = {}
+    if resp.status_code >= 300:
+        err = (data.get("error") or {})
+        raise RuntimeError(f"Meta CAPI {resp.status_code}: {err.get('message', 'request rejected')} "
+                           f"(code {err.get('code')}, fbtrace {err.get('fbtrace_id')})")
+    return data
+
+
+async def _capi_deliver(event_id: str) -> None:
+    doc = await mongo_db.meta_capi_events.find_one({"_id": event_id})
+    if not doc or doc.get("status") == "sent":
+        return
+    try:
+        result = await _capi_post(doc["event"])
+        await mongo_db.meta_capi_events.update_one(
+            {"_id": event_id},
+            {"$set": {"status": "sent", "sent_at": now_iso(), "meta_result": result, "error": None},
+             "$inc": {"attempts": 1}})
+    except Exception as exc:
+        await mongo_db.meta_capi_events.update_one(
+            {"_id": event_id},
+            {"$set": {"status": "failed", "error": str(exc)[:300]}, "$inc": {"attempts": 1}})
+        logger.warning("Meta CAPI delivery failed for %s: %s", event_id, exc)
+
+
+async def queue_capi_event(event_name: str, event_id: str, user_data: Dict[str, Any],
+                           custom_data: Optional[Dict[str, Any]] = None) -> None:
+    """Outbox-style: persist once per event_id, deliver in the background, retry loop picks up failures."""
+    if not meta_capi_configured() or not user_data:
+        return
+    event: Dict[str, Any] = {"event_name": event_name, "event_time": int(time.time()),
+                             "event_id": event_id, "action_source": "system_generated",
+                             "user_data": user_data}
+    if custom_data:
+        event["custom_data"] = custom_data
+    try:
+        res = await mongo_db.meta_capi_events.update_one(
+            {"_id": event_id},
+            {"$setOnInsert": {"_id": event_id, "event": event, "status": "pending", "attempts": 0,
+                              "created_at": now_iso()}},
+            upsert=True)
+        if res.upserted_id:
+            asyncio.create_task(_capi_deliver(event_id))
+    except Exception as exc:
+        logger.warning("Meta CAPI queue failed for %s: %s", event_id, exc)
+
+
+async def capi_retry_loop():
+    while True:
+        await asyncio.sleep(300)
+        try:
+            if not meta_capi_configured():
+                continue
+            docs = await mongo_db.meta_capi_events.find(
+                {"status": {"$in": ["pending", "failed"]}, "attempts": {"$lt": 5}}).to_list(50)
+            for d in docs:
+                await _capi_deliver(d["_id"])
+        except Exception as exc:
+            logger.warning("Meta CAPI retry loop error: %s", exc)
+
+
+@api_router.get("/meta/capi-status")
+async def meta_capi_status(p: Dict[str, Any] = Depends(require_owner)) -> Dict[str, Any]:
+    cfg = meta_capi_config()
+    sent = await mongo_db.meta_capi_events.count_documents({"status": "sent"})
+    pending = await mongo_db.meta_capi_events.count_documents({"status": "pending"})
+    failed = await mongo_db.meta_capi_events.count_documents({"status": "failed"})
+    last = await mongo_db.meta_capi_events.find({"status": "sent"}).sort("sent_at", -1).limit(1).to_list(1)
+    last_failed = await mongo_db.meta_capi_events.find({"status": "failed"}).sort("created_at", -1).limit(1).to_list(1)
+    return {"configured": meta_capi_configured(),
+            "dataset_id_set": bool(cfg["dataset_id"]), "access_token_set": bool(cfg["access_token"]),
+            "app_secret_set": bool(cfg["app_secret"]), "test_event_code_set": bool(cfg["test_event_code"]),
+            "sent": sent, "pending": pending, "failed": failed,
+            "last_sent_at": (last[0].get("sent_at") if last else None),
+            "last_error": (last_failed[0].get("error") if last_failed else None)}
 
 
 def _meta_gate(p: Dict[str, Any]):
@@ -6314,6 +6443,7 @@ async def seed_on_startup():
     asyncio.create_task(invoice_sync_loop())
     asyncio.create_task(lead_alert_loop())
     asyncio.create_task(meta_poll_loop())
+    asyncio.create_task(capi_retry_loop())
     capi = meta_capi_config()
     logger.info("Meta CAPI env: dataset_id=%s access_token=%s app_id=%s app_secret=%s test_event_code=%s",
                 "set" if capi["dataset_id"] else "unset",

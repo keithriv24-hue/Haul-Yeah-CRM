@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import { Facebook, Instagram, Copy, Unplug, Plug } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { metaStatusApi, metaConnectApi, metaDisconnectApi, apiErrorMessage } from "@/lib/api";
+import { metaStatusApi, metaConnectApi, metaDisconnectApi, capiStatusApi, apiErrorMessage } from "@/lib/api";
 import { fmtDate } from "@/lib/format";
 
 const RESULT_MSG = {
@@ -16,9 +16,13 @@ const RESULT_MSG = {
 
 export const MetaCard = () => {
   const [status, setStatus] = useState(null);
+  const [capi, setCapi] = useState(null);
   const [busy, setBusy] = useState(false);
 
-  const load = () => metaStatusApi().then(setStatus).catch(() => {});
+  const load = () => {
+    metaStatusApi().then(setStatus).catch(() => {});
+    capiStatusApi().then(setCapi).catch(() => {});
+  };
   useEffect(() => {
     load();
     const params = new URLSearchParams(window.location.search);
@@ -121,6 +125,31 @@ export const MetaCard = () => {
         )}
       </div>
       {!status.configured && <p className="text-[11px] text-slate-400 mt-2">The button unlocks once the Meta App ID and Secret are in.</p>}
+
+      {capi && (
+        <div data-testid="meta-capi-status" className="mt-4 border-t border-slate-100 pt-3">
+          <p className="text-sm font-semibold text-[#1B2A4A] flex items-center gap-2">
+            Conversions API (ad signals)
+            {capi.configured ? (
+              <Badge variant="outline" className="text-[10px] bg-emerald-100 text-emerald-700 border-emerald-300">On</Badge>
+            ) : (
+              <Badge variant="outline" className="text-[10px] bg-slate-100 text-slate-500 border-slate-300">Off</Badge>
+            )}
+          </p>
+          {capi.configured ? (
+            <p data-testid="meta-capi-counts" className="text-[11px] text-slate-500 mt-1">
+              New leads and paid deposits are sent to Meta so your ads learn from real bookings.
+              Sent {capi.sent} · pending {capi.pending} · failed {capi.failed}
+              {capi.test_event_code_set && <span className="text-amber-600"> · test mode on — remove META_TEST_EVENT_CODE when done</span>}
+              {capi.last_error && <span className="text-red-500"> · last error: {capi.last_error}</span>}
+            </p>
+          ) : (
+            <p className="text-[11px] text-slate-500 mt-1">
+              Add <strong>META_DATASET_ID</strong> and <strong>META_CAPI_ACCESS_TOKEN</strong> (from Events Manager → your dataset → Conversions API → Generate access token) in the secrets panel to start sending Lead + Purchase events.
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 };
