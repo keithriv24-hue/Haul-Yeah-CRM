@@ -866,6 +866,34 @@ async def fetch_lead_details(lead_id: Optional[str]) -> Dict[str, Any]:
         return {}
 
 
+def _lead_capi_dict(lead_id: str, details: Dict[str, Any]) -> Dict[str, Any]:
+    """Shape an Airtable lead into the dict backend/meta_capi.py helpers expect."""
+    name = (details.get("name") or "").strip()
+    first, _, last = name.partition(" ")
+    return {"id": lead_id, "email": details.get("email"), "phone": details.get("phone"),
+            "first_name": first or None, "last_name": last or None}
+
+
+async def _capi_log(label: str, coro) -> Dict[str, Any]:
+    """Await a meta_capi fire_* call and record the outcome for the Settings counters. Never raises."""
+    try:
+        result = await coro
+    except Exception as exc:
+        result = {"ok": False, "error": str(exc)}
+    try:
+        if not result.get("skipped"):
+            await mongo_db.meta_capi_events.insert_one({
+                "_id": str(uuid4()), "label": label,
+                "status": "sent" if result.get("ok") else "failed",
+                "error": None if result.get("ok") else json.dumps(
+                    result.get("response") or {"error": result.get("error")})[:300],
+                "sent_at": now_iso() if result.get("ok") else None,
+                "created_at": now_iso()})
+    except Exception as exc:
+        logger.warning("Meta CAPI log write failed: %s", exc)
+    return result
+
+
 def _infer_purpose(inv: Dict[str, Any]) -> str:
     if inv.get("purpose"):
         return inv["purpose"]
@@ -974,18 +1002,17 @@ async def apply_invoice_to_jobs(inv: Dict[str, Any], notify_owner: bool = True) 
     purpose = _infer_purpose(inv)
     if status == "PAID":
         await _alert_payment_landed(inv, purpose)
+        details = await fetch_lead_details(inv.get("lead_id"))
+        cust = inv.get("customer") or {}
+        capi_lead = _lead_capi_dict(inv.get("lead_id") or inv["invoice_id"], {
+            "name": details.get("name") or cust.get("name"),
+            "email": details.get("email") or cust.get("email"),
+            "phone": details.get("phone") or cust.get("phone")})
+        asyncio.create_task(_capi_log("purchase", meta_capi.fire_purchase(
+            capi_lead, value=float(inv.get("amount") or 0), order_id=inv["invoice_id"])))
         if inv.get("lead_id") and purpose != "deposit":
             await mark_lead_commission_payment(inv["lead_id"], "fully")
         if purpose in ("deposit", "full"):
-            cust = inv.get("customer") or {}
-            ident = inv.get("lead_id") or inv["invoice_id"]
-            await queue_capi_event("Purchase", f"{ident}-Purchase-{inv['invoice_id']}",
-                                   meta_capi.build_user_data(email=cust.get("email"),
-                                                             phone=cust.get("phone"),
-                                                             external_id=inv.get("lead_id")),
-                                   custom_data={"currency": "USD",
-                                                "value": round(float(inv.get("amount") or 0), 2)},
-                                   action_source="website")
             await ensure_job_for_deposit(inv, mark_full=(purpose == "full"), notify_owner=notify_owner)
             return
         await _mark_job_paid_in_full(inv, notify_owner)
@@ -1294,21 +1321,11 @@ async def patch_job(job_id: str, payload: JobPatchPayload,
     if not job:
         raise HTTPException(status_code=404, detail="Job not found.")
     updates, new_crew_ids = await _job_updates_from_payload(payload, job)
-    job_had_crew = bool(job.get("crew"))
     if updates:
         updates["assigned_at"] = now_iso()
         await mongo_db.jobs.update_one({"_id": job_id}, {"$set": updates})
         job.update(updates)
         await _notify_new_crew_members(job, job_id, new_crew_ids)
-        if not job_had_crew and updates.get("crew"):
-            # move is booked with a crew — tell Meta so ads optimize toward real bookings
-            cust = job.get("customer") or {}
-            ident = job.get("lead_id") or job_id
-            await queue_capi_event("Schedule", f"{ident}-Schedule",
-                                   meta_capi.build_user_data(email=cust.get("email"),
-                                                             phone=cust.get("phone"),
-                                                             external_id=job.get("lead_id")),
-                                   action_source="phone_call")
         await audit(p, "updated job assignment", f"job {job.get('invoice_number')}", {"fields": list(updates.keys())})
     return _job_out(job)
 
@@ -2260,6 +2277,14 @@ async def update_record(table_key: str, record_id: str, request: Request, payloa
         meta = await mongo_db.task_meta.find_one({"_id": record_id})
         if not meta or grp not in (meta.get("audience") or []):
             raise HTTPException(status_code=403, detail="That task isn't shared with your team.")
+    prev_lead_status: Optional[str] = None
+    if table_key == "leads" and payload.fields.get(LEAD_STATUS_F) == "Booked":
+        try:
+            prev = await airtable_request("GET", table_id, path=f"/{record_id}",
+                                          params={"returnFieldsByFieldId": "true"})
+            prev_lead_status = (prev.get("fields") or {}).get(LEAD_STATUS_F)
+        except HTTPException:
+            prev_lead_status = None
     body = {"records": [{"id": record_id, "fields": clean_write_fields(payload.fields, role, table_key)}], "typecast": True}
     data = await airtable_request("PATCH", table_id, json_body=body)
     if table_key == "leads" and payload.fields.get(LEAD_STATUS_F) in ("Contacted", "Quoted", "Booked", "Completed"):
@@ -2267,6 +2292,9 @@ async def update_record(table_key: str, record_id: str, request: Request, payloa
         if not existing or not existing.get("contacted_at"):
             await mongo_db.lead_meta.update_one({"_id": record_id}, {"$set": {"contacted_at": now_iso()}}, upsert=True)
     if table_key == "leads" and payload.fields.get(LEAD_STATUS_F) == "Booked":
+        if prev_lead_status != "Booked":
+            details = await fetch_lead_details(record_id)
+            asyncio.create_task(_capi_log("schedule", meta_capi.fire_schedule(_lead_capi_dict(record_id, details))))
         try:
             lead_name0 = (data["records"][0].get("fields") or {}).get(LEAD_NAME_F) or "a lead"
             await create_alert("booked", f"Move booked: {lead_name0}", "Another one on the calendar.",
@@ -5515,18 +5543,38 @@ async def zapier_webhook(payload: ZapierAlertPayload, token: str = ""):
     dedupe = f"zap:{payload.external_id}" if payload.external_id else None
     await create_alert(kind, title, payload.body or "", lead_id=payload.lead_id,
                        lead_name=payload.lead_name, source="zapier", dedupe_key=dedupe)
-    if kind == "new_lead":
-        ident = payload.lead_id or payload.external_id
-        if ident:
-            await queue_capi_event("Lead", f"{ident}-Lead",
-                                   meta_capi.build_user_data(external_id=ident),
-                                   action_source="website")
-    elif kind == "booked":
-        ident = payload.lead_id or payload.external_id
-        if ident:
-            await queue_capi_event("Schedule", f"{ident}-Schedule",
-                                   meta_capi.build_user_data(external_id=ident),
-                                   action_source="phone_call")
+    return {"ok": True}
+
+
+@public_router.post("/webhooks/tally")
+async def tally_webhook(request: Request) -> Dict[str, Any]:
+    raw = await request.body()
+    secret = os.environ.get("TALLY_WEBHOOK_SIGNING_SECRET", "").encode()
+    sig = request.headers.get("Tally-Signature", "")
+    expected = base64.b64encode(hmac.new(secret, raw, hashlib.sha256).digest()).decode()
+    if not secret or not hmac.compare_digest(sig, expected):
+        raise HTTPException(status_code=401, detail="bad signature")
+    body = json.loads(raw or b"{}")
+    fields = {f.get("label", "").strip().lower(): f.get("value")
+              for f in body.get("data", {}).get("fields", [])}
+    full_name = (fields.get("full name") or "").strip()
+    first, _, last = full_name.partition(" ")
+    lead = {
+        "id": body.get("data", {}).get("submissionId") or body.get("eventId"),
+        "email": fields.get("email") or fields.get("email (optional)"),
+        "phone": fields.get("phone"),
+        "first_name": first or None,
+        "last_name": last or None,
+        "zip": fields.get("moving from (zip code)"),
+        "fbclid": fields.get("fbclid"),
+        "fbc": fields.get("fbc"),
+        "fbp": fields.get("fbp"),
+        "event_source_url": fields.get("event_source_url") or "https://haulyeahmoves.com/",
+        "client_ip": (request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+                      or (request.client.host if request.client else None)),
+        "user_agent": request.headers.get("user-agent"),
+    }
+    asyncio.create_task(_capi_log("lead", meta_capi.fire_lead(lead)))
     return {"ok": True}
 
 
@@ -5544,12 +5592,6 @@ async def lead_alert_loop():
                                        "Call them fast — under 5 minutes wins the job.",
                                        lead_id=rec["id"], lead_name=name, source="airtable",
                                        created_at=rec.get("createdTime"), dedupe_key=f"new_lead:{rec['id']}")
-                    f = rec.get("fields") or {}
-                    await queue_capi_event("Lead", f"{rec['id']}-Lead",
-                                           meta_capi.build_user_data(email=f.get(LEAD_F["email"]),
-                                                                     phone=f.get(LEAD_F["phone"]),
-                                                                     external_id=rec["id"]),
-                                           action_source="website")
         except HTTPException:
             pass
         except Exception as exc:
@@ -5895,69 +5937,26 @@ def meta_capi_configured() -> bool:
     return bool(cfg["dataset_id"] and cfg["access_token"])
 
 
-# ------- Meta Conversions API — payloads + sending live in backend/meta_capi.py.
-# The server keeps a Mongo outbox around it for dedupe, retries and Settings counters.
+# ------- Meta Conversions API — all sending lives in backend/meta_capi.py.
+# Calls are fire-and-forget via asyncio.create_task(_capi_log(...)) and never
+# raise into the request path; _capi_log records outcomes for the Settings counters.
 
 
-async def _capi_deliver(event_id: str) -> None:
-    doc = await mongo_db.meta_capi_events.find_one({"_id": event_id})
-    if not doc or doc.get("status") == "sent":
-        return
-    result = await meta_capi.send_event(
-        doc["event_name"], doc["user_data"],
-        event_id=event_id,
-        event_time=doc.get("event_time"),
-        action_source=doc.get("action_source", "system_generated"),
-        event_source_url=doc.get("event_source_url"),
-        custom_data=doc.get("custom_data"))
-    if result.get("skipped"):
-        return  # not configured — leave pending, don't burn attempts
-    if result.get("ok"):
-        await mongo_db.meta_capi_events.update_one(
-            {"_id": event_id},
-            {"$set": {"status": "sent", "sent_at": now_iso(), "meta_result": result.get("response"),
-                      "error": None},
-             "$inc": {"attempts": 1}})
+@api_router.post("/marketing/capi-test")
+async def capi_test(payload: Dict[str, Any] = Body(default={}),
+                    p: Dict[str, Any] = Depends(require_owner)) -> Dict[str, Any]:
+    """Fire a Lead for a supplied lead_id (or a synthetic lead) and return Meta's raw response."""
+    lead_id = (payload.get("lead_id") or "").strip()
+    if lead_id:
+        details = await fetch_lead_details(lead_id)
+        if not details:
+            raise HTTPException(status_code=404, detail="Lead not found in Airtable.")
+        lead = _lead_capi_dict(lead_id, details)
     else:
-        err = result.get("error") or json.dumps(result.get("response") or {})
-        await mongo_db.meta_capi_events.update_one(
-            {"_id": event_id},
-            {"$set": {"status": "failed", "error": str(err)[:300]}, "$inc": {"attempts": 1}})
-
-
-async def queue_capi_event(event_name: str, event_id: str, user_data: Dict[str, Any],
-                           custom_data: Optional[Dict[str, Any]] = None,
-                           action_source: str = "system_generated",
-                           event_source_url: Optional[str] = None) -> None:
-    """Outbox-style: persist once per event_id, deliver in the background, retry loop picks up failures."""
-    if not meta_capi.capi_enabled() or not user_data:
-        return
-    try:
-        res = await mongo_db.meta_capi_events.update_one(
-            {"_id": event_id},
-            {"$setOnInsert": {"_id": event_id, "event_name": event_name, "user_data": user_data,
-                              "custom_data": custom_data, "action_source": action_source,
-                              "event_source_url": event_source_url, "event_time": int(time.time()),
-                              "status": "pending", "attempts": 0, "created_at": now_iso()}},
-            upsert=True)
-        if res.upserted_id:
-            asyncio.create_task(_capi_deliver(event_id))
-    except Exception as exc:
-        logger.warning("Meta CAPI queue failed for %s: %s", event_id, exc)
-
-
-async def capi_retry_loop():
-    while True:
-        await asyncio.sleep(300)
-        try:
-            if not meta_capi.capi_enabled():
-                continue
-            docs = await mongo_db.meta_capi_events.find(
-                {"status": {"$in": ["pending", "failed"]}, "attempts": {"$lt": 5}}).to_list(50)
-            for d in docs:
-                await _capi_deliver(d["_id"])
-        except Exception as exc:
-            logger.warning("Meta CAPI retry loop error: %s", exc)
+        lead = {"id": f"capi-test-{uuid4().hex[:8]}", "email": "test@haulyeahmoves.com",
+                "phone": "9735550100", "first_name": "Test", "last_name": "Lead",
+                "event_source_url": "https://haulyeahmoves.com/"}
+    return await _capi_log("lead-test", meta_capi.fire_lead(lead))
 
 
 @api_router.get("/meta/capi-status")
@@ -6432,7 +6431,9 @@ async def seed_on_startup():
     asyncio.create_task(invoice_sync_loop())
     asyncio.create_task(lead_alert_loop())
     asyncio.create_task(meta_poll_loop())
-    asyncio.create_task(capi_retry_loop())
+    if not meta_capi.capi_enabled():
+        logger.warning("Meta CAPI disabled — set META_DATASET_ID and META_CAPI_ACCESS_TOKEN "
+                       "in the secrets panel to send ad conversion events.")
     capi = meta_capi_config()
     logger.info("Meta CAPI env: dataset_id=%s access_token=%s app_id=%s app_secret=%s test_event_code=%s",
                 "set" if capi["dataset_id"] else "unset",
