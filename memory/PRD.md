@@ -127,3 +127,6 @@ User choices: phase order approved · route optimization = free OSRM/OpenStreetM
 - Elevator: informational yes/no, no charge, saved into breakdown + notes. Piano: select None/Upright($500)/Grand($800) via calc items (FALLBACK_PIANOS if API empty).
 - Save writes: quoteSaveFields (quote=high, status Quoted, notes with range) + name-keyed lead columns via quoteStructuredFields {'Crew Size','Est Hours','Deposit Amount'} with graceful retry without them (toast if columns missing in Airtable). Breakdown now stores crew/hours/quoteLow/quoteHigh/deposit/elevator.
 - testing_agent iteration_21: 100% frontend pass (owner + sales parity, prefill, floor, range $750–$800 case, piano, mileage, elevator, Help regression). PROD FOLLOW-UP: confirm Leads table has columns named exactly 'Crew Size', 'Est Hours', 'Deposit Amount' (else the fallback toast appears); e2e save test needs Airtable.
+
+## 2026-08-05 — Quote save now maps by Airtable field ID (user-confirmed)
+- quoteStructuredFields in lib/quote.js writes Crew Size → fldz0UbjzI0MADcnh (number), Est Hours → fld74xIlr9zV9PZzA (number), Deposit Amount → fldqYyz9kkI0RDbdr (currency). Rename-proof; fallback retry + toast kept as safety net. Verified compile + mapping present; e2e write needs prod Airtable.

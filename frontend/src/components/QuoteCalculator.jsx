@@ -145,7 +145,7 @@ export const QuoteCalculator = ({ lead = null, onSaved }) => {
         await updateRecord("leads", lead.id, { ...base, ...quoteStructuredFields(q, crew) });
       } catch {
         await updateRecord("leads", lead.id, base);
-        toast.info('Saved, but the "Crew Size" / "Est Hours" / "Deposit Amount" columns weren\'t found on the Leads table — add them in Airtable to capture these.');
+        toast.info("Quote saved, but Crew Size / Est Hours / Deposit Amount didn't stick — check those Airtable columns.");
       }
       saveQuoteBreakdownApi(lead.id, {
         lines: invoiceLineItems(q), finalQuote: q.finalQuote, quoteLow: q.quoteLow, quoteHigh: q.quoteHigh,

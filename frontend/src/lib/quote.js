@@ -41,10 +41,10 @@ export function quoteSaveFields(lead, q, crew, hours, extra = {}) {
   };
 }
 
-// Structured lead columns written on save (Airtable field names). Kept separate so the
-// save can gracefully retry without them if the columns don't exist yet.
+// Structured lead columns written on save, mapped by Airtable field ID so column
+// renames never break the write: Crew Size / Est Hours / Deposit Amount.
 export const quoteStructuredFields = (q, crew) => ({
-  "Crew Size": Number(crew),
-  "Est Hours": Number(q.hours),
-  "Deposit Amount": q.deposit,
+  fldz0UbjzI0MADcnh: Number(crew),      // Crew Size (number)
+  fld74xIlr9zV9PZzA: Number(q.hours),   // Est Hours (number)
+  fldqYyz9kkI0RDbdr: q.deposit,         // Deposit Amount (currency)
 });
