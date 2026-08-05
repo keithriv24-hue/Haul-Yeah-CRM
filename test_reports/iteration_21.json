@@ -1,0 +1,40 @@
+{
+  "summary": "Frontend-only verification of the universal QuoteCalculator consolidation (Calculator page + QuoteModal). All 10 acceptance criteria pass: pricing math (unit), UI inputs order, prefill behavior, 6-hour floor, range output, deposit=25% of high, piano add/remove, mileage overage label & disappearance at 20mi, elevator informational-only, sales/owner parity, and Help.jsx regression (imports useLivePricing from new location, page loads without errors). Airtable is offline in preview so save was covered by code review only.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Calculator page (ScriptPanel Surcharge Checklist)", "issues": ["Right-side Script Panel's Surcharge Checklist v1.0 lists 'Cushion — 10%' as a bullet. This is internal/crew-facing script content (not the customer-visible quote breakdown, which is compliant), but the product spec says cushion should never be shown — consider dropping the 'Cushion — 10%' bullet from ScriptPanel to fully match the 'cushion is invisible' rule."]}
+    ]
+  },
+  "test_report_links": ["/app/test_reports/owner_calc.png", "/app/test_reports/sales_calc.png", "/tmp/pricing_verify.mjs"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "QuoteCalculator.jsx is the single source of truth — QuoteModal.jsx is a thin Dialog wrapper delegating to <QuoteCalculator lead=... />; no duplicated math or inputs. ✓",
+    "pricing.js: computeQuote returns quoteLow=ceil(subtotal/50)*50, quoteHigh=ceil((subtotal+cushion)/50)*50, finalQuote===quoteHigh, deposit=round(quoteHigh*25)/100, mileage max(0,miles-20)*0.85, minHours floor via Math.max(hours,minHours). All verified with node unit test.",
+    "quoteSaveFields writes range in notes ($low–$high) with legacy single-price fallback; quoteStructuredFields writes {'Crew Size','Est Hours','Deposit Amount'}. Save() first tries base+structured, falls back to base-only on error with a toast — good graceful degradation for Airtable schema mismatch.",
+    "saveQuoteBreakdownApi payload confirmed to include: crew, hours (effective, from q.hours), quoteLow, quoteHigh, deposit, elevator (boolean), plus finalQuote and lines. ✓",
+    "Help.jsx line 7 imports useLivePricing from '@/components/QuoteCalculator' — page loads for owner without console errors.",
+    "Elevator select is informational only (no coupling into computeQuote inputs) — subtotal unchanged when toggled. ✓",
+    "Minor: ScriptPanel's Surcharge Checklist still mentions 'Cushion — 10%' visible on Calculator page right column — non-blocking but breaks the strict 'no visible cushion' rule at the page level."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (skipped per request)", "frontend": "100%"},
+  "test_credentials": "Owner HaulYeahAdmin/HaulYeah2026! and Sales ghost TestSalesAdmin/HaulYeah2026! both used successfully.",
+  "seed_data_creation": "None — Airtable offline (leads dropdown empty as expected). Save wiring verified via code review only.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Universal QuoteCalculator consolidation is complete and verified. Live pricing verified against /api/settings/rates (65/125/75/20/0.85/85/25/50/10). If Airtable is later configured, run an end-to-end save test: pick a lead, hit Save, and confirm the lead row shows Crew Size / Est Hours / Deposit Amount and Notes contain a range like '$750–$800'. Also verify saveQuoteBreakdownApi persists quoteLow/quoteHigh on the backend.",
+  "verified_outputs": {
+    "owner_studio_1br_defaults": {"final_quote": "$750 – $800", "deposit": "$200.00", "line_crew": "$585.00", "line_travel": "$125.00", "subtotal": "$710.00"},
+    "owner_3br_prefill": {"crew": "4 movers", "hours": "6.5"},
+    "owner_3br_hours_4": {"min_hours_note": "6-hour minimum applied for this home size.", "line_crew": "$1,560.00"},
+    "piano_upright_line": "$500.00",
+    "miles_100_line_overage": "$68.00",
+    "miles_20_line_overage": "removed",
+    "elevator_toggle": "subtotal $710.00 unchanged",
+    "sales_3br_defaults": {"final_quote": "$1,850 – $2,000", "deposit": "$500.00"},
+    "cushion_visible_in_calculator_breakdown": false
+  }
+}

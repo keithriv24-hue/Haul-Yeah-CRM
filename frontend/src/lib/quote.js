@@ -23,17 +23,28 @@ export const quoteSmsBody = (name, quote, deposit) => {
   return `Hi ${first}, it's Haul Yeah Moving! Your move quote is ${fmtMoney(quote)}. A ${fmtMoneyCents(deposit)} deposit locks in your date. Want me to hold it?`;
 };
 
-export function quoteSaveFields(lead, q, crew, hours) {
+export function quoteSaveFields(lead, q, crew, hours, extra = {}) {
   const oldNotes = f(lead, LF.notes) || "";
   const parts = [`${crew} crew × ${hours} hrs = ${fmtMoneyCents(q.crewCharge)}`, `travel ${fmtMoneyCents(q.travelFee)}`];
   if (q.mileageOverage) parts.push(`miles over ${fmtMoneyCents(q.mileageOverage)}`);
   if (q.stairs) parts.push(`stairs ${fmtMoneyCents(q.stairs)}`);
   if (q.packing) parts.push(`packing ${fmtMoneyCents(q.packing)}`);
   (q.itemLines || []).forEach((l) => parts.push(`${l.name} ×${l.qty} ${fmtMoneyCents(l.amount)}`));
-  const line = `Quote ${new Date().toLocaleDateString("en-US")}: ${parts.join(" + ")} → final ${fmtMoney(q.finalQuote)}, deposit ${fmtMoneyCents(q.deposit)}.`;
+  if (extra.elevator) parts.push("elevator available");
+  const range = q.quoteLow && q.quoteLow !== q.finalQuote
+    ? `${fmtMoney(q.quoteLow)}–${fmtMoney(q.finalQuote)}` : fmtMoney(q.finalQuote);
+  const line = `Quote ${new Date().toLocaleDateString("en-US")}: ${parts.join(" + ")} → quoted ${range}, deposit ${fmtMoneyCents(q.deposit)} (25% of high end).`;
   return {
     [LF.quote]: q.finalQuote,
     [LF.status]: "Quoted",
     [LF.notes]: oldNotes ? `${oldNotes}\n${line}` : line,
   };
 }
+
+// Structured lead columns written on save (Airtable field names). Kept separate so the
+// save can gracefully retry without them if the columns don't exist yet.
+export const quoteStructuredFields = (q, crew) => ({
+  "Crew Size": Number(crew),
+  "Est Hours": Number(q.hours),
+  "Deposit Amount": q.deposit,
+});

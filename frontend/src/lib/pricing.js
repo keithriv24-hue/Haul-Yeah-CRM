@@ -32,13 +32,16 @@ export function computeQuote(inputs, rates = DEFAULT_RATES, items = []) {
   const subtotal = crewCharge + travelFee + mileageOverage + stairs + packing + itemsCharge;
   const cushion = subtotal * (rates.cushionPercent / 100);
   const inc = rates.roundingIncrement > 0 ? rates.roundingIncrement : 50;
-  const finalQuote = Math.ceil((subtotal + cushion) / inc - 1e-9) * inc;
+  // cushion is folded into the top of the range — never shown as its own line
+  const quoteLow = Math.ceil(subtotal / inc - 1e-9) * inc;
+  const quoteHigh = Math.ceil((subtotal + cushion) / inc - 1e-9) * inc;
+  const finalQuote = quoteHigh;
   const deposit = Math.round(finalQuote * rates.depositPercent) / 100;
   const balance = finalQuote - deposit;
   return {
     hours: effectiveHours, minHoursApplied: minHours > 0 && hours < minHours,
     crewCharge, travelFee, overMiles, mileageOverage, stairs, packing,
-    itemLines, itemsCharge, subtotal, cushion, finalQuote, deposit, balance,
+    itemLines, itemsCharge, subtotal, cushion, quoteLow, quoteHigh, finalQuote, deposit, balance,
   };
 }
 

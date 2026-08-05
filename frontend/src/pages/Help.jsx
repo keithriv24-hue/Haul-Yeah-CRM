@@ -4,7 +4,7 @@ import { InstructionBanner, PageTitle } from "@/components/Bits";
 import { Button } from "@/components/ui/button";
 import { useApp } from "@/context/AppContext";
 import { fmtMoney, fmtMoneyCents } from "@/lib/format";
-import { useLivePricing } from "@/pages/Calculator";
+import { useLivePricing } from "@/components/QuoteCalculator";
 
 const STEPS = [
   {
