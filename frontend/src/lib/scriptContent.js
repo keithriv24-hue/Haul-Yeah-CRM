@@ -94,7 +94,6 @@ export const SURCHARGE_CHECKLIST = {
     "Disassembly — $75–150/piece",
     "Distance overage — (mi over 20 round-trip) × $0.85",
     "Travel — $125 ($75 labor-only)",
-    "Cushion — 10%",
   ],
 };
 
