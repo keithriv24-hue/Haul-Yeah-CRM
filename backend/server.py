@@ -866,12 +866,38 @@ async def fetch_lead_details(lead_id: Optional[str]) -> Dict[str, Any]:
         return {}
 
 
-def _lead_capi_dict(lead_id: str, details: Dict[str, Any]) -> Dict[str, Any]:
-    """Shape an Airtable lead into the dict backend/meta_capi.py helpers expect."""
-    name = (details.get("name") or "").strip()
+LEAD_CAPI_F = {"fbc": "fld8uG29qAHynjk5S", "fbp": "flddnX9dbcQhmELkJ",
+               "fbclid": "fldn7zMBVE1gyXNrp", "event_source_url": "fldlN65ocmrgyks5Z"}
+
+
+async def fetch_lead_record(lead_id: Optional[str]) -> Dict[str, Any]:
+    """Raw Airtable lead record with field-ID keys (empty dict when missing/unavailable)."""
+    if not lead_id:
+        return {}
+    try:
+        return await airtable_request("GET", TABLES["leads"], path=f"/{lead_id}",
+                                      params={"returnFieldsByFieldId": "true"})
+    except HTTPException:
+        return {}
+
+
+def lead_dict_from_airtable(record: Dict[str, Any]) -> Dict[str, Any]:
+    """Full match-key lead dict for meta_capi fire_* helpers (email/phone/name/zip/fbc/fbp)."""
+    f = record.get("fields") or {}
+    name = (f.get(LEAD_F["name"]) or "").strip()
     first, _, last = name.partition(" ")
-    return {"id": lead_id, "email": details.get("email"), "phone": details.get("phone"),
-            "first_name": first or None, "last_name": last or None}
+    return {
+        "id": record.get("id"),
+        "email": f.get(LEAD_F["email"]),
+        "phone": f.get(LEAD_F["phone"]),
+        "first_name": first or None,
+        "last_name": last or None,
+        "zip": f.get(LEAD_F["from"]),
+        "fbc": f.get(LEAD_CAPI_F["fbc"]),
+        "fbp": f.get(LEAD_CAPI_F["fbp"]),
+        "fbclid": f.get(LEAD_CAPI_F["fbclid"]),
+        "event_source_url": f.get(LEAD_CAPI_F["event_source_url"]),
+    }
 
 
 async def _capi_log(label: str, coro) -> Dict[str, Any]:
@@ -1002,14 +1028,27 @@ async def apply_invoice_to_jobs(inv: Dict[str, Any], notify_owner: bool = True) 
     purpose = _infer_purpose(inv)
     if status == "PAID":
         await _alert_payment_landed(inv, purpose)
-        details = await fetch_lead_details(inv.get("lead_id"))
-        cust = inv.get("customer") or {}
-        capi_lead = _lead_capi_dict(inv.get("lead_id") or inv["invoice_id"], {
-            "name": details.get("name") or cust.get("name"),
-            "email": details.get("email") or cust.get("email"),
-            "phone": details.get("phone") or cust.get("phone")})
-        asyncio.create_task(_capi_log("purchase", meta_capi.fire_purchase(
-            capi_lead, value=float(inv.get("amount") or 0), order_id=inv["invoice_id"])))
+        if meta_capi.capi_enabled() and not inv.get("capi_purchase_sent"):
+            rec_full = await fetch_lead_record(inv.get("lead_id"))
+            if rec_full:
+                capi_lead = lead_dict_from_airtable(rec_full)
+                quote_amt = (rec_full.get("fields") or {}).get(LEAD_F["quote"])
+            else:
+                cust = inv.get("customer") or {}
+                cust_name = (cust.get("name") or "").strip()
+                first, _, last = cust_name.partition(" ")
+                capi_lead = {"id": inv.get("lead_id") or inv["invoice_id"],
+                             "email": cust.get("email"), "phone": cust.get("phone"),
+                             "first_name": first or None, "last_name": last or None}
+                quote_amt = inv.get("quote_total")
+            value = inv.get("amount") or quote_amt or 0
+            await mongo_db.square_invoices.update_one(
+                {"invoice_id": inv["invoice_id"]}, {"$set": {"capi_purchase_sent": True}})
+            inv["capi_purchase_sent"] = True
+            logger.info("CAPI Purchase firing for invoice %s (lead %s, value %s)",
+                        inv["invoice_id"], inv.get("lead_id"), value)
+            asyncio.create_task(_capi_log("purchase", meta_capi.fire_purchase(
+                capi_lead, value=float(value), order_id=inv["invoice_id"])))
         if inv.get("lead_id") and purpose != "deposit":
             await mark_lead_commission_payment(inv["lead_id"], "fully")
         if purpose in ("deposit", "full"):
@@ -2293,8 +2332,10 @@ async def update_record(table_key: str, record_id: str, request: Request, payloa
             await mongo_db.lead_meta.update_one({"_id": record_id}, {"$set": {"contacted_at": now_iso()}}, upsert=True)
     if table_key == "leads" and payload.fields.get(LEAD_STATUS_F) == "Booked":
         if prev_lead_status != "Booked":
-            details = await fetch_lead_details(record_id)
-            asyncio.create_task(_capi_log("schedule", meta_capi.fire_schedule(_lead_capi_dict(record_id, details))))
+            rec_full = await fetch_lead_record(record_id)
+            capi_lead = lead_dict_from_airtable(rec_full) if rec_full else {"id": record_id}
+            logger.info("CAPI Schedule firing for lead %s (prev status: %s)", record_id, prev_lead_status)
+            asyncio.create_task(_capi_log("schedule", meta_capi.fire_schedule(capi_lead)))
         try:
             lead_name0 = (data["records"][0].get("fields") or {}).get(LEAD_NAME_F) or "a lead"
             await create_alert("booked", f"Move booked: {lead_name0}", "Another one on the calendar.",
@@ -5948,10 +5989,10 @@ async def capi_test(payload: Dict[str, Any] = Body(default={}),
     """Fire a Lead for a supplied lead_id (or a synthetic lead) and return Meta's raw response."""
     lead_id = (payload.get("lead_id") or "").strip()
     if lead_id:
-        details = await fetch_lead_details(lead_id)
-        if not details:
+        rec_full = await fetch_lead_record(lead_id)
+        if not rec_full:
             raise HTTPException(status_code=404, detail="Lead not found in Airtable.")
-        lead = _lead_capi_dict(lead_id, details)
+        lead = lead_dict_from_airtable(rec_full)
     else:
         lead = {"id": f"capi-test-{uuid4().hex[:8]}", "email": "test@haulyeahmoves.com",
                 "phone": "9735550100", "first_name": "Test", "last_name": "Lead",

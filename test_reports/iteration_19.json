@@ -1,0 +1,32 @@
+{
+  "summary": "HTTP-level verification of Meta CAPI fixes. 6 tests passed (owner login, /api/meta/capi-status configured=false, /api/marketing/capi-test skipped+404+unauth, Tally webhook bad-signature 401). 5 Airtable-dependent tests SKIPPED because AIRTABLE_API_KEY is empty in preview backend/.env (POST/GET/PATCH/DELETE /api/tables/leads all return 503 missing_key). Cannot exercise the actual Quoted->Booked HTTP flow to observe the 'CAPI Schedule firing' log line without Airtable creds. Code review of the fix in server.py (lines 2319-2338) confirms the logic is correct: prev_lead_status is fetched via GET before the PATCH, and fire_schedule is only invoked when prev_lead_status != 'Booked'; log line format matches the assertion string exactly.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "N/A (env)", "issue": "AIRTABLE_API_KEY is empty in /app/backend/.env, so no HTTP path that reaches Airtable can be exercised in preview. Task instructions said 'Airtable is LIVE' but that is not true in this preview container. Also META_CAPI_ACCESS_TOKEN and TALLY_WEBHOOK_SIGNING_SECRET are empty (expected per test_credentials.md)."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter19_capi_fixes.py",
+    "/app/test_reports/pytest/iter19_capi.xml"
+  ],
+  "action_items": [
+    "If HTTP-level assertion of the 'CAPI Schedule firing' log line is required, populate AIRTABLE_API_KEY in preview backend/.env (and AIRTABLE_BASE_ID must point to a disposable base) and re-run backend/tests/test_iter19_capi_fixes.py. The 4 Airtable-dependent tests are ready to run as-is and will grep /var/log/supervisor/backend.*.log for the log line.",
+    "Alternatively, accept the in-process verification the main agent already completed with fake Meta creds (as noted in the request) plus this iteration's code review confirmation."
+  ],
+  "critical_code_review_comments": [
+    "server.py:2319-2338 (update_record leads/Booked branch): The prev-status pre-read is guarded correctly (only when setting status to 'Booked' on the leads table), and the schedule fire is gated on `prev_lead_status != 'Booked'`, which correctly suppresses re-fires on idempotent PATCH. Log format 'CAPI Schedule firing for lead %s (prev status: %s)' matches the expected assertion string.",
+    "The pre-read swallows HTTPException (e.g., 404 record-not-found) into prev_lead_status=None; in that scenario the schedule would fire because None != 'Booked'. That is a reasonable fail-open choice, but worth noting: if the pre-read fails for a transient Airtable outage, Schedule could fire spuriously on a repeat PATCH. Consider distinguishing 404 (fire) from 5xx (skip fire).",
+    "meta_capi calls use asyncio.create_task (fire-and-forget) — good, does not block the PATCH response. Wrapped in `_capi_log` helper, so exceptions are logged not raised. Verified pattern is consistent for lead/schedule/purchase.",
+    "The Schedule fire path uses `fetch_lead_record(record_id)` -> `lead_dict_from_airtable(rec_full)` so all match keys (em/ph/fn/ln/zp/fbc/fbp/external_id) are populated as the request describes — cannot be re-verified via HTTP without Airtable, but the code path is present."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter19_capi_fixes.py"],
+  "success_rate": {"backend": "6/6 executable = 100%; 5/11 total skipped due to missing AIRTABLE_API_KEY", "frontend": "not tested (backend-only task)"},
+  "test_credentials": "Owner HaulYeahAdmin / HaulYeah2026! — works. Login returns Bearer token in JSON body (no session cookie); tests use Authorization: Bearer <token> header.",
+  "seed_data_creation": "None (Airtable disposable test lead was NOT created because Airtable is unreachable in preview). No cleanup was needed.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend .env has AIRTABLE_API_KEY='' in this preview, so any /api/tables/{table}/* endpoints return 503 missing_key. The iter19 test file already skips these gracefully. To fully validate FIX 1 at HTTP level, set AIRTABLE_API_KEY and rerun `pytest backend/tests/test_iter19_capi_fixes.py -o addopts='' -p no:xdist`. The test greps /var/log/supervisor/backend.*.log for 'CAPI Schedule firing for lead {rec_id}' after each PATCH; test order guarantees prev-status is Quoted before the Booked flip, and second Booked flip asserts NO new log line. Note: run with `-o addopts='' -p no:xdist` to override pytest.ini xdist parallel mode (fixtures don't share across workers).",
+  "rca of the issue": "Not applicable — the fixes look correct on code review; only the HTTP-level verification is blocked by the preview env lacking Airtable creds."
+}
