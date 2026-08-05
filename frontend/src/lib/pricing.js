@@ -13,11 +13,14 @@ export const DEFAULT_RATES = {
 
 export function computeQuote(inputs, rates = DEFAULT_RATES, items = []) {
   const {
-    crew = 0, hours = 0, travel = "truck", miles = 0,
+    crew = 0, hours = 0, minHours = 0, travel = "truck", miles = 0,
     flights = 0, packingHours = 0, itemQty = {},
   } = inputs;
-  const crewCharge = crew * hours * rates.manHour;
+  // hard hours floor (e.g. 6-hour minimum on 3BR+ jobs) applied in the math itself
+  const effectiveHours = Math.max(hours, minHours || 0);
+  const crewCharge = crew * effectiveHours * rates.manHour;
   const travelFee = travel === "labor" ? rates.travelLabor : rates.travelTruck;
+  // first `mileageAllowance` miles are covered by the flat travel fee
   const overMiles = Math.max(0, miles - rates.mileageAllowance);
   const mileageOverage = overMiles * rates.overageRate;
   const stairs = flights * rates.stairFlight;
@@ -33,6 +36,7 @@ export function computeQuote(inputs, rates = DEFAULT_RATES, items = []) {
   const deposit = Math.round(finalQuote * rates.depositPercent) / 100;
   const balance = finalQuote - deposit;
   return {
+    hours: effectiveHours, minHoursApplied: minHours > 0 && hours < minHours,
     crewCharge, travelFee, overMiles, mileageOverage, stairs, packing,
     itemLines, itemsCharge, subtotal, cushion, finalQuote, deposit, balance,
   };

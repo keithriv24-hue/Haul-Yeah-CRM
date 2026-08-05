@@ -35,6 +35,7 @@ export default function QuoteModal({ lead, open, onOpenChange }) {
   const q = computeQuote({
     crew: clamp(Number(crew) || 2, 2, 4),
     hours: clamp(Number(hours) || 0, 0, 24),
+    minHours: ["3BR", "4BR+"].includes(size) ? 6 : 0,
     travel,
     miles: clamp(Number(miles) || 0, 0, 5000),
     flights: clamp(Number(flights) || 0, 0, 50),
@@ -45,9 +46,10 @@ export default function QuoteModal({ lead, open, onOpenChange }) {
   const save = async () => {
     setSaving(true);
     try {
-      await updateRecord("leads", lead.id, quoteSaveFields(lead, q, crew, hours));
+      await updateRecord("leads", lead.id, quoteSaveFields(lead, q, crew, q.hours));
       saveQuoteBreakdownApi(lead.id, {
         lines: invoiceLineItems(q), finalQuote: q.finalQuote, deposit: q.deposit,
+        crew: Number(crew), hours: q.hours,
         customerName: f(lead, LF.name) || "", customerPhone: f(lead, LF.phone) || "",
         fromAddress: f(lead, LF.from) || "", toAddress: f(lead, LF.to) || "", moveDate: f(lead, LF.moveDate) || "",
       }).then((r) => {
@@ -121,7 +123,7 @@ export default function QuoteModal({ lead, open, onOpenChange }) {
           </div>
         )}
         <div className="border border-[#1B2A4A]/15 bg-[#1B2A4A]/[0.04] rounded-lg p-4 space-y-1">
-          <QuoteLines q={q} rates={rates} crew={crew} hours={hours} />
+          <QuoteLines q={q} rates={rates} crew={crew} hours={q.hours} />
         </div>
         <Button data-testid="quote-save-btn" onClick={save} disabled={saving || !Number(hours)} className="w-full gap-2 bg-[#E8743B] hover:bg-[#d4632e]">
           <Save className="w-4 h-4" /> {saving ? "Saving…" : "Save quote to lead"}

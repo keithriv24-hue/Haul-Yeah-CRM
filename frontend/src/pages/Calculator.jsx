@@ -42,16 +42,19 @@ export const QtyStepper = ({ qty, onChange, testId }) => (
 export const QuoteLines = ({ q, rates, crew, hours }) => (
   <>
     <div className="flex justify-between text-sm text-slate-600">
-      <span>Crew charge ({crew} × {hours || 0} hrs × {fmtMoney(rates.manHour)})</span>
+      <span>Crew charge ({crew} × {q.hours ?? hours ?? 0} hrs × {fmtMoney(rates.manHour)})</span>
       <Private><span data-testid="line-crew">{fmtMoneyCents(q.crewCharge)}</span></Private>
     </div>
+    {q.minHoursApplied && (
+      <p data-testid="min-hours-note" className="text-[11px] text-amber-700">6-hour minimum applied for this home size.</p>
+    )}
     <div className="flex justify-between text-sm text-slate-600">
-      <span>Travel fee</span>
+      <span>Travel fee (covers first {rates.mileageAllowance} miles)</span>
       <Private><span data-testid="line-travel">{fmtMoneyCents(q.travelFee)}</span></Private>
     </div>
     {q.mileageOverage > 0 && (
       <div className="flex justify-between text-sm text-slate-600">
-        <span>Mileage overage ({q.overMiles} mi × {fmtMoneyCents(rates.overageRate)})</span>
+        <span>Mileage — {q.overMiles} mi beyond the first {rates.mileageAllowance} × {fmtMoneyCents(rates.overageRate)}/mi</span>
         <Private><span data-testid="line-overage">{fmtMoneyCents(q.mileageOverage)}</span></Private>
       </div>
     )}
@@ -76,10 +79,6 @@ export const QuoteLines = ({ q, rates, crew, hours }) => (
     <div className="flex justify-between text-sm font-semibold text-slate-700 pt-2 border-t border-slate-200">
       <span>Subtotal</span>
       <Private><span data-testid="line-subtotal">{fmtMoneyCents(q.subtotal)}</span></Private>
-    </div>
-    <div className="flex justify-between text-sm text-slate-600">
-      <span>Cushion ({rates.cushionPercent}%)</span>
-      <Private><span data-testid="line-cushion">{fmtMoneyCents(q.cushion)}</span></Private>
     </div>
     <div className="flex justify-between items-center pt-2 border-t border-slate-200">
       <span className="font-display font-extrabold text-lg text-[#1B2A4A]">Final Quote</span>
@@ -150,6 +149,8 @@ export default function Calculator() {
   const leads = records("leads").filter((l) => !["Booked", "Lost", "Cold"].includes(f(l, LF.status)));
   const lead = records("leads").find((l) => l.id === leadId) || null;
   const activeItems = items.filter((it) => it.active);
+  const leadSize = f(lead, LF.homeSize) || "";
+  const minHours = ["3BR", "4BR+"].includes(leadSize) ? 6 : 0;
 
   const pickLead = (id) => {
     setLeadId(id);
@@ -168,6 +169,7 @@ export default function Calculator() {
   const q = computeQuote({
     crew: clamp(Number(crew) || 2, 2, 4),
     hours: clamp(Number(hours) || 0, 0, 24),
+    minHours,
     travel,
     miles: clamp(Number(miles) || 0, 0, 5000),
     flights: clamp(Number(flights) || 0, 0, 50),
@@ -179,9 +181,10 @@ export default function Calculator() {
     if (!lead) return;
     setSaving(true);
     try {
-      await updateRecord("leads", lead.id, quoteSaveFields(lead, q, crew, hours));
+      await updateRecord("leads", lead.id, quoteSaveFields(lead, q, crew, q.hours));
       saveQuoteBreakdownApi(lead.id, {
         lines: invoiceLineItems(q), finalQuote: q.finalQuote, deposit: q.deposit,
+        crew: Number(crew), hours: q.hours,
         customerName: f(lead, LF.name) || "", customerPhone: f(lead, LF.phone) || "",
         fromAddress: f(lead, LF.from) || "", toAddress: f(lead, LF.to) || "", moveDate: f(lead, LF.moveDate) || "",
       }).then((r) => {
@@ -280,7 +283,7 @@ export default function Calculator() {
       )}
 
       <div className="border border-[#1B2A4A]/15 bg-[#1B2A4A]/[0.04] rounded-lg p-4 space-y-1">
-        <QuoteLines q={q} rates={rates} crew={crew} hours={hours} />
+        <QuoteLines q={q} rates={rates} crew={crew} hours={q.hours} />
       </div>
 
       <CrewGuideCard />

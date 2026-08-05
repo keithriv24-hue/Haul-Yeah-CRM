@@ -1,0 +1,26 @@
+{
+  "summary": "Iteration 20 — Quote Calculator fixes fully verified. Pricing unit tests (12/12) pass: overMiles/mileageOverage math correct, hard 6-hour minHours floor applied in computeQuote itself, crewCharge uses effectiveHours (4*6*65=1560), hours>=minHours untouched, deposit = round(final*25)/100, finalQuote > subtotal (cushion folded in) and rounds up to $50. Backend round-trip test passed: PUT/GET /api/quotes/recQATESTLEAD1 persists breakdown.crew=4 and breakdown.hours=6.5; mongo doc cleaned up in teardown. UI on /calculator (owner): mileage line 'Mileage — 80 mi beyond the first 20 × $0.85/mi' shows $68.00 with miles=100 and disappears with miles=15; Travel fee label reads 'Travel fee (covers first 20 miles)'; no line-cushion testid and no 'Cushion' line inside the quote breakdown (only appears in the right-side Script Panel surcharge reference, expected); Subtotal/Final Quote/Deposit(25%)/Balance all render with Final > Subtotal; crew charge line updates live with hours. Code review confirmed leadActions.bookLeadAsJob maps breakdown.crew -> PF.crewSize and breakdown.hours -> PF.estHours into the created projects record before create; Calculator.jsx and QuoteModal.jsx both save {crew:Number(crew), hours:q.hours (effective floored)} via saveQuoteBreakdownApi and both derive minHours from 3BR/4BR+ lead size.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter20_quote_calc.py",
+    "/app/test_reports/pytest/iter20.xml",
+    "/tmp/pricing_test.mjs"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "pricing.js effectiveHours floor is applied at math level (not just prefill) - correct.",
+    "Calculator.jsx/QuoteModal.jsx both pass q.hours (effective floored hours) to saveQuoteBreakdownApi, ensuring downstream Book-as-job reads the correct hours.",
+    "leadActions.bookLeadAsJob fetches getQuoteBreakdownApi and injects crew/hours before createRecord - crew size + estHours will now persist onto Project.",
+    "No 'Cushion' line item in QuoteLines (Calculator.jsx L42-99); cushion is only folded into finalQuote via rounding math."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter20_quote_calc.py (new)"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "Owner: HaulYeahAdmin / HaulYeah2026! (login field key: `email`). Login response returns a JWT token in body.token that must be sent as Authorization: Bearer <token>.",
+  "seed_data_creation": "Created and cleaned up mongo lead_quotes/_id=recQATESTLEAD1 during backend round-trip test.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend auth uses JWT bearer token (not cookies) — /api/auth/login returns {token, role, user}; set Authorization header from body.token. Airtable is intentionally empty in preview, so lead-picker in /calculator will not populate and min-hours-note (data-testid=min-hours-note) will not appear via UI. The 6-hour floor is fully covered by pricing.js unit test at /tmp/pricing_test.mjs. Backend regression: /app/backend/tests/test_iter20_quote_calc.py."
+}
