@@ -138,7 +138,7 @@ export const AppProvider = ({ children }) => {
     } catch {
       return [];
     }
-  }, []);
+  }, [celebrateNewPaid]);
 
   const invoicesForLead = useCallback(
     (leadId) => squareInvoices.filter((i) => i.lead_id === leadId),
