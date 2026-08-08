@@ -1321,9 +1321,11 @@ class JobPatchPayload(BaseModel):
 
 
 async def _resolve_job_crew(slots: List[JobCrewSlot]) -> List[Dict[str, Any]]:
+    ids = [slot.user_id for slot in slots]
+    users = {u["_id"]: u async for u in mongo_db.users.find({"_id": {"$in": ids}})}
     crew_list = []
     for slot in slots:
-        u = await mongo_db.users.find_one({"_id": slot.user_id})
+        u = users.get(slot.user_id)
         if not u:
             continue
         crew_list.append({"user_id": slot.user_id, "name": u.get("name", ""),
@@ -1401,8 +1403,10 @@ async def crew_active_job(p: Dict[str, Any] = Depends(require_crew)):
     job = docs[0]
     mine = next((c for c in job.get("crew", []) if c["user_id"] == p["user_id"]), {})
     teammates = []
+    crew_ids = [c["user_id"] for c in job.get("crew", [])]
+    users = {u["_id"]: u async for u in mongo_db.users.find({"_id": {"$in": crew_ids}})}
     for c in job.get("crew", []):
-        u = await mongo_db.users.find_one({"_id": c["user_id"]}) or {}
+        u = users.get(c["user_id"]) or {}
         teammates.append({"user_id": c["user_id"], "name": c.get("name") or u.get("name", ""),
                           "position": c.get("position", "Helper"),
                           "phone": ((u.get("profile") or {}).get("phone") or "").strip(),
