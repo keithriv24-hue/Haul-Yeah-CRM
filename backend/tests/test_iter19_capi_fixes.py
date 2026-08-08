@@ -17,9 +17,9 @@ import subprocess
 import pytest
 import requests
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://haul-yeah-staging.preview.emergentagent.com").rstrip("/")
-OWNER_USER = "HaulYeahAdmin"
-OWNER_PASS = "HaulYeah2026!"
+from test_config import OWNER_EMAIL as OWNER_USER, OWNER_PASSWORD as OWNER_PASS
+
+BASE_URL = os.environ["REACT_APP_BACKEND_URL"].rstrip("/")
 
 # Airtable field IDs
 F_NAME = "fldsBIJdaasQ9fh9a"

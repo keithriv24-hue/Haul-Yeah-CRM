@@ -22,7 +22,7 @@ import pytest
 import requests
 from pymongo import MongoClient
 from dotenv import load_dotenv
-from test_config import JAVANTE_PASSWORD, OWNER_EMAIL, OWNER_PASSWORD
+from test_config import JAVANTE_PASSWORD, OWNER_EMAIL, OWNER_PASSWORD, SALES_LEGACY_PASSWORD as SALES_LEGACY_PW
 
 load_dotenv("/app/frontend/.env")
 load_dotenv("/app/backend/.env")
@@ -31,7 +31,7 @@ BASE_URL = os.environ["REACT_APP_BACKEND_URL"].rstrip("/")
 
 OWNER_USERNAME = OWNER_EMAIL
 OWNER_PASSWORD = OWNER_PASSWORD
-SALES_LEGACY_PASSWORD = "SellMoves2026!"
+SALES_LEGACY_PASSWORD = SALES_LEGACY_PW
 JAVANTE_EMAIL = "javante@haulyeahmoves.com"
 JAVANTE_PASSWORD = JAVANTE_PASSWORD
 

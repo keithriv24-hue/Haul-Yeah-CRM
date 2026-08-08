@@ -7,6 +7,7 @@ Cleans up all created data at teardown so DB stays clean.
 import os
 import datetime as dt
 from typing import Any, Dict, Optional
+from zoneinfo import ZoneInfo
 
 import pytest
 import requests
@@ -16,8 +17,10 @@ BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
 assert BASE_URL, "REACT_APP_BACKEND_URL must be set"
 API = BASE_URL + "/api"
 
-TODAY = dt.date.today().isoformat()
-YESTERDAY = (dt.date.today() - dt.timedelta(days=1)).isoformat()
+# dates must match the server's America/New_York clock, not container UTC
+_ET_TODAY = dt.datetime.now(ZoneInfo("America/New_York")).date()
+TODAY = _ET_TODAY.isoformat()
+YESTERDAY = (_ET_TODAY - dt.timedelta(days=1)).isoformat()
 
 
 def _login(email: Optional[str], password: str) -> str:

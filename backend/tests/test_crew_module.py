@@ -5,11 +5,13 @@ Uses -p no:xdist implicitly serial (fixtures share state).
 """
 import io
 import os
+import uuid
 from datetime import datetime, timedelta, timezone
 
 import pytest
 import requests
-from test_config import JAVANTE_PASSWORD, JUNIOR_PASSWORD, OWNER_EMAIL, OWNER_PASSWORD
+from test_config import (JAVANTE_PASSWORD, JUNIOR_INITIAL_PASSWORD, JUNIOR_PASSWORD,
+                         OWNER_EMAIL, OWNER_PASSWORD, SALES_LEGACY_PASSWORD)
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://haul-yeah-staging.preview.emergentagent.com").rstrip("/")
 
@@ -109,7 +111,7 @@ class TestAuth:
         assert r.json()["role"] == "owner"
 
     def test_sales_legacy_login_blank_username(self):
-        r = requests.post(f"{BASE_URL}/api/auth/login", json={"password": "SellMoves2026!"}, timeout=15)
+        r = requests.post(f"{BASE_URL}/api/auth/login", json={"password": SALES_LEGACY_PASSWORD}, timeout=15)
         assert r.status_code == 200
         assert r.json()["role"] == "sales"
 
@@ -122,11 +124,11 @@ class TestAuth:
 
     def test_junior_still_needs_change_or_already_done(self):
         """Junior may still be must_change or already reset by prior E2E. We accept either."""
-        r = _login(JUNIOR_EMAIL, "HaulCrew2026!")
+        r = _login(JUNIOR_EMAIL, JUNIOR_INITIAL_PASSWORD)
         if r.status_code == 200:
             assert r.json()["user"].get("must_change_password") == True
         else:
-            # E2E already ran and changed to JunCrew2026!
+            # E2E already ran and the junior account switched to its permanent password
             r2 = _login(JUNIOR_EMAIL, JUNIOR_PASSWORD)
             assert r2.status_code == 200
 
@@ -161,22 +163,24 @@ class TestUsersTrucks:
                                json={"active": False}, headers=owner_headers, timeout=15)
                 requests.delete(f"{BASE_URL}/api/users/{u['id']}", headers=owner_headers, timeout=15)
 
+        temp_pw = f"Tmp{uuid.uuid4().hex[:10]}!A"
+        temp_pw2 = f"Tmp{uuid.uuid4().hex[:10]}!B"
         r = requests.post(
             f"{BASE_URL}/api/users",
-            json={"name": "QA Temp Crew", "email": email, "password": "TempPass2026!", "role": "crew"},
+            json={"name": "QA Temp Crew", "email": email, "password": temp_pw, "role": "crew"},
             headers=owner_headers, timeout=15,
         )
         assert r.status_code in (200, 201), r.text
         uid = r.json()["id"]
 
-        lr = _login(email, "TempPass2026!")
+        lr = _login(email, temp_pw)
         assert lr.status_code == 200
 
         # reset password
         rr = requests.patch(f"{BASE_URL}/api/users/{uid}",
-                            json={"password": "TempPass2026!New"}, headers=owner_headers, timeout=15)
+                            json={"password": temp_pw2}, headers=owner_headers, timeout=15)
         assert rr.status_code == 200
-        lr2 = _login(email, "TempPass2026!New")
+        lr2 = _login(email, temp_pw2)
         assert lr2.status_code == 200
 
         # deactivate

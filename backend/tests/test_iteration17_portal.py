@@ -5,7 +5,7 @@ import requests
 from pathlib import Path
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-from test_config import OWNER_PASSWORD
+from test_config import OWNER_PASSWORD, QA_TRACK_TOKEN
 
 TRACK_JOB_DATE = (datetime.now(ZoneInfo("America/New_York")) + timedelta(days=3)).strftime("%Y-%m-%d")
 
@@ -17,7 +17,7 @@ def _load_backend_url():
     raise RuntimeError("REACT_APP_BACKEND_URL not found")
 
 BASE = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/") or _load_backend_url()
-TOKEN = "afe748c700fc481497a5720e5d80acde"
+TOKEN = QA_TRACK_TOKEN
 
 
 @pytest.fixture(scope="module")

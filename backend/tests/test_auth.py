@@ -10,7 +10,7 @@ import time
 import jwt
 import pytest
 import requests
-from test_config import OWNER_PASSWORD
+from test_config import EMPLOYEE_LEGACY_PASSWORD, OWNER_PASSWORD, SALES_LEGACY_PASSWORD
 
 BASE_URL = os.environ["REACT_APP_BACKEND_URL"].rstrip("/") if os.environ.get("REACT_APP_BACKEND_URL") else None
 if not BASE_URL:
@@ -190,8 +190,8 @@ class TestProtectedRoutes:
 
 
 # --- Roles ---
-SALES_PW = "SellMoves2026!"
-EMPLOYEE_PW = "CrewDay2026!"
+SALES_PW = SALES_LEGACY_PASSWORD
+EMPLOYEE_PW = EMPLOYEE_LEGACY_PASSWORD
 
 
 def _login(pw):

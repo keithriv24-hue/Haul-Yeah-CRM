@@ -10,14 +10,16 @@ import zlib
 import pytest
 import requests
 
+from test_config import JAVANTE_EMAIL, JAVANTE_PASSWORD, OWNER_EMAIL, OWNER_PASSWORD, QA_TRACK_TOKEN
+
 BASE_URL = os.environ["REACT_APP_BACKEND_URL"].rstrip("/")
 API = BASE_URL + "/api"
 
-OWNER_U = "HaulYeahAdmin"
-OWNER_P = "HaulYeah2026!"
-CREW_U = "javante@haulyeahmoves.com"
-CREW_P = "JavCrew2026!"
-QA_TOKEN = "afe748c700fc481497a5720e5d80acde"
+OWNER_U = OWNER_EMAIL
+OWNER_P = OWNER_PASSWORD
+CREW_U = JAVANTE_EMAIL
+CREW_P = JAVANTE_PASSWORD
+QA_TOKEN = QA_TRACK_TOKEN
 
 
 def _tiny_png_bytes() -> bytes:

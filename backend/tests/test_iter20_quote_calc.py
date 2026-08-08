@@ -6,8 +6,7 @@ import requests
 BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', 'https://haul-yeah-staging.preview.emergentagent.com').rstrip('/')
 API = f"{BASE_URL}/api"
 
-OWNER_EMAIL = "HaulYeahAdmin"
-OWNER_PW = "HaulYeah2026!"
+from test_config import OWNER_EMAIL, OWNER_PASSWORD as OWNER_PW  # noqa: E402
 
 LEAD_ID = "recQATESTLEAD1"
 

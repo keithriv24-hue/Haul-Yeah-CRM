@@ -130,3 +130,10 @@ User choices: phase order approved · route optimization = free OSRM/OpenStreetM
 
 ## 2026-08-05 — Quote save now maps by Airtable field ID (user-confirmed)
 - quoteStructuredFields in lib/quote.js writes Crew Size → fldz0UbjzI0MADcnh (number), Est Hours → fld74xIlr9zV9PZzA (number), Deposit Amount → fldqYyz9kkI0RDbdr (currency). Rename-proof; fallback retry + toast kept as safety net. Verified compile + mapping present; e2e write needs prod Airtable.
+
+## 2026-08-06 — Code review Step 1: secrets removed from test code (STOPPED after step 1 per user)
+- All hardcoded credentials/tokens moved to /app/backend/tests/.env.test (gitignored — .gitignore already had .env + .env.* at lines 103-104); committed template tests/env.test.example; test_config.py now fail-fast _require() with NO inline defaults; legacy role passwords fall back to backend env (SALES_PASSWORD/EMPLOYEE_PASSWORD).
+- Cleaned: test_config defaults, SellMoves2026! (auth/crew/todo_blog/iter9), CrewDay2026!, HaulCrew2026! (junior initial), TempPass→random uuid pw, owner/crew creds in iter18/iter19/iter20, QA track token afe748… (conftest/iter17/iter18), password leaked in comment.
+- Bonus fix found while verifying: test_team_module TODAY/YESTERDAY used UTC vs server ET → challenge lifecycle failed after UTC midnight; now ET-based.
+- Full suite: 365 passed, 5 skipped (Airtable-gated), 1 known cross-worker flake (passes solo).
+- REMAINING code-review steps (user will trigger): Step 2 undefined-variable warnings, Step 3 React analyzer score 0, Step 4 complexity refactor (build_quote_pdf, apply_invoice_to_jobs, _job_doc_from_invoice, build_user_data, send_event), then is-vs-== cleanup / type hints / server.py split.

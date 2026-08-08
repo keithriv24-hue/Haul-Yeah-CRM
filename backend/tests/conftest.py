@@ -12,7 +12,7 @@ load_dotenv("/app/backend/.env")
 ET = ZoneInfo("America/New_York")
 TODAY_ET = datetime.now(ET).strftime("%Y-%m-%d")
 TRACK_JOB_DATE = (datetime.now(ET) + timedelta(days=3)).strftime("%Y-%m-%d")
-QA_TRACK_TOKEN = "afe748c700fc481497a5720e5d80acde"
+from test_config import QA_TRACK_TOKEN  # noqa: E402
 
 
 def _refresh_qa_seed_dates() -> None:

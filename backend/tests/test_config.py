@@ -1,11 +1,35 @@
-"""Shared test credentials — override via environment, no secrets inline in test files."""
+"""Shared test credentials — all values come from tests/.env.test (gitignored).
+Copy tests/env.test.example to tests/.env.test and fill in real values.
+No secrets are stored inline in test code."""
 import os
+from pathlib import Path
 
-OWNER_EMAIL = os.environ.get("TEST_OWNER_EMAIL", "HaulYeahAdmin")
-OWNER_PASSWORD = os.environ.get("TEST_OWNER_PASSWORD", "HaulYeah2026!")
-GHOST_PASSWORD = os.environ.get("TEST_GHOST_PASSWORD", OWNER_PASSWORD)
-JAVANTE_EMAIL = os.environ.get("TEST_JAVANTE_EMAIL", "javante@haulyeahmoves.com")
-JAVANTE_PASSWORD = os.environ.get("TEST_JAVANTE_PASSWORD", "JavCrew2026!")
-JUNIOR_EMAIL = os.environ.get("TEST_JUNIOR_EMAIL", "junior@haulyeahmoves.com")
-JUNIOR_PASSWORD = os.environ.get("TEST_JUNIOR_PASSWORD", "JunCrew2026!")
-STARTING_PASSWORD = os.environ.get("TEST_STARTING_PASSWORD", "haulyeah123")
+from dotenv import load_dotenv
+
+_TESTS_DIR = Path(__file__).resolve().parent
+load_dotenv(_TESTS_DIR / ".env.test")
+load_dotenv(_TESTS_DIR.parent / ".env")  # backend env (SALES_PASSWORD fallback)
+
+
+def _require(key: str) -> str:
+    val = os.environ.get(key, "")
+    if not val:
+        raise RuntimeError(
+            f"Missing test credential {key}: copy backend/tests/env.test.example "
+            "to backend/tests/.env.test and fill in real values.")
+    return val
+
+
+OWNER_EMAIL = _require("TEST_OWNER_EMAIL")
+OWNER_PASSWORD = _require("TEST_OWNER_PASSWORD")
+GHOST_PASSWORD = os.environ.get("TEST_GHOST_PASSWORD") or OWNER_PASSWORD
+JAVANTE_EMAIL = _require("TEST_JAVANTE_EMAIL")
+JAVANTE_PASSWORD = _require("TEST_JAVANTE_PASSWORD")
+JUNIOR_EMAIL = _require("TEST_JUNIOR_EMAIL")
+JUNIOR_PASSWORD = _require("TEST_JUNIOR_PASSWORD")
+JUNIOR_INITIAL_PASSWORD = os.environ.get("TEST_JUNIOR_INITIAL_PASSWORD") or JUNIOR_PASSWORD
+STARTING_PASSWORD = _require("TEST_STARTING_PASSWORD")
+# legacy shared role passwords — default to the backend's own env values
+SALES_LEGACY_PASSWORD = os.environ.get("TEST_SALES_LEGACY_PASSWORD") or _require("SALES_PASSWORD")
+EMPLOYEE_LEGACY_PASSWORD = os.environ.get("TEST_EMPLOYEE_LEGACY_PASSWORD") or _require("EMPLOYEE_PASSWORD")
+QA_TRACK_TOKEN = _require("QA_TRACK_TOKEN")
