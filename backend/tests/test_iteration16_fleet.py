@@ -18,7 +18,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 import requests
-from test_config import JAVANTE_PASSWORD, JUNIOR_PASSWORD, OWNER_PASSWORD
+from test_config import CREW1_PASSWORD, CREW2_PASSWORD, OWNER_PASSWORD
 
 BASE_URL = os.environ["REACT_APP_BACKEND_URL"].rstrip("/")
 TODAY_ET = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
@@ -52,13 +52,13 @@ def owner_token():
 
 
 @pytest.fixture(scope="module")
-def javante_token():
-    return _login("javante@haulyeahmoves.com", JAVANTE_PASSWORD)
+def crew1_token():
+    return _login("qa.crew1@haulyeah.test", CREW1_PASSWORD)
 
 
 @pytest.fixture(scope="module")
-def junior_token():
-    return _login("junior@haulyeahmoves.com", JUNIOR_PASSWORD)
+def crew2_token():
+    return _login("qa.crew2@haulyeah.test", CREW2_PASSWORD)
 
 
 @pytest.fixture(scope="module")
@@ -94,8 +94,8 @@ class TestFleetOverview:
         keys = {it["key"] for it in fleet_data["inspection_items"]}
         assert keys == {"lights", "tires", "brakes", "fluids", "glass", "wipers", "equipment", "interior"}
 
-    def test_crew_forbidden(self, javante_token):
-        r = requests.get(f"{BASE_URL}/api/fleet", headers=_h(javante_token), timeout=15)
+    def test_crew_forbidden(self, crew1_token):
+        r = requests.get(f"{BASE_URL}/api/fleet", headers=_h(crew1_token), timeout=15)
         assert r.status_code == 403
 
     def test_sales_forbidden(self, sales_token):
@@ -166,9 +166,9 @@ class TestTruckPatchExtended:
         assert data["name"] == orig
         assert data["active"] == True
 
-    def test_crew_cannot_patch(self, javante_token, truck_map):
+    def test_crew_cannot_patch(self, crew1_token, truck_map):
         t3 = truck_map.get("Truck 3")
-        r = requests.patch(f"{BASE_URL}/api/trucks/{t3['id']}", headers=_h(javante_token),
+        r = requests.patch(f"{BASE_URL}/api/trucks/{t3['id']}", headers=_h(crew1_token),
                            json={"fleet_status": "in_shop"}, timeout=15)
         assert r.status_code == 403
 
@@ -176,14 +176,14 @@ class TestTruckPatchExtended:
 # ---------------- 3. Inspections ----------------
 
 class TestInspections:
-    def test_crew_pass_bumps_mileage(self, junior_token, owner_token, truck_map):
+    def test_crew_pass_bumps_mileage(self, crew2_token, owner_token, truck_map):
         t3 = truck_map.get("Truck 3")
         # First read current mileage
         r0 = requests.get(f"{BASE_URL}/api/fleet", headers=_h(owner_token), timeout=15)
         cur = next(t for t in r0.json()["trucks"] if t["id"] == t3["id"])
         new_mi = (cur.get("mileage") or 0) + 100
         items = {k: True for k in ("lights", "tires", "brakes", "fluids", "glass", "wipers", "equipment", "interior")}
-        r = requests.post(f"{BASE_URL}/api/trucks/{t3['id']}/inspections", headers=_h(junior_token),
+        r = requests.post(f"{BASE_URL}/api/trucks/{t3['id']}/inspections", headers=_h(crew2_token),
                           json={"items": items, "odometer": new_mi, "notes": "TEST all pass"}, timeout=15)
         assert r.status_code == 200, r.text
         j = r.json()
@@ -194,14 +194,14 @@ class TestInspections:
         fresh = next(t for t in r1.json()["trucks"] if t["id"] == t3["id"])
         assert fresh["mileage"] >= new_mi
 
-    def test_crew_fail_flips_status_and_notifies(self, junior_token, owner_token, truck_map):
+    def test_crew_fail_flips_status_and_notifies(self, crew2_token, owner_token, truck_map):
         t3 = truck_map.get("Truck 3")
         # reset to in_service first
         requests.patch(f"{BASE_URL}/api/trucks/{t3['id']}", headers=_h(owner_token),
                        json={"fleet_status": "in_service"}, timeout=15)
         items = {k: True for k in ("lights", "tires", "brakes", "fluids", "glass", "wipers", "equipment", "interior")}
         items["brakes"] = False
-        r = requests.post(f"{BASE_URL}/api/trucks/{t3['id']}/inspections", headers=_h(junior_token),
+        r = requests.post(f"{BASE_URL}/api/trucks/{t3['id']}/inspections", headers=_h(crew2_token),
                           json={"items": items, "notes": "TEST failed brakes"}, timeout=15)
         assert r.status_code == 200, r.text
         j = r.json()
@@ -227,9 +227,9 @@ class TestInspections:
         assert "inspections" in r.json()
         assert len(r.json()["inspections"]) >= 2
 
-    def test_list_inspections_crew_limited(self, junior_token, truck_map):
+    def test_list_inspections_crew_limited(self, crew2_token, truck_map):
         t3 = truck_map.get("Truck 3")
-        r = requests.get(f"{BASE_URL}/api/trucks/{t3['id']}/inspections", headers=_h(junior_token), timeout=15)
+        r = requests.get(f"{BASE_URL}/api/trucks/{t3['id']}/inspections", headers=_h(crew2_token), timeout=15)
         assert r.status_code == 200
         assert len(r.json()["inspections"]) <= 5
 
@@ -249,9 +249,9 @@ class TestInspections:
 # ---------------- 4. Inspection -> Checklist auto-mark ----------------
 
 class TestInspectionChecklistIntegration:
-    def test_montclair_inspection_marks_checklist(self, javante_token, owner_token):
+    def test_montclair_inspection_marks_checklist(self, crew1_token, owner_token):
         # 1) Find the truck assigned to Montclair
-        r = requests.get(f"{BASE_URL}/api/assignments/{MONTCLAIR_ID}/checklists", headers=_h(javante_token), timeout=15)
+        r = requests.get(f"{BASE_URL}/api/assignments/{MONTCLAIR_ID}/checklists", headers=_h(crew1_token), timeout=15)
         assert r.status_code == 200, r.text
         # 2) Get Montclair assignment to find truck id
         rb = requests.get(f"{BASE_URL}/api/dispatch/board", headers=_h(owner_token),
@@ -273,7 +273,7 @@ class TestInspectionChecklistIntegration:
 
         # 4) File inspection with assignment_id
         items = {k: True for k in ("lights", "tires", "brakes", "fluids", "glass", "wipers", "equipment", "interior")}
-        r_ins = requests.post(f"{BASE_URL}/api/trucks/{truck_id}/inspections", headers=_h(javante_token),
+        r_ins = requests.post(f"{BASE_URL}/api/trucks/{truck_id}/inspections", headers=_h(crew1_token),
                               json={"items": items, "assignment_id": MONTCLAIR_ID,
                                     "notes": "TEST montclair integration"}, timeout=15)
         assert r_ins.status_code == 200, r_ins.text
@@ -281,7 +281,7 @@ class TestInspectionChecklistIntegration:
 
         # 5) Verify checklist item 0 done
         r_cl = requests.get(f"{BASE_URL}/api/assignments/{MONTCLAIR_ID}/checklists",
-                            headers=_h(javante_token), timeout=15)
+                            headers=_h(crew1_token), timeout=15)
         assert r_cl.status_code == 200
         lists = r_cl.json().get("checklists") or r_cl.json().get("lists") or []
         if isinstance(lists, list):
@@ -342,11 +342,11 @@ class TestTruckLogs:
         assert j["totals"]["maintenance"] >= 220.50
         assert j["totals"]["fuel"] >= 88.10
 
-    def test_crew_forbidden(self, javante_token, truck_map):
+    def test_crew_forbidden(self, crew1_token, truck_map):
         t3 = truck_map.get("Truck 3")
-        r = requests.get(f"{BASE_URL}/api/trucks/{t3['id']}/logs", headers=_h(javante_token), timeout=15)
+        r = requests.get(f"{BASE_URL}/api/trucks/{t3['id']}/logs", headers=_h(crew1_token), timeout=15)
         assert r.status_code == 403
-        r2 = requests.post(f"{BASE_URL}/api/trucks/{t3['id']}/logs", headers=_h(javante_token),
+        r2 = requests.post(f"{BASE_URL}/api/trucks/{t3['id']}/logs", headers=_h(crew1_token),
                            json={"kind": "fuel", "cost": 10}, timeout=15)
         assert r2.status_code == 403
 
@@ -365,9 +365,9 @@ class TestTruckLogs:
 class TestDamage:
     _damage_id = None
 
-    def test_crew_report_damage_notifies_owner(self, junior_token, owner_token, truck_map):
+    def test_crew_report_damage_notifies_owner(self, crew2_token, owner_token, truck_map):
         t3 = truck_map.get("Truck 3")
-        r = requests.post(f"{BASE_URL}/api/trucks/{t3['id']}/damage", headers=_h(junior_token),
+        r = requests.post(f"{BASE_URL}/api/trucks/{t3['id']}/damage", headers=_h(crew2_token),
                           json={"description": "TEST small dent on rear bumper"}, timeout=15)
         assert r.status_code == 200, r.text
         self.__class__._damage_id = r.json()["id"]
@@ -376,15 +376,15 @@ class TestDamage:
         notifs = rn.json() if isinstance(rn.json(), list) else rn.json().get("notifications", [])
         assert any("Damage reported" in (n.get("title") or "") and "Truck 3" in (n.get("title") or "") for n in notifs)
 
-    def test_empty_description_422(self, junior_token, truck_map):
+    def test_empty_description_422(self, crew2_token, truck_map):
         t3 = truck_map.get("Truck 3")
-        r = requests.post(f"{BASE_URL}/api/trucks/{t3['id']}/damage", headers=_h(junior_token),
+        r = requests.post(f"{BASE_URL}/api/trucks/{t3['id']}/damage", headers=_h(crew2_token),
                           json={"description": "   "}, timeout=15)
         assert r.status_code == 422
 
-    def test_crew_cannot_list_damage(self, junior_token, truck_map):
+    def test_crew_cannot_list_damage(self, crew2_token, truck_map):
         t3 = truck_map.get("Truck 3")
-        r = requests.get(f"{BASE_URL}/api/trucks/{t3['id']}/damage", headers=_h(junior_token), timeout=15)
+        r = requests.get(f"{BASE_URL}/api/trucks/{t3['id']}/damage", headers=_h(crew2_token), timeout=15)
         assert r.status_code == 403
 
     def test_owner_can_list_damage(self, owner_token, truck_map):
@@ -429,18 +429,18 @@ def _tiny_png_bytes():
 class TestPhotos:
     _photo_id = None
 
-    def test_crew_upload_inspection_photo(self, junior_token, owner_token, truck_map):
+    def test_crew_upload_inspection_photo(self, crew2_token, owner_token, truck_map):
         t3 = truck_map.get("Truck 3")
         # Need a fresh inspection id to attach
         items = {k: True for k in ("lights", "tires", "brakes", "fluids", "glass", "wipers", "equipment", "interior")}
-        ri = requests.post(f"{BASE_URL}/api/trucks/{t3['id']}/inspections", headers=_h(junior_token),
+        ri = requests.post(f"{BASE_URL}/api/trucks/{t3['id']}/inspections", headers=_h(crew2_token),
                            json={"items": items, "notes": "TEST photo attach"}, timeout=15)
         assert ri.status_code == 200
         ins_id = ri.json()["id"]
 
         files = {"file": ("test.png", io.BytesIO(_tiny_png_bytes()), "image/png")}
         r = requests.post(f"{BASE_URL}/api/trucks/{t3['id']}/photos",
-                          headers=_h(junior_token),
+                          headers=_h(crew2_token),
                           params={"kind": "inspection", "ref_id": ins_id},
                           files=files, timeout=60)
         if r.status_code == 502:
@@ -457,11 +457,11 @@ class TestPhotos:
         assert r.status_code == 200
         assert r.headers.get("content-type", "").startswith("image/")
 
-    def test_crew_can_stream_photo(self, junior_token):
+    def test_crew_can_stream_photo(self, crew2_token):
         if not self.__class__._photo_id:
             pytest.skip("no photo uploaded")
         r = requests.get(f"{BASE_URL}/api/truck-photos/{self.__class__._photo_id}",
-                         params={"auth": junior_token}, timeout=30)
+                         params={"auth": crew2_token}, timeout=30)
         assert r.status_code == 200
 
     def test_sales_cannot_stream_photo(self, sales_token):
@@ -471,19 +471,19 @@ class TestPhotos:
                          params={"auth": sales_token}, timeout=30)
         assert r.status_code == 403
 
-    def test_bad_kind_422(self, junior_token, truck_map):
+    def test_bad_kind_422(self, crew2_token, truck_map):
         t3 = truck_map.get("Truck 3")
         files = {"file": ("test.png", io.BytesIO(_tiny_png_bytes()), "image/png")}
         r = requests.post(f"{BASE_URL}/api/trucks/{t3['id']}/photos",
-                          headers=_h(junior_token),
+                          headers=_h(crew2_token),
                           params={"kind": "banana", "ref_id": "x"}, files=files, timeout=30)
         assert r.status_code == 422
 
-    def test_non_image_422(self, junior_token, truck_map):
+    def test_non_image_422(self, crew2_token, truck_map):
         t3 = truck_map.get("Truck 3")
         files = {"file": ("test.txt", io.BytesIO(b"hello"), "text/plain")}
         r = requests.post(f"{BASE_URL}/api/trucks/{t3['id']}/photos",
-                          headers=_h(junior_token),
+                          headers=_h(crew2_token),
                           params={"kind": "inspection", "ref_id": "x"}, files=files, timeout=30)
         assert r.status_code == 422
 

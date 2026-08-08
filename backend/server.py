@@ -6487,9 +6487,9 @@ async def seed_on_startup():
                 await mongo_db.users.update_one({"email": legacy}, {"$set": {"email": owner_email}})
         seeds = [
             {"name": "Keith (Owner)", "email": owner_email, "role": "owner", "password": owner_pw},
-            {"name": "Javante Brown", "email": "javante@haulyeahmoves.com", "role": "crew", "password": "HaulCrew2026!"},
-            {"name": "Junior Santil", "email": "junior@haulyeahmoves.com", "role": "crew", "password": "HaulCrew2026!"},
         ]
+        # removed former test accounts (2026-08-08, user request) — clean up any existing copies
+        await mongo_db.users.delete_many({"email": {"$in": ["javante@haulyeahmoves.com", "junior@haulyeahmoves.com"]}})
         for s in seeds:
             if not s["password"]:
                 continue

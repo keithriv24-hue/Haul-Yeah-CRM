@@ -26,7 +26,7 @@ import pytest
 import requests
 from pymongo import MongoClient
 from dotenv import load_dotenv
-from test_config import JAVANTE_PASSWORD, OWNER_EMAIL, OWNER_PASSWORD, SALES_LEGACY_PASSWORD as SALES_LEGACY_PW
+from test_config import CREW1_PASSWORD, OWNER_EMAIL, OWNER_PASSWORD, SALES_LEGACY_PASSWORD as SALES_LEGACY_PW
 
 # Load env vars from frontend and backend .env files so pytest picks up
 # REACT_APP_BACKEND_URL, MONGO_URL, DB_NAME regardless of shell env.
@@ -38,8 +38,8 @@ BASE_URL = os.environ["REACT_APP_BACKEND_URL"].rstrip("/")
 OWNER_USERNAME = OWNER_EMAIL
 OWNER_PASSWORD = OWNER_PASSWORD
 SALES_LEGACY_PASSWORD = SALES_LEGACY_PW
-JAVANTE_EMAIL = "javante@haulyeahmoves.com"
-JAVANTE_PASSWORD = JAVANTE_PASSWORD
+CREW1_EMAIL = "qa.crew1@haulyeah.test"
+CREW1_PASSWORD = CREW1_PASSWORD
 
 
 def _login(payload):
@@ -70,7 +70,7 @@ def sales_headers():
 
 @pytest.fixture(scope="module")
 def crew_headers():
-    r = _login({"email": JAVANTE_EMAIL, "password": JAVANTE_PASSWORD})
+    r = _login({"email": CREW1_EMAIL, "password": CREW1_PASSWORD})
     assert r.status_code == 200, r.text
     assert r.json()["role"] == "crew"
     return {"Authorization": f"Bearer {r.json()['token']}"}

@@ -9,14 +9,14 @@ import os
 import time
 import pytest
 import requests
-from test_config import JAVANTE_PASSWORD, JUNIOR_PASSWORD, OWNER_PASSWORD, STARTING_PASSWORD
+from test_config import CREW1_PASSWORD, CREW2_PASSWORD, OWNER_PASSWORD, STARTING_PASSWORD
 
 BASE = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
 API = f"{BASE}/api"
 
 OWNER_CREDS = {"email": "HaulYeahAdmin", "password": OWNER_PASSWORD}
-JAVANTE_CREDS = {"email": "javante@haulyeahmoves.com", "password": JAVANTE_PASSWORD}
-JUNIOR_CREDS = {"email": "junior@haulyeahmoves.com", "password": JUNIOR_PASSWORD}
+CREW1_CREDS = {"email": "qa.crew1@haulyeah.test", "password": CREW1_PASSWORD}
+CREW2_CREDS = {"email": "qa.crew2@haulyeah.test", "password": CREW2_PASSWORD}
 GHOST_CREW = {"email": "TestCrewAdmin", "password": OWNER_PASSWORD}
 GHOST_SALES = {"email": "TestSalesAdmin", "password": OWNER_PASSWORD}
 GHOST_MKT = {"email": "TestMarketingAdmin", "password": OWNER_PASSWORD}
@@ -43,14 +43,14 @@ def owner_tok():
 
 
 @pytest.fixture(scope="module")
-def javante_crew_tok():
-    return _login(JAVANTE_CREDS)
+def crew1_crew_tok():
+    return _login(CREW1_CREDS)
 
 
 @pytest.fixture(scope="module")
-def javante_sales_tok(javante_crew_tok):
+def crew1_sales_tok(crew1_crew_tok):
     r = requests.post(f"{API}/auth/switch-role", json={"role": "sales"},
-                      headers=_hdr(javante_crew_tok), timeout=30)
+                      headers=_hdr(crew1_crew_tok), timeout=30)
     assert r.status_code == 200, r.text
     return r.json()["token"]
 
@@ -79,16 +79,16 @@ def users_map(owner_tok):
 
 
 @pytest.fixture(scope="module")
-def javante_id(users_map):
-    u = users_map.get("javante@haulyeahmoves.com")
-    assert u, "Javante user must exist"
+def crew1_id(users_map):
+    u = users_map.get("qa.crew1@haulyeah.test")
+    assert u, "Crew1 user must exist"
     return u["id"]
 
 
 @pytest.fixture(scope="module")
-def junior_id(users_map):
-    u = users_map.get("junior@haulyeahmoves.com")
-    assert u, "Junior user must exist"
+def crew2_id(users_map):
+    u = users_map.get("qa.crew2@haulyeah.test")
+    assert u, "Crew2 user must exist"
     return u["id"]
 
 
@@ -110,8 +110,8 @@ class TestLoginRename:
 # ================================ Commission math
 
 class TestCommissionMath:
-    def test_big_move_3500_pct12_returns_420(self, owner_tok, javante_id):
-        payload = {"lead_name": "QA A", "closed_by": javante_id,
+    def test_big_move_3500_pct12_returns_420(self, owner_tok, crew1_id):
+        payload = {"lead_name": "QA A", "closed_by": crew1_id,
                    "move_type": "4+", "quote_amount": 3500, "job_date": "2026-07-25"}
         r = requests.put(f"{API}/commissions/attribution/{TEST_LEAD_A}",
                          json=payload, headers=_hdr(owner_tok), timeout=30)
@@ -120,24 +120,24 @@ class TestCommissionMath:
         assert body["commission"] == 420.0
         assert body["status"] == "none"
 
-    def test_medium_2000_2bedroom_returns_200(self, owner_tok, javante_id):
-        payload = {"lead_name": "QA B", "closed_by": javante_id,
+    def test_medium_2000_2bedroom_returns_200(self, owner_tok, crew1_id):
+        payload = {"lead_name": "QA B", "closed_by": crew1_id,
                    "move_type": "2-bedroom", "quote_amount": 2000, "job_date": "2026-07-25"}
         r = requests.put(f"{API}/commissions/attribution/{TEST_LEAD_B}",
                          json=payload, headers=_hdr(owner_tok), timeout=30)
         assert r.status_code == 200, r.text
         assert r.json()["commission"] == 200.0
 
-    def test_small_studio_900_returns_flat_40(self, owner_tok, javante_id):
-        payload = {"lead_name": "QA C", "closed_by": javante_id,
+    def test_small_studio_900_returns_flat_40(self, owner_tok, crew1_id):
+        payload = {"lead_name": "QA C", "closed_by": crew1_id,
                    "move_type": "Studio", "quote_amount": 900, "job_date": "2026-07-25"}
         r = requests.put(f"{API}/commissions/attribution/{TEST_LEAD_C}",
                          json=payload, headers=_hdr(owner_tok), timeout=30)
         assert r.status_code == 200, r.text
         assert r.json()["commission"] == 40.0
 
-    def test_small_labor_only_900_returns_flat_25(self, owner_tok, javante_id):
-        payload = {"lead_name": "QA D", "closed_by": javante_id,
+    def test_small_labor_only_900_returns_flat_25(self, owner_tok, crew1_id):
+        payload = {"lead_name": "QA D", "closed_by": crew1_id,
                    "move_type": "Labor-only", "quote_amount": 900, "job_date": "2026-07-25"}
         r = requests.put(f"{API}/commissions/attribution/{TEST_LEAD_D}",
                          json=payload, headers=_hdr(owner_tok), timeout=30)
@@ -157,13 +157,13 @@ class TestCommissionLifecycle:
         assert body["status"] == "pending"
         assert body["attribution"]["deposit_paid_at"], "deposit_paid_at should be auto-set"
 
-    def test_report_shows_pending_total(self, owner_tok, javante_id):
+    def test_report_shows_pending_total(self, owner_tok, crew1_id):
         r = requests.get(f"{API}/commissions/report", headers=_hdr(owner_tok), timeout=30)
         assert r.status_code == 200
         body = r.json()
         assert body["is_owner"] == True
-        rep = next((x for x in body["reps"] if x["user_id"] == javante_id), None)
-        assert rep is not None, "javante should have a rep row"
+        rep = next((x for x in body["reps"] if x["user_id"] == crew1_id), None)
+        assert rep is not None, "crew1 should have a rep row"
         assert rep["pending"] >= 420.0
 
     def test_fully_paid_locks(self, owner_tok):
@@ -173,7 +173,7 @@ class TestCommissionLifecycle:
         assert r.status_code == 200, r.text
         assert r.json()["status"] == "locked"
 
-    def test_refunded_voids(self, owner_tok, javante_id):
+    def test_refunded_voids(self, owner_tok, crew1_id):
         r = requests.put(f"{API}/commissions/attribution/{TEST_LEAD_A}",
                          json={"refunded": True},
                          headers=_hdr(owner_tok), timeout=30)
@@ -184,7 +184,7 @@ class TestCommissionLifecycle:
         r2 = requests.get(f"{API}/commissions/report", headers=_hdr(owner_tok), timeout=30)
         assert r2.status_code == 200
         body = r2.json()
-        rep = next((x for x in body["reps"] if x["user_id"] == javante_id), None)
+        rep = next((x for x in body["reps"] if x["user_id"] == crew1_id), None)
         assert rep is not None
         # There should also be TEST_LEAD_B/C/D pending (they still have closed_by but no deposit)
         # But TEST_LEAD_A voided => shouldn't add to pending/locked
@@ -198,17 +198,17 @@ class TestCommissionLifecycle:
 # ================================ Role gates
 
 class TestCommissionRoleGates:
-    def test_sales_cannot_flip_payment_flags(self, sales_ghost_tok, javante_id):
+    def test_sales_cannot_flip_payment_flags(self, sales_ghost_tok, crew1_id):
         r = requests.put(f"{API}/commissions/attribution/{TEST_LEAD_B}",
                          json={"deposit_paid": True},
                          headers=_hdr(sales_ghost_tok), timeout=30)
         assert r.status_code == 403
         assert "owner" in (r.json().get("detail") or "").lower()
 
-    def test_sales_can_set_attribution_fields(self, sales_ghost_tok, javante_id):
+    def test_sales_can_set_attribution_fields(self, sales_ghost_tok, crew1_id):
         # sales sets non-flag fields
         r = requests.put(f"{API}/commissions/attribution/{TEST_LEAD_B}",
-                         json={"closed_by": javante_id, "move_type": "2-bedroom", "quote_amount": 2000},
+                         json={"closed_by": crew1_id, "move_type": "2-bedroom", "quote_amount": 2000},
                          headers=_hdr(sales_ghost_tok), timeout=30)
         assert r.status_code == 200, r.text
 
@@ -253,7 +253,7 @@ class TestCommissionRoleGates:
 # ================================ Rates editing math change
 
 class TestCommissionRates:
-    def test_owner_edit_big_pct_15_changes_math(self, owner_tok, javante_id):
+    def test_owner_edit_big_pct_15_changes_math(self, owner_tok, crew1_id):
         r = requests.get(f"{API}/commissions/rates", headers=_hdr(owner_tok), timeout=30)
         assert r.status_code == 200
         original = r.json()["rates"]
@@ -286,23 +286,23 @@ class TestCommissionRates:
         assert r4.status_code == 200
 
 
-# ================================ Rep scoping (Javante)
+# ================================ Rep scoping (Crew1)
 
 class TestRepScoping:
-    def test_crew_view_report_403(self, javante_crew_tok):
+    def test_crew_view_report_403(self, crew1_crew_tok):
         r = requests.get(f"{API}/commissions/report",
-                         headers=_hdr(javante_crew_tok), timeout=30)
+                         headers=_hdr(crew1_crew_tok), timeout=30)
         assert r.status_code == 403
 
-    def test_sales_view_own_only(self, javante_sales_tok, javante_id):
+    def test_sales_view_own_only(self, crew1_sales_tok, crew1_id):
         r = requests.get(f"{API}/commissions/report",
-                         headers=_hdr(javante_sales_tok), timeout=30)
+                         headers=_hdr(crew1_sales_tok), timeout=30)
         assert r.status_code == 200, r.text
         body = r.json()
         assert body["is_owner"] == False
-        # all rows should be javante's
+        # all rows should be crew1's
         for row in body["rows"]:
-            assert row["closed_by"] == javante_id
+            assert row["closed_by"] == crew1_id
 
 
 # ================================ Availability overview
@@ -334,10 +334,10 @@ class TestAvailability:
                          headers=_hdr(sales_ghost_tok), timeout=30)
         assert r.status_code == 403
 
-    def test_owner_mark_junior_off_and_shortage(self, owner_tok, javante_id, junior_id):
-        # Mark junior off 2026-07-26
+    def test_owner_mark_crew2_off_and_shortage(self, owner_tok, crew1_id, crew2_id):
+        # Mark crew2 off 2026-07-26
         r = requests.post(f"{API}/availability/set",
-                          json={"user_id": junior_id, "date": "2026-07-26", "available": False},
+                          json={"user_id": crew2_id, "date": "2026-07-26", "available": False},
                           headers=_hdr(owner_tok), timeout=30)
         assert r.status_code == 200
 
@@ -350,16 +350,16 @@ class TestAvailability:
         assert len(days) == 1
         day = days[0]
         off_ids = {o["user_id"] for o in day["off"]}
-        assert junior_id in off_ids, day
+        assert crew2_id in off_ids, day
 
-        # Create an assignment that needs both javante + junior → shortage
+        # Create an assignment that needs both crew1 + crew2 → shortage
         asn_payload = {
             "job_name": "QA Weekend Job",
             "job_date": "2026-07-26",
             "start_address": "1 Test St, Waterbury CT",
             "end_address": "2 Test Ave, Waterbury CT",
-            "crew": [{"user_id": javante_id, "position": "Driver"},
-                     {"user_id": junior_id, "position": "Helper"}],
+            "crew": [{"user_id": crew1_id, "position": "Driver"},
+                     {"user_id": crew2_id, "position": "Helper"}],
             "ignore_warnings": True,
         }
         r3 = requests.post(f"{API}/assignments", json=asn_payload,
@@ -368,9 +368,9 @@ class TestAvailability:
         assignment_id = r3.json()["id"]
 
         try:
-            # Also mark javante off on 2026-07-26 so short=True (both off < needed=2)
+            # Also mark crew1 off on 2026-07-26 so short=True (both off < needed=2)
             r4 = requests.post(f"{API}/availability/set",
-                               json={"user_id": javante_id, "date": "2026-07-26", "available": False},
+                               json={"user_id": crew1_id, "date": "2026-07-26", "available": False},
                                headers=_hdr(owner_tok), timeout=30)
             assert r4.status_code == 200
 
@@ -385,10 +385,10 @@ class TestAvailability:
         finally:
             # cleanup: restore availability + delete assignment
             requests.post(f"{API}/availability/set",
-                          json={"user_id": junior_id, "date": "2026-07-26", "available": True},
+                          json={"user_id": crew2_id, "date": "2026-07-26", "available": True},
                           headers=_hdr(owner_tok), timeout=30)
             requests.post(f"{API}/availability/set",
-                          json={"user_id": javante_id, "date": "2026-07-26", "available": True},
+                          json={"user_id": crew1_id, "date": "2026-07-26", "available": True},
                           headers=_hdr(owner_tok), timeout=30)
             requests.delete(f"{API}/assignments/{assignment_id}",
                             headers=_hdr(owner_tok), timeout=30)
@@ -397,19 +397,19 @@ class TestAvailability:
 # ================================ Profile task
 
 class TestProfileTask:
-    def test_javante_profile_task_flow(self, javante_crew_tok):
-        r = requests.get(f"{API}/profile-task", headers=_hdr(javante_crew_tok), timeout=30)
+    def test_crew1_profile_task_flow(self, crew1_crew_tok):
+        r = requests.get(f"{API}/profile-task", headers=_hdr(crew1_crew_tok), timeout=30)
         assert r.status_code == 200
-        # javante may already be done from prior tests, but should return open/done not error
+        # crew1 may already be done from prior tests, but should return open/done not error
         assert r.json()["status"] in ("open", "done", "none")
 
         # POST /profile-task/done marks done
         r2 = requests.post(f"{API}/profile-task/done",
-                           headers=_hdr(javante_crew_tok), timeout=30)
+                           headers=_hdr(crew1_crew_tok), timeout=30)
         assert r2.status_code == 200
         assert r2.json()["status"] == "done"
 
-        r3 = requests.get(f"{API}/profile-task", headers=_hdr(javante_crew_tok), timeout=30)
+        r3 = requests.get(f"{API}/profile-task", headers=_hdr(crew1_crew_tok), timeout=30)
         assert r3.json()["status"] == "done"
 
     def test_temp_user_auto_complete_via_profile_save(self, owner_tok):

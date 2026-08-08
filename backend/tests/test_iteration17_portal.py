@@ -47,7 +47,7 @@ def test_track_public_ok():
     assert d["tips_enabled"] == True
     assert d["review_submitted"] == True
     assert d["invoices"] == []
-    assert any("Javante" in c.get("name", "") for c in d["crew"])
+    assert any("QA Crew One" in c.get("name", "") for c in d["crew"])
     assert d["truck_name"] == "Truck 1"
     assert d["details"].get("gate_code") == "#4321"
     assert len(d["uploads"]) >= 1

@@ -15,13 +15,13 @@ import time
 from datetime import datetime, timezone
 import pytest
 import requests
-from test_config import JAVANTE_PASSWORD, OWNER_EMAIL, OWNER_PASSWORD
+from test_config import CREW1_PASSWORD, OWNER_EMAIL, OWNER_PASSWORD
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://haul-yeah-staging.preview.emergentagent.com").rstrip("/")
 OWNER_USERNAME = OWNER_EMAIL
 OWNER_PASSWORD = OWNER_PASSWORD
-JAVANTE_EMAIL = "javante@haulyeahmoves.com"
-JAVANTE_PASSWORD = JAVANTE_PASSWORD
+CREW1_EMAIL = "qa.crew1@haulyeah.test"
+CREW1_PASSWORD = CREW1_PASSWORD
 
 
 def _login(username, password):
@@ -38,7 +38,7 @@ def owner_headers():
 
 @pytest.fixture(scope="module")
 def crew_headers():
-    r = _login(JAVANTE_EMAIL, JAVANTE_PASSWORD)
+    r = _login(CREW1_EMAIL, CREW1_PASSWORD)
     assert r.status_code == 200, r.text
     return {"Authorization": f"Bearer {r.json()['token']}"}
 
@@ -140,15 +140,15 @@ class TestCalendarJobs:
 # --------- Assignment job_size on create/update + calendar echo ---------
 class TestAssignmentJobSize:
     def test_create_assignment_with_job_size_and_verify_calendar(self, owner_headers):
-        # Get any active truck + Javante id for the assignment
+        # Get any active truck + Crew1 id for the assignment
         r = requests.get(f"{BASE_URL}/api/trucks", headers=owner_headers, timeout=15)
         trucks = [t for t in r.json()["trucks"] if t.get("active", True)]
         assert trucks, "need at least one active truck"
         truck_id = trucks[0]["id"]
 
         users = requests.get(f"{BASE_URL}/api/users", headers=owner_headers, timeout=15).json()["users"]
-        javante = next((u for u in users if u["email"].lower() == JAVANTE_EMAIL), None)
-        assert javante, "Javante user not found"
+        crew1 = next((u for u in users if u["email"].lower() == CREW1_EMAIL), None)
+        assert crew1, "Crew1 user not found"
 
         today = datetime.now(timezone.utc).date().isoformat()
         payload = {
@@ -159,7 +159,7 @@ class TestAssignmentJobSize:
             "end_address": "",
             "truck_id": truck_id,
             "job_size": "3BR",
-            "crew": [{"user_id": javante["id"], "position": "Driver"}],
+            "crew": [{"user_id": crew1["id"], "position": "Driver"}],
             "ignore_warnings": True,
         }
         r = requests.post(f"{BASE_URL}/api/assignments", json=payload, headers=owner_headers, timeout=20)
@@ -196,12 +196,12 @@ class TestAssignmentJobSize:
         trucks = [t for t in r.json()["trucks"] if t.get("active", True)]
         truck_id = trucks[0]["id"] if trucks else None
         users = requests.get(f"{BASE_URL}/api/users", headers=owner_headers, timeout=15).json()["users"]
-        javante = next((u for u in users if u["email"].lower() == JAVANTE_EMAIL), None)
+        crew1 = next((u for u in users if u["email"].lower() == CREW1_EMAIL), None)
         payload = {
             "job_name": "TEST_QA_BadSize", "job_date": datetime.now(timezone.utc).date().isoformat(),
             "arrival_time": "10:00", "start_address": "x", "end_address": "", "truck_id": truck_id,
             "job_size": "MegaMansion", "ignore_warnings": True,
-            "crew": [{"user_id": javante["id"], "position": "Driver"}] if javante else [],
+            "crew": [{"user_id": crew1["id"], "position": "Driver"}] if crew1 else [],
         }
         r = requests.post(f"{BASE_URL}/api/assignments", json=payload, headers=owner_headers, timeout=15)
         # Backend enforces JOB_SIZES: expect 4xx
@@ -211,18 +211,18 @@ class TestAssignmentJobSize:
 # --------- Crew Complete status accepts delay_factors ---------
 class TestDelayFactorsPersist:
     def test_delay_factors_saved_and_shown_on_calendar(self, owner_headers, crew_headers):
-        # setup an assignment for Javante today
+        # setup an assignment for Crew1 today
         r = requests.get(f"{BASE_URL}/api/trucks", headers=owner_headers, timeout=15)
         trucks = [t for t in r.json()["trucks"] if t.get("active", True)]
         truck_id = trucks[0]["id"]
         users = requests.get(f"{BASE_URL}/api/users", headers=owner_headers, timeout=15).json()["users"]
-        javante = next(u for u in users if u["email"].lower() == JAVANTE_EMAIL)
+        crew1 = next(u for u in users if u["email"].lower() == CREW1_EMAIL)
         today = datetime.now(timezone.utc).date().isoformat()
         payload = {
             "job_name": "TEST_QA_Delay_Move", "job_date": today, "arrival_time": "09:00",
             "start_address": "1 Test Ln", "end_address": "", "truck_id": truck_id,
             "job_size": "2BR",
-            "crew": [{"user_id": javante["id"], "position": "Driver"}],
+            "crew": [{"user_id": crew1["id"], "position": "Driver"}],
             "ignore_warnings": True,
         }
         r = requests.post(f"{BASE_URL}/api/assignments", json=payload, headers=owner_headers, timeout=20)
@@ -262,20 +262,20 @@ class TestTimelogQueueAfterPunch:
         trucks = [t for t in r.json()["trucks"] if t.get("active", True)]
         truck_id = trucks[0]["id"]
         users = requests.get(f"{BASE_URL}/api/users", headers=owner_headers, timeout=15).json()["users"]
-        javante = next(u for u in users if u["email"].lower() == JAVANTE_EMAIL)
+        crew1 = next(u for u in users if u["email"].lower() == CREW1_EMAIL)
         today = datetime.now(timezone.utc).date().isoformat()
         payload = {
             "job_name": "TEST_QA_Punch_Move", "job_date": today, "arrival_time": "09:00",
             "start_address": "1 Test Ln", "end_address": "", "truck_id": truck_id,
             "job_size": "2BR",
-            "crew": [{"user_id": javante["id"], "position": "Driver"}],
+            "crew": [{"user_id": crew1["id"], "position": "Driver"}],
             "ignore_warnings": True,
         }
         r = requests.post(f"{BASE_URL}/api/assignments", json=payload, headers=owner_headers, timeout=20)
         assert r.status_code in (200, 201), r.text
         aid = r.json()["id"]
         try:
-            # ensure Javante isn't stuck on the clock from a previous test
+            # ensure Crew1 isn't stuck on the clock from a previous test
             requests.post(f"{BASE_URL}/api/crew/clock-out", json={}, headers=crew_headers, timeout=15)
             # crew clock-in on this assignment (no GPS)
             r = requests.post(f"{BASE_URL}/api/crew/clock-in",
@@ -320,12 +320,12 @@ class TestDeletedTruckHistoryPreserved:
         tid = r.json()["id"]
 
         users = requests.get(f"{BASE_URL}/api/users", headers=owner_headers, timeout=15).json()["users"]
-        javante = next(u for u in users if u["email"].lower() == JAVANTE_EMAIL)
+        crew1 = next(u for u in users if u["email"].lower() == CREW1_EMAIL)
         today = datetime.now(timezone.utc).date().isoformat()
         payload = {
             "job_name": "TEST_QA_History_Move", "job_date": today, "arrival_time": "09:00",
             "start_address": "x", "end_address": "", "truck_id": tid, "job_size": "2BR",
-            "crew": [{"user_id": javante["id"], "position": "Driver"}],
+            "crew": [{"user_id": crew1["id"], "position": "Driver"}],
             "ignore_warnings": True,
         }
         r = requests.post(f"{BASE_URL}/api/assignments", json=payload,

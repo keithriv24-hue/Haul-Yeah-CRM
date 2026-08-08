@@ -13,7 +13,7 @@ Covers all bullets from the review-request:
   3. `behind` logic: future arrival → false; In-Progress → excluded from behind
      and counted in `active`
   4. Crew pool: jobs_today / jobs_week / clocked_in / off fields present;
-     Javante shows jobs_today=1
+     Crew1 shows jobs_today=1
   5. Truck pool: Truck 1 on_job = 'QA Dispatch Move — Montclair'
   6. Date param: future empty day → is_today=false, behind all false
   7. PATCH assignment conflict flow (409 warnings) — reused by dispatch UI
@@ -113,7 +113,7 @@ class TestDispatchBoardOwner:
         assert m.get("truck_name") == "Truck 1"
         crew = m.get("crew") or []
         assert len(crew) == 1
-        assert crew[0]["name"] == "Javante Brown"
+        assert crew[0]["name"] == "QA Crew One"
         assert crew[0]["position"] == "Driver"
 
     def test_hoboken_no_crew_no_truck(self, board_today):
@@ -144,8 +144,8 @@ class TestDispatchRoleGates:
 
 # ============================================================ 3. Crew + Truck pool
 class TestCrewAndTruckPool:
-    def test_crew_pool_has_javante_with_jobs_today(self, board_today):
-        jav = next((u for u in board_today["crew"] if u["name"] == "Javante Brown"), None)
+    def test_crew_pool_has_crew1_with_jobs_today(self, board_today):
+        jav = next((u for u in board_today["crew"] if u["name"] == "QA Crew One"), None)
         assert jav is not None
         for f in ("id", "name", "jobs_today", "jobs_week", "clocked_in", "off"):
             assert f in jav
@@ -154,8 +154,8 @@ class TestCrewAndTruckPool:
         assert isinstance(jav["clocked_in"], bool)
         assert isinstance(jav["off"], bool)
 
-    def test_crew_pool_has_junior(self, board_today):
-        jun = next((u for u in board_today["crew"] if u["name"] == "Junior Santil"), None)
+    def test_crew_pool_has_crew2(self, board_today):
+        jun = next((u for u in board_today["crew"] if u["name"] == "QA Crew Two"), None)
         assert jun is not None
         assert jun["jobs_today"] == 0
 
@@ -277,11 +277,11 @@ class TestBehindLogic:
 
 # ============================================================ 6. 409 conflict flow (reused by UI)
 class TestAssignmentConflictFlow:
-    """Assign Javante (already on Montclair today) to Hoboken → 409 with warnings."""
+    """Assign Crew1 (already on Montclair today) to Hoboken → 409 with warnings."""
 
     def test_conflict_409_with_warnings(self, owner_h, board_today):
         hob = next(a for a in board_today["assignments"] if "Hoboken" in a["job_name"])
-        jav_id = next(u["id"] for u in board_today["crew"] if u["name"] == "Javante Brown")
+        jav_id = next(u["id"] for u in board_today["crew"] if u["name"] == "QA Crew One")
 
         payload = {
             "project_id": hob.get("project_id"),
@@ -303,9 +303,9 @@ class TestAssignmentConflictFlow:
         assert detail.get("error") == "conflicts"
         warns = detail.get("warnings") or []
         assert warns
-        # Warning text should mention Javante or "already"
+        # Warning text should mention Crew1 or "already"
         blob = " ".join(warns).lower()
-        assert "javante" in blob or "already" in blob or "double-booked" in blob
+        assert "crew1" in blob or "already" in blob or "double-booked" in blob
 
     def test_hoboken_still_has_no_crew_after_409(self, owner_h):
         """409 must not have persisted the change."""

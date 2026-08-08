@@ -2,7 +2,7 @@
 unscheduled clock-in flag. Targets the existing QA demo assignments.
 
 Assumes QA demo state per handoff:
-  - Montclair assignment id: 3b2a0120-9dfb-4fe1-88cd-d5a6025ea61d (Javante on crew, exec_status=En Route,
+  - Montclair assignment id: 3b2a0120-9dfb-4fe1-88cd-d5a6025ea61d (Crew1 on crew, exec_status=En Route,
     warehouse_departure already 5/5 done)
   - Hoboken assignment (job_name 'QA Dispatch Move — Hoboken', no crew/truck at start & end)
   - job_date 2026-07-21 (ET today for this preview env)
@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 import requests
-from test_config import JAVANTE_PASSWORD, JUNIOR_PASSWORD, OWNER_PASSWORD, STARTING_PASSWORD
+from test_config import CREW1_PASSWORD, CREW2_PASSWORD, OWNER_PASSWORD, STARTING_PASSWORD
 
 BASE = os.environ.get("REACT_APP_BACKEND_URL").rstrip("/")
 API = f"{BASE}/api"
@@ -27,10 +27,10 @@ def _at_least(status, target):
 
 OWNER_EMAIL = "HaulYeahAdmin"
 OWNER_PW = OWNER_PASSWORD
-JAVANTE_EMAIL = "javante@haulyeahmoves.com"
-JAVANTE_PW = JAVANTE_PASSWORD
-JUNIOR_EMAIL = "junior@haulyeahmoves.com"
-JUNIOR_PW = JUNIOR_PASSWORD
+CREW1_EMAIL = "qa.crew1@haulyeah.test"
+CREW1_PW = CREW1_PASSWORD
+CREW2_EMAIL = "qa.crew2@haulyeah.test"
+CREW2_PW = CREW2_PASSWORD
 TESTCREW = "TestCrewAdmin"
 TESTCREW_PW = OWNER_PASSWORD
 TESTSALES = "TestSalesAdmin"
@@ -56,13 +56,13 @@ def owner_token():
 
 
 @pytest.fixture(scope="session")
-def javante_token():
-    return _login(JAVANTE_EMAIL, JAVANTE_PW)
+def crew1_token():
+    return _login(CREW1_EMAIL, CREW1_PW)
 
 
 @pytest.fixture(scope="session")
-def junior_token():
-    return _login(JUNIOR_EMAIL, JUNIOR_PW)
+def crew2_token():
+    return _login(CREW2_EMAIL, CREW2_PW)
 
 
 @pytest.fixture(scope="session")
@@ -102,12 +102,12 @@ class TestChecklistShape:
         # Tolerate concurrent test that toggles warehouse item 0
         assert wh["done_count"] >= 4, f"warehouse should be >=4/5, got {wh['done_count']}/5"
 
-    def test_crew_on_job_allowed(self, javante_token):
-        r = requests.get(f"{API}/assignments/{MONTCLAIR_ID}/checklists", headers=_auth(javante_token), timeout=30)
+    def test_crew_on_job_allowed(self, crew1_token):
+        r = requests.get(f"{API}/assignments/{MONTCLAIR_ID}/checklists", headers=_auth(crew1_token), timeout=30)
         assert r.status_code == 200
 
-    def test_crew_not_on_job_forbidden(self, junior_token):
-        r = requests.get(f"{API}/assignments/{MONTCLAIR_ID}/checklists", headers=_auth(junior_token), timeout=30)
+    def test_crew_not_on_job_forbidden(self, crew2_token):
+        r = requests.get(f"{API}/assignments/{MONTCLAIR_ID}/checklists", headers=_auth(crew2_token), timeout=30)
         assert r.status_code == 403
 
     def test_testcrew_ghost_not_on_job_forbidden(self, testcrew_token):
@@ -226,12 +226,12 @@ class TestTimeline:
         titles = [e["title"] for e in events]
         assert any("Job put on the schedule" in t for t in titles)
 
-    def test_timeline_javante_ok(self, javante_token):
-        r = requests.get(f"{API}/assignments/{MONTCLAIR_ID}/timeline", headers=_auth(javante_token), timeout=30)
+    def test_timeline_crew1_ok(self, crew1_token):
+        r = requests.get(f"{API}/assignments/{MONTCLAIR_ID}/timeline", headers=_auth(crew1_token), timeout=30)
         assert r.status_code == 200
 
-    def test_timeline_junior_forbidden(self, junior_token):
-        r = requests.get(f"{API}/assignments/{MONTCLAIR_ID}/timeline", headers=_auth(junior_token), timeout=30)
+    def test_timeline_crew2_forbidden(self, crew2_token):
+        r = requests.get(f"{API}/assignments/{MONTCLAIR_ID}/timeline", headers=_auth(crew2_token), timeout=30)
         assert r.status_code == 403
 
 
@@ -243,9 +243,9 @@ class TestJobEventsFromPatch:
         board = requests.get(f"{API}/dispatch/board", headers=_auth(owner_token), params={"date": QA_DAY}, timeout=30).json()
         h = next(a for a in board["assignments"] if a["id"] == hoboken_id)
 
-        # Find Junior user_id and Truck 2 id
+        # Find Crew2 user_id and Truck 2 id
         users = requests.get(f"{API}/users", headers=_auth(owner_token), timeout=30).json()["users"]
-        junior = next(u for u in users if u.get("email") == JUNIOR_EMAIL)
+        crew2 = next(u for u in users if u.get("email") == CREW2_EMAIL)
         trucks = requests.get(f"{API}/trucks", headers=_auth(owner_token), timeout=30).json().get("trucks", [])
         truck2 = next((t for t in trucks if t.get("name") == "Truck 2"), None)
         assert truck2, "Truck 2 not found"
@@ -258,7 +258,7 @@ class TestJobEventsFromPatch:
             "start_address": h["start_address"],
             "end_address": h["end_address"],
             "job_size": h.get("job_size"),
-            "crew": [{"user_id": junior["id"], "position": "Driver"}],
+            "crew": [{"user_id": crew2["id"], "position": "Driver"}],
             "truck_id": truck2["id"],
             "ignore_warnings": True,
         }
@@ -268,7 +268,7 @@ class TestJobEventsFromPatch:
         # Timeline shows add crew + truck assigned
         tl = requests.get(f"{API}/assignments/{hoboken_id}/timeline", headers=_auth(owner_token), timeout=30).json()
         titles = [e["title"] for e in tl["events"]]
-        assert any("Added to crew: Junior" in t for t in titles), titles
+        assert any("Added to crew: QA Crew Two" in t for t in titles), titles
         assert any("Truck assigned: Truck 2" in t for t in titles), titles
 
         # Now remove crew + truck
@@ -277,7 +277,7 @@ class TestJobEventsFromPatch:
         assert r2.status_code == 200, r2.text
         tl2 = requests.get(f"{API}/assignments/{hoboken_id}/timeline", headers=_auth(owner_token), timeout=30).json()
         titles2 = [e["title"] for e in tl2["events"]]
-        assert any("Removed from crew: Junior" in t for t in titles2), titles2
+        assert any("Removed from crew: QA Crew Two" in t for t in titles2), titles2
         assert any("Truck removed" in t for t in titles2), titles2
 
 
@@ -339,31 +339,31 @@ class TestUsernameLoginAndCreateUser:
 # ------------------- crew must be clocked in to toggle checklists -------------------
 
 class TestChecklistClockInGate:
-    def test_crew_toggle_requires_clock_in(self, owner_token, junior_token):
+    def test_crew_toggle_requires_clock_in(self, owner_token, crew2_token):
         from datetime import datetime, timedelta
         from zoneinfo import ZoneInfo
         tomorrow = (datetime.now(ZoneInfo("America/New_York")) + timedelta(days=1)).date().isoformat()
         users = requests.get(f"{API}/users", headers=_auth(owner_token), timeout=30).json()["users"]
-        junior_id = next(u["id"] for u in users if (u.get("email") or "").lower() == JUNIOR_EMAIL)
+        crew2_id = next(u["id"] for u in users if (u.get("email") or "").lower() == CREW2_EMAIL)
         ra = requests.post(f"{API}/assignments", headers=_auth(owner_token), timeout=30, json={
             "job_name": "TEMP iter15 clockgate", "job_date": tomorrow, "arrival_time": "",
-            "crew": [{"user_id": junior_id, "position": "Helper"}], "ignore_warnings": True})
+            "crew": [{"user_id": crew2_id, "position": "Helper"}], "ignore_warnings": True})
         assert ra.status_code == 200, ra.text
         aid = ra.json()["id"]
         try:
-            # ensure Junior starts off the clock
-            requests.post(f"{API}/crew/clock-out", headers=_auth(junior_token), json={}, timeout=30)
+            # ensure Crew2 starts off the clock
+            requests.post(f"{API}/crew/clock-out", headers=_auth(crew2_token), json={}, timeout=30)
             r_blocked = requests.post(f"{API}/assignments/{aid}/checklists/loading/items/0",
-                                      headers=_auth(junior_token), json={"done": True}, timeout=30)
+                                      headers=_auth(crew2_token), json={"done": True}, timeout=30)
             assert r_blocked.status_code == 403, r_blocked.text
             assert "clock in" in (r_blocked.json().get("detail") or "").lower()
 
-            rin = requests.post(f"{API}/crew/clock-in", headers=_auth(junior_token), json={}, timeout=30)
+            rin = requests.post(f"{API}/crew/clock-in", headers=_auth(crew2_token), json={}, timeout=30)
             assert rin.status_code == 200, rin.text
             r_ok = requests.post(f"{API}/assignments/{aid}/checklists/loading/items/0",
-                                 headers=_auth(junior_token), json={"done": True}, timeout=30)
+                                 headers=_auth(crew2_token), json={"done": True}, timeout=30)
             assert r_ok.status_code == 200, r_ok.text
-            requests.post(f"{API}/crew/clock-out", headers=_auth(junior_token), json={}, timeout=30)
+            requests.post(f"{API}/crew/clock-out", headers=_auth(crew2_token), json={}, timeout=30)
 
             # owner is never gated
             r_owner = requests.post(f"{API}/assignments/{aid}/checklists/loading/items/0",
@@ -400,26 +400,26 @@ class TestUnscheduledClockInFlag:
         ro = requests.post(f"{API}/crew/clock-out", headers=_auth(testcrew_token), json={}, timeout=30)
         assert ro.status_code == 200
 
-    def test_javante_scheduled_no_flag(self, javante_token, owner_token):
-        # create a temp assignment for the LIVE ET today so Javante counts as scheduled
+    def test_crew1_scheduled_no_flag(self, crew1_token, owner_token):
+        # create a temp assignment for the LIVE ET today so Crew1 counts as scheduled
         from zoneinfo import ZoneInfo
         from datetime import datetime
         today_et = datetime.now(ZoneInfo("America/New_York")).date().isoformat()
         payload = requests.get(f"{API}/users", headers=_auth(owner_token), timeout=30).json()
         users = payload.get("users", payload) if isinstance(payload, dict) else payload
-        jav_id = next(u["id"] for u in users if "javante" in (u.get("email") or "").lower())
+        jav_id = next(u["id"] for u in users if "crew1" in (u.get("email") or "").lower())
         ra = requests.post(f"{API}/assignments", headers=_auth(owner_token), timeout=30, json={
             "job_name": "TEMP iter15 flag test", "job_date": today_et, "arrival_time": "",
             "crew": [{"user_id": jav_id, "position": "Helper"}], "ignore_warnings": True})
         assert ra.status_code == 200, ra.text
         temp_id = ra.json()["id"]
         try:
-            requests.post(f"{API}/crew/clock-out", headers=_auth(javante_token), json={}, timeout=30)
-            r = requests.post(f"{API}/crew/clock-in", headers=_auth(javante_token), json={}, timeout=30)
+            requests.post(f"{API}/crew/clock-out", headers=_auth(crew1_token), json={}, timeout=30)
+            r = requests.post(f"{API}/crew/clock-in", headers=_auth(crew1_token), json={}, timeout=30)
             if r.status_code != 200:
-                pytest.skip(f"javante clock-in failed: {r.text}")
+                pytest.skip(f"crew1 clock-in failed: {r.text}")
             body = r.json()
             assert "not_scheduled_today" not in (body.get("flags") or []), body.get("flags")
-            requests.post(f"{API}/crew/clock-out", headers=_auth(javante_token), json={}, timeout=30)
+            requests.post(f"{API}/crew/clock-out", headers=_auth(crew1_token), json={}, timeout=30)
         finally:
             requests.delete(f"{API}/assignments/{temp_id}", headers=_auth(owner_token), timeout=30)

@@ -10,15 +10,15 @@ import zlib
 import pytest
 import requests
 
-from test_config import JAVANTE_EMAIL, JAVANTE_PASSWORD, OWNER_EMAIL, OWNER_PASSWORD, QA_TRACK_TOKEN
+from test_config import CREW1_EMAIL, CREW1_PASSWORD, OWNER_EMAIL, OWNER_PASSWORD, QA_TRACK_TOKEN
 
 BASE_URL = os.environ["REACT_APP_BACKEND_URL"].rstrip("/")
 API = BASE_URL + "/api"
 
 OWNER_U = OWNER_EMAIL
 OWNER_P = OWNER_PASSWORD
-CREW_U = JAVANTE_EMAIL
-CREW_P = JAVANTE_PASSWORD
+CREW_U = CREW1_EMAIL
+CREW_P = CREW1_PASSWORD
 QA_TOKEN = QA_TRACK_TOKEN
 
 
@@ -177,7 +177,7 @@ class TestPortalUpload:
 # --- Crew clock-in with explicit assignment_id ---
 class TestCrewClockInAssignment:
     def test_clock_in_with_assignment_and_out(self, crew_token, owner_token):
-        # find an assignment for Javante today via dispatch board
+        # find an assignment for Crew1 today via dispatch board
         r = requests.get(f"{API}/dispatch/board", headers=_h(owner_token))
         assert r.status_code == 200, r.text
         board = r.json()
@@ -186,12 +186,12 @@ class TestCrewClockInAssignment:
             v = board.get(section)
             if isinstance(v, list):
                 assignments.extend(v)
-        # Try to find Javante's assignment
+        # Try to find Crew1's assignment
         aid = None
         for a in assignments:
             crew = a.get("crew") or a.get("crew_ids") or []
             names = " ".join(str(c) for c in crew) if isinstance(crew, list) else str(crew)
-            if "javante" in names.lower() or "Javante" in names:
+            if "crew1" in names.lower() or "Crew1" in names:
                 aid = a.get("id") or a.get("assignment_id") or a.get("_id")
                 if aid:
                     break

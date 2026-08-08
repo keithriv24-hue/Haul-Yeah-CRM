@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 import requests
-from test_config import JAVANTE_PASSWORD, JUNIOR_PASSWORD, OWNER_EMAIL, OWNER_PASSWORD
+from test_config import CREW1_PASSWORD, CREW2_PASSWORD, OWNER_EMAIL, OWNER_PASSWORD
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
 assert BASE_URL, "REACT_APP_BACKEND_URL must be set"
@@ -44,13 +44,13 @@ def owner_token():
 
 
 @pytest.fixture(scope="session")
-def javante_token():
-    return _login("javante@haulyeahmoves.com", JAVANTE_PASSWORD)
+def crew1_token():
+    return _login("qa.crew1@haulyeah.test", CREW1_PASSWORD)
 
 
 @pytest.fixture(scope="session")
-def junior_token():
-    return _login("junior@haulyeahmoves.com", JUNIOR_PASSWORD)
+def crew2_token():
+    return _login("qa.crew2@haulyeah.test", CREW2_PASSWORD)
 
 
 @pytest.fixture(scope="session")
@@ -77,11 +77,11 @@ def user_ids(owner_token):
     # Look up by known names
     ids = {}
     for u in m:
-        if "javante" in u["name"].lower():
-            ids["javante"] = u["id"]
-        if "junior" in u["name"].lower():
-            ids["junior"] = u["id"]
-    assert "javante" in ids and "junior" in ids, f"could not find javante/junior in {mapping}"
+        if "crew one" in u["name"].lower():
+            ids["crew1"] = u["id"]
+        if "crew two" in u["name"].lower():
+            ids["crew2"] = u["id"]
+    assert "crew1" in ids and "crew2" in ids, f"could not find crew1/crew2 in {mapping}"
     return ids
 
 
@@ -101,8 +101,8 @@ class TestBadges:
         assert len(crew) >= 18
         assert len(sales) >= 9
 
-    def test_any_role_can_read_badges(self, javante_token, ghost_sales_token, ghost_marketing_token):
-        for t in (javante_token, ghost_sales_token, ghost_marketing_token):
+    def test_any_role_can_read_badges(self, crew1_token, ghost_sales_token, ghost_marketing_token):
+        for t in (crew1_token, ghost_sales_token, ghost_marketing_token):
             r = requests.get(f"{API}/badges", headers=_hdr(t), timeout=10)
             assert r.status_code == 200
 
@@ -141,8 +141,8 @@ class TestChallenges:
         teams = {c["team"] for c in j["challenges"]}
         assert teams == {"crew", "sales"}
 
-    def test_dual_team_javante_sees_both(self, javante_token):
-        r = requests.get(f"{API}/challenges", headers=_hdr(javante_token), timeout=15)
+    def test_dual_team_crew1_sees_both(self, crew1_token):
+        r = requests.get(f"{API}/challenges", headers=_hdr(crew1_token), timeout=15)
         j = r.json()
         teams = {c["team"] for c in j["challenges"]}
         assert teams == {"crew", "sales"}, f"dual-team saw {teams}"
@@ -151,8 +151,8 @@ class TestChallenges:
 # ---------- 3. Directory hides ghosts ----------
 
 class TestDirectoryHidesGhosts:
-    def test_no_ghost_in_directory(self, owner_token, javante_token, ghost_crew_token):
-        for t in (owner_token, javante_token, ghost_crew_token):
+    def test_no_ghost_in_directory(self, owner_token, crew1_token, ghost_crew_token):
+        for t in (owner_token, crew1_token, ghost_crew_token):
             r = requests.get(f"{API}/team/members", headers=_hdr(t), timeout=15)
             assert r.status_code == 200
             names = [m["name"].lower() for m in r.json()["members"]]
@@ -165,7 +165,7 @@ class TestDirectoryHidesGhosts:
 
 class TestPrivacy:
     def test_crew_viewing_another_gets_no_stats(self, ghost_crew_token, user_ids):
-        r = requests.get(f"{API}/team/members/{user_ids['junior']}",
+        r = requests.get(f"{API}/team/members/{user_ids['crew2']}",
                          headers=_hdr(ghost_crew_token), timeout=15)
         assert r.status_code == 200
         j = r.json()
@@ -174,15 +174,15 @@ class TestPrivacy:
         assert "progress" not in j
 
     def test_owner_sees_stats_on_everyone(self, owner_token, user_ids):
-        r = requests.get(f"{API}/team/members/{user_ids['junior']}",
+        r = requests.get(f"{API}/team/members/{user_ids['crew2']}",
                          headers=_hdr(owner_token), timeout=15)
         j = r.json()
         assert j.get("can_see_numbers") == True
         assert "stats" in j and "progress" in j
 
-    def test_self_sees_stats(self, junior_token, user_ids):
-        r = requests.get(f"{API}/team/members/{user_ids['junior']}",
-                         headers=_hdr(junior_token), timeout=15)
+    def test_self_sees_stats(self, crew2_token, user_ids):
+        r = requests.get(f"{API}/team/members/{user_ids['crew2']}",
+                         headers=_hdr(crew2_token), timeout=15)
         j = r.json()
         assert j.get("is_self") == True
         assert "stats" in j and "progress" in j
@@ -191,41 +191,41 @@ class TestPrivacy:
 # ---------- 5. Profile edit + pins ----------
 
 class TestProfileMutations:
-    def test_put_profile_saves(self, junior_token):
-        payload = {"display_name": "Junior QA", "nickname": "JQA", "bio": "test bio",
+    def test_put_profile_saves(self, crew2_token):
+        payload = {"display_name": "Crew2 QA", "nickname": "JQA", "bio": "test bio",
                    "role_title": "Crew", "favorite_move": "piano", "fun_fact": "tests"}
-        r = requests.put(f"{API}/profile", json=payload, headers=_hdr(junior_token), timeout=15)
+        r = requests.put(f"{API}/profile", json=payload, headers=_hdr(crew2_token), timeout=15)
         assert r.status_code == 200
         assert r.json()["profile"]["nickname"] == "JQA"
 
     def test_moderate_is_owner_only(self, ghost_crew_token, user_ids):
-        r = requests.put(f"{API}/team/members/{user_ids['junior']}/moderate",
+        r = requests.put(f"{API}/team/members/{user_ids['crew2']}/moderate",
                          json={"display_name": "hack"}, headers=_hdr(ghost_crew_token), timeout=15)
         assert r.status_code == 403
 
-    def test_pins_reject_locked_badge(self, junior_token):
+    def test_pins_reject_locked_badge(self, crew2_token):
         r = requests.put(f"{API}/profile/pins",
                          json={"badge_ids": ["quarter-club"]},
-                         headers=_hdr(junior_token), timeout=15)
+                         headers=_hdr(crew2_token), timeout=15)
         assert r.status_code == 422
 
-    def test_pins_cap_at_3(self, junior_token, owner_token, user_ids):
+    def test_pins_cap_at_3(self, crew2_token, owner_token, user_ids):
         # Award 4 badges, try to pin all 4, expect only 3 saved
         badges = ["piano-mover", "iron-streak", "stair-master", "early-bird"]
         for bid in badges:
             requests.post(f"{API}/badges/{bid}/award",
-                          json={"user_id": user_ids["junior"]},
+                          json={"user_id": user_ids["crew2"]},
                           headers=_hdr(owner_token), timeout=10)
         r = requests.put(f"{API}/profile/pins",
                          json={"badge_ids": badges},
-                         headers=_hdr(junior_token), timeout=15)
+                         headers=_hdr(crew2_token), timeout=15)
         assert r.status_code == 200
         assert len(r.json()["pinned"]) == 3
         # cleanup
         requests.put(f"{API}/profile/pins", json={"badge_ids": []},
-                     headers=_hdr(junior_token), timeout=10)
+                     headers=_hdr(crew2_token), timeout=10)
         for bid in badges:
-            requests.delete(f"{API}/badges/{bid}/award/{user_ids['junior']}",
+            requests.delete(f"{API}/badges/{bid}/award/{user_ids['crew2']}",
                             headers=_hdr(owner_token), timeout=10)
 
 
@@ -263,21 +263,21 @@ class TestOwnerOnly403Matrix:
 
 class TestCreditFlowE2E:
     def test_credit_unlocks_badges(self, owner_token, user_ids):
-        junior_id = user_ids["junior"]
+        crew2_id = user_ids["crew2"]
 
         # Baseline: make sure the badges are not already awarded
         for slug in ("first-haul", "behind-the-wheel"):
-            requests.delete(f"{API}/badges/{slug}/award/{junior_id}",
+            requests.delete(f"{API}/badges/{slug}/award/{crew2_id}",
                             headers=_hdr(owner_token), timeout=10)
 
         # Baseline stats
-        pre = requests.get(f"{API}/team/members/{junior_id}",
+        pre = requests.get(f"{API}/team/members/{crew2_id}",
                            headers=_hdr(owner_token), timeout=10).json()
         pre_jobs = pre["stats"]["jobs_total"]
         pre_driver = pre["stats"]["driver"]
 
         # POST credit
-        payload = {"user_id": junior_id, "team": "crew", "role_tag": "driver",
+        payload = {"user_id": crew2_id, "team": "crew", "role_tag": "driver",
                    "job_ref": "QA test job", "date": TODAY}
         r = requests.post(f"{API}/credits", json=payload,
                           headers=_hdr(owner_token), timeout=15)
@@ -290,7 +290,7 @@ class TestCreditFlowE2E:
             assert "Behind the Wheel" in newly, f"newly_unlocked={newly}"
 
             # Stats bumped
-            post = requests.get(f"{API}/team/members/{junior_id}",
+            post = requests.get(f"{API}/team/members/{crew2_id}",
                                 headers=_hdr(owner_token), timeout=10).json()
             assert post["stats"]["jobs_total"] == pre_jobs + 1
             assert post["stats"]["driver"] == pre_driver + 1
@@ -302,16 +302,16 @@ class TestCreditFlowE2E:
             assert fh and fh["unlocked"] == True
             assert btw and btw["unlocked"] == True
 
-            # Leaderboard has junior with count >= 1
+            # Leaderboard has crew2 with count >= 1
             lb = requests.get(f"{API}/leaderboard",
                               headers=_hdr(owner_token), timeout=15).json()
-            row = next((r for r in lb["crew"] if r["user_id"] == junior_id), None)
+            row = next((r for r in lb["crew"] if r["user_id"] == crew2_id), None)
             assert row is not None and row["count"] >= 1
 
-            # Notifications for junior include badge type
-            junior_tok = _login("junior@haulyeahmoves.com", JUNIOR_PASSWORD)
+            # Notifications for crew2 include badge type
+            crew2_tok = _login("qa.crew2@haulyeah.test", CREW2_PASSWORD)
             notif = requests.get(f"{API}/notifications",
-                                  headers=_hdr(junior_tok), timeout=10).json()
+                                  headers=_hdr(crew2_tok), timeout=10).json()
             items = notif.get("items") or notif.get("notifications") or []
             types = {i.get("type") for i in items}
             assert "badge" in types, f"no badge notif in {types}"
@@ -320,20 +320,20 @@ class TestCreditFlowE2E:
             requests.delete(f"{API}/credits/{credit_id}",
                             headers=_hdr(owner_token), timeout=10)
             for slug in ("first-haul", "behind-the-wheel"):
-                requests.delete(f"{API}/badges/{slug}/award/{junior_id}",
+                requests.delete(f"{API}/badges/{slug}/award/{crew2_id}",
                                 headers=_hdr(owner_token), timeout=10)
 
 
 # ---------- 8. Crew prompt flow ----------
 
 class TestCrewPromptFlow:
-    def test_assignment_complete_creates_prompt(self, owner_token, javante_token, user_ids):
-        javante_id = user_ids["javante"]
+    def test_assignment_complete_creates_prompt(self, owner_token, crew1_token, user_ids):
+        crew1_id = user_ids["crew1"]
         # Create assignment
         r = requests.post(f"{API}/assignments",
                           json={"project_id": "recQA_iter10", "job_name": "QA Prompt Job",
                                 "job_date": TODAY, "ignore_warnings": True,
-                                "crew": [{"user_id": javante_id, "position": "Driver"}]},
+                                "crew": [{"user_id": crew1_id, "position": "Driver"}]},
                           headers=_hdr(owner_token), timeout=15)
         assert r.status_code == 200, r.text
         aid = r.json()["assignment"]["id"] if "assignment" in r.json() else r.json().get("id") or r.json().get("_id")
@@ -347,18 +347,18 @@ class TestCrewPromptFlow:
             for status in ("En Route", "Arrived", "In Progress", "Complete"):
                 sr = requests.post(f"{API}/crew/jobs/{aid}/status",
                                    json={"status": status},
-                                   headers=_hdr(javante_token), timeout=15)
+                                   headers=_hdr(crew1_token), timeout=15)
                 assert sr.status_code == 200, f"status {status}: {sr.text}"
 
             # Owner sees the pending prompt
             pr = requests.get(f"{API}/credit-prompts",
                               headers=_hdr(owner_token), timeout=10).json()
             prompts = pr["prompts"]
-            mine = [p for p in prompts if p["user_id"] == javante_id and "QA Prompt Job" in (p.get("job_ref") or "")]
-            assert mine, f"no prompt for javante in {[p['job_ref'] for p in prompts]}"
+            mine = [p for p in prompts if p["user_id"] == crew1_id and "QA Prompt Job" in (p.get("job_ref") or "")]
+            assert mine, f"no prompt for crew1 in {[p['job_ref'] for p in prompts]}"
             prompt = mine[0]
             assert "QA Prompt Job" in prompt["message"]
-            # Badge hint expected (Javante may already have Behind the Wheel — hint can be empty)
+            # Badge hint expected (Crew1 may already have Behind the Wheel — hint can be empty)
             # so we don't strictly assert on hint text
 
             # Dismiss it
@@ -376,7 +376,7 @@ class TestCrewPromptFlow:
 
 class TestChallengeLifecycle:
     def test_owner_verified_lifecycle(self, owner_token, user_ids):
-        junior_id = user_ids["junior"]
+        crew2_id = user_ids["crew2"]
         # Create challenge that already ended
         payload = {"name": "QA Test Challenge", "description": "iter10 test",
                    "team": "crew", "type": "individual",
@@ -396,24 +396,24 @@ class TestChallengeLifecycle:
 
             # Verify a member value
             vr = requests.post(f"{API}/challenges/{ch_id}/verify",
-                               json={"user_id": junior_id, "value": 2},
+                               json={"user_id": crew2_id, "value": 2},
                                headers=_hdr(owner_token), timeout=10)
             assert vr.status_code == 200
 
             # Award
             ar = requests.post(f"{API}/challenges/{ch_id}/award",
-                               json={"winners": [junior_id]},
+                               json={"winners": [crew2_id]},
                                headers=_hdr(owner_token), timeout=10)
             assert ar.status_code == 200
             assert ar.json()["status"] == "awarded"
 
-            # Junior member detail now has title
-            detail = requests.get(f"{API}/team/members/{junior_id}",
+            # Crew2 member detail now has title
+            detail = requests.get(f"{API}/team/members/{crew2_id}",
                                   headers=_hdr(owner_token), timeout=10).json()
             assert "QA Tester" in detail.get("titles", []), \
                 f"title missing, got {detail.get('titles')}"
         finally:
-            # Clean up: pull the title from junior; delete the challenge
+            # Clean up: pull the title from crew2; delete the challenge
             requests.delete(f"{API}/challenges/{ch_id}",
                              headers=_hdr(owner_token), timeout=10)
 

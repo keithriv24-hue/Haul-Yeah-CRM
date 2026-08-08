@@ -154,3 +154,10 @@ User choices: phase order approved · route optimization = free OSRM/OpenStreetM
 - Fixes (branch main): 93859a5 commit yarn.lock + frontend/.npmrc (legacy-peer-deps=true); d4cb777 ajv@^8.17.1 direct dep; fbaf895 npm-ci-valid package-lock.json.
 - Verified on fresh clones: yarn frozen-lockfile+CI build=0, npm install+CI build=0, npm ci+CI build=0. Preview app healthy.
 - NOTE: no git remote in pod — user must push via "Save to GitHub" for external reviewer to see fixes. Maintenance: if deps change via yarn, regenerate package-lock.json (npm install) to keep npm ci valid.
+
+## 2026-08-08 — Removed real-person test accounts (user request: option b+d)
+- Deleted Javante Brown + Junior Santil users (backup: memory/removed_users_backup.json); job/time-clock history kept.
+- server.py startup: seeds removed + active delete_many on those emails (cleans production on next deploy).
+- Test suite rewired: conftest seeds ephemeral "QA Crew One/Two" (qa.crew1/2@haulyeah.test, fixed old ids so QA fixtures keep working) and deletes them at session end (controller-only atexit). All JAVANTE_/JUNIOR_ constants renamed CREW1_/CREW2_ across tests + .env.test.
+- Also removed leaked "QA Temp Crew" artifact and made test_create_reset_deactivate_user delete its temp user.
+- Full suite: 393 passed. Roster after run: owner only. Old logins return 401.
