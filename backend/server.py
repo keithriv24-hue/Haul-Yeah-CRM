@@ -102,6 +102,7 @@ def decode_token(request: Request) -> Dict[str, Any]:
     token = auth_header[7:] if auth_header.startswith("Bearer ") else None
     if not token:
         raise HTTPException(status_code=401, detail="Not authenticated")
+    payload: Dict[str, Any] = {}
     try:
         payload = jwt.decode(token, os.environ["JWT_SECRET"], algorithms=[JWT_ALGORITHM])
     except jwt.ExpiredSignatureError:
@@ -174,6 +175,7 @@ async def current_principal(request: Request) -> Dict[str, Any]:
 
 
 async def principal_from_token_string(token: str) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {}
     try:
         payload = jwt.decode(token, os.environ["JWT_SECRET"], algorithms=[JWT_ALGORITHM])
     except jwt.InvalidTokenError:
@@ -942,19 +944,30 @@ async def _sync_existing_deposit_job(existing: Dict[str, Any], inv: Dict[str, An
         await mongo_db.jobs.update_one({"_id": existing["_id"]}, {"$set": updates})
 
 
+def _job_customer(inv: Dict[str, Any], lead: Dict[str, Any]) -> Dict[str, Any]:
+    customer = inv.get("customer") or {}
+    return {
+        "name": customer.get("name") or lead.get("name") or "",
+        "phone": customer.get("phone") or lead.get("phone") or "",
+        "email": customer.get("email") or lead.get("email") or "",
+    }
+
+
+def _job_paid_in_full(inv: Dict[str, Any], paid_at: str, mark_full: bool) -> Dict[str, Any]:
+    if mark_full:
+        return {"status": "paid", "amount": inv.get("amount"), "paid_at": paid_at,
+                "invoice_number": inv.get("invoice_number")}
+    return {"status": "unpaid", "amount": None, "paid_at": None}
+
+
 def _job_doc_from_invoice(inv: Dict[str, Any], lead: Dict[str, Any], integrations: Dict[str, Any],
                           paid_at: str, mark_full: bool) -> Dict[str, Any]:
-    customer = inv.get("customer") or {}
     return {
         "_id": str(uuid4()),
         "invoice_number": inv.get("invoice_number") or "—",
         "deposit_invoice_id": inv["invoice_id"],
         "lead_id": inv.get("lead_id"),
-        "customer": {
-            "name": customer.get("name") or lead.get("name") or "",
-            "phone": customer.get("phone") or lead.get("phone") or "",
-            "email": customer.get("email") or lead.get("email") or "",
-        },
+        "customer": _job_customer(inv, lead),
         "quote_total": inv.get("quote_total") or lead.get("quote"),
         "deposit_amount": inv.get("amount"),
         "pickup_address": lead.get("from") or "",
@@ -965,9 +978,7 @@ def _job_doc_from_invoice(inv: Dict[str, Any], lead: Dict[str, Any], integration
         "truck_pickup_location": (integrations.get("default_truck_pickup") or "").strip() or DEFAULT_TRUCK_PICKUP,
         "crew": [],
         "deposit_paid": {"status": "paid", "amount": inv.get("amount"), "paid_at": paid_at},
-        "paid_in_full": ({"status": "paid", "amount": inv.get("amount"), "paid_at": paid_at,
-                          "invoice_number": inv.get("invoice_number")} if mark_full
-                         else {"status": "unpaid", "amount": None, "paid_at": None}),
+        "paid_in_full": _job_paid_in_full(inv, paid_at, mark_full),
         "tracking": {"token": uuid4().hex, "sms_sent": False, "sms_sent_at": None},
         "created_at": now_iso(), "assigned_at": None,
     }
@@ -1023,40 +1034,49 @@ async def _mark_job_payment_pending(inv: Dict[str, Any]) -> None:
             "invoice_number": inv.get("invoice_number")}}})
 
 
+def _capi_lead_and_quote(inv: Dict[str, Any], rec_full: Optional[Dict[str, Any]]) -> Tuple[Dict[str, Any], Any]:
+    if rec_full:
+        return lead_dict_from_airtable(rec_full), (rec_full.get("fields") or {}).get(LEAD_F["quote"])
+    cust = inv.get("customer") or {}
+    first, _, last = (cust.get("name") or "").strip().partition(" ")
+    lead = {"id": inv.get("lead_id") or inv["invoice_id"],
+            "email": cust.get("email"), "phone": cust.get("phone"),
+            "first_name": first or None, "last_name": last or None}
+    return lead, inv.get("quote_total")
+
+
+async def _maybe_fire_capi_purchase(inv: Dict[str, Any]) -> None:
+    if not meta_capi.capi_enabled() or inv.get("capi_purchase_sent"):
+        return
+    rec_full = await fetch_lead_record(inv.get("lead_id"))
+    capi_lead, quote_amt = _capi_lead_and_quote(inv, rec_full)
+    value = inv.get("amount") or quote_amt or 0
+    await mongo_db.square_invoices.update_one(
+        {"invoice_id": inv["invoice_id"]}, {"$set": {"capi_purchase_sent": True}})
+    inv["capi_purchase_sent"] = True
+    logger.info("CAPI Purchase firing for invoice %s (lead %s, value %s)",
+                inv["invoice_id"], inv.get("lead_id"), value)
+    asyncio.create_task(_capi_log("purchase", meta_capi.fire_purchase(
+        capi_lead, value=float(value), order_id=inv["invoice_id"])))
+
+
 async def apply_invoice_to_jobs(inv: Dict[str, Any], notify_owner: bool = True) -> None:
     status = inv.get("status")
     purpose = _infer_purpose(inv)
-    if status == "PAID":
-        await _alert_payment_landed(inv, purpose)
-        if meta_capi.capi_enabled() and not inv.get("capi_purchase_sent"):
-            rec_full = await fetch_lead_record(inv.get("lead_id"))
-            if rec_full:
-                capi_lead = lead_dict_from_airtable(rec_full)
-                quote_amt = (rec_full.get("fields") or {}).get(LEAD_F["quote"])
-            else:
-                cust = inv.get("customer") or {}
-                cust_name = (cust.get("name") or "").strip()
-                first, _, last = cust_name.partition(" ")
-                capi_lead = {"id": inv.get("lead_id") or inv["invoice_id"],
-                             "email": cust.get("email"), "phone": cust.get("phone"),
-                             "first_name": first or None, "last_name": last or None}
-                quote_amt = inv.get("quote_total")
-            value = inv.get("amount") or quote_amt or 0
-            await mongo_db.square_invoices.update_one(
-                {"invoice_id": inv["invoice_id"]}, {"$set": {"capi_purchase_sent": True}})
-            inv["capi_purchase_sent"] = True
-            logger.info("CAPI Purchase firing for invoice %s (lead %s, value %s)",
-                        inv["invoice_id"], inv.get("lead_id"), value)
-            asyncio.create_task(_capi_log("purchase", meta_capi.fire_purchase(
-                capi_lead, value=float(value), order_id=inv["invoice_id"])))
-        if inv.get("lead_id") and purpose != "deposit":
-            await mark_lead_commission_payment(inv["lead_id"], "fully")
-        if purpose in ("deposit", "full"):
-            await ensure_job_for_deposit(inv, mark_full=(purpose == "full"), notify_owner=notify_owner)
-            return
-        await _mark_job_paid_in_full(inv, notify_owner)
-    elif status == "PAYMENT_PENDING" and purpose != "deposit":
-        await _mark_job_payment_pending(inv)
+    if status == "PAYMENT_PENDING":
+        if purpose != "deposit":
+            await _mark_job_payment_pending(inv)
+        return
+    if status != "PAID":
+        return
+    await _alert_payment_landed(inv, purpose)
+    await _maybe_fire_capi_purchase(inv)
+    if inv.get("lead_id") and purpose != "deposit":
+        await mark_lead_commission_payment(inv["lead_id"], "fully")
+    if purpose in ("deposit", "full"):
+        await ensure_job_for_deposit(inv, mark_full=(purpose == "full"), notify_owner=notify_owner)
+        return
+    await _mark_job_paid_in_full(inv, notify_owner)
 
 
 async def refresh_invoice_doc(d: Dict[str, Any], now: float) -> None:
@@ -1817,14 +1837,18 @@ def _pdf_move_date(v: Any) -> str:
         return str(v)
 
 
-def build_quote_pdf(b: Dict[str, Any]) -> bytes:
-    navy = HexColor("#1B2A4A")
-    orange = HexColor("#E8743B")
-    slate = HexColor("#64748B")
-    light = HexColor("#F2F4F8")
-    white = HexColor("#FFFFFF")
-    money = lambda v: f"${v:,.2f}"
+_PDF_NAVY = HexColor("#1B2A4A")
+_PDF_ORANGE = HexColor("#E8743B")
+_PDF_SLATE = HexColor("#64748B")
+_PDF_LIGHT = HexColor("#F2F4F8")
+_PDF_WHITE = HexColor("#FFFFFF")
 
+
+def _money(v: float) -> str:
+    return f"${v:,.2f}"
+
+
+def _pdf_amounts(b: Dict[str, Any]) -> Dict[str, Any]:
     final = round(float(b.get("finalQuote") or 0), 2)
     lines = [dict(l) for l in (b.get("lines") or []) if float(l.get("amount") or 0) > 0]
     if lines:
@@ -1834,34 +1858,35 @@ def build_quote_pdf(b: Dict[str, Any]) -> bytes:
     else:
         lines = [{"name": "Local Moving Service — flat rate", "amount": final}]
     deposit = round(float(b.get("deposit") or final * 0.25), 2)
-    balance = round(final - deposit, 2)
-    dep_pct = round(deposit / final * 100) if final else 25
+    return {"final": final, "lines": lines, "deposit": deposit,
+            "balance": round(final - deposit, 2),
+            "dep_pct": round(deposit / final * 100) if final else 25}
 
-    buf = io.BytesIO()
-    c = PDFCanvas(buf, pagesize=PDF_LETTER)
-    W, H = PDF_LETTER
 
-    c.setFillColor(navy)
+def _pdf_header(c: "PDFCanvas", W: float, H: float) -> None:
+    c.setFillColor(_PDF_NAVY)
     c.rect(0, H - 130, W, 130, stroke=0, fill=1)
     try:
         c.drawImage(ImageReader("/app/frontend/public/logo.png"), 40, H - 116, width=160, height=100,
                     preserveAspectRatio=True, anchor="w", mask="auto")
     except Exception:
-        c.setFillColor(white)
+        c.setFillColor(_PDF_WHITE)
         c.setFont("Helvetica-Bold", 20)
         c.drawString(40, H - 75, "HAUL YEAH MOVING")
-    c.setFillColor(white)
+    c.setFillColor(_PDF_WHITE)
     c.setFont("Helvetica-Bold", 25)
     c.drawRightString(W - 40, H - 68, "MOVING QUOTE")
-    c.setFillColor(orange)
+    c.setFillColor(_PDF_ORANGE)
     c.setFont("Helvetica-Oblique", 11)
     c.drawRightString(W - 40, H - 88, "Weekend moves, flat price, no surprises.")
 
+
+def _pdf_customer_block(c: "PDFCanvas", b: Dict[str, Any], H: float) -> float:
     y = H - 168
-    c.setFillColor(navy)
+    c.setFillColor(_PDF_NAVY)
     c.setFont("Helvetica-Bold", 15)
     c.drawString(40, y, f"Prepared for {b.get('customerName') or 'you'}")
-    c.setFillColor(slate)
+    c.setFillColor(_PDF_SLATE)
     c.setFont("Helvetica", 10)
     y -= 17
     c.drawString(40, y, f"Quote date: {datetime.now(ZoneInfo('America/New_York')).strftime('%B %-d, %Y')}")
@@ -1870,52 +1895,72 @@ def build_quote_pdf(b: Dict[str, Any]) -> bytes:
         if val:
             y -= 14
             c.drawString(40, y, f"{label}: {_pdf_move_date(val) if key == 'moveDate' else val}")
+    return y
 
+
+def _pdf_line_items(c: "PDFCanvas", W: float, y: float, lines: List[Dict[str, Any]]) -> float:
     y -= 34
-    c.setFillColor(navy)
+    c.setFillColor(_PDF_NAVY)
     c.setFont("Helvetica-Bold", 10)
     c.drawString(48, y, "WHAT'S INCLUDED")
     c.drawRightString(W - 48, y, "PRICE")
     y -= 8
-    c.setStrokeColor(navy)
+    c.setStrokeColor(_PDF_NAVY)
     c.setLineWidth(1.2)
     c.line(40, y, W - 40, y)
     c.setFont("Helvetica", 11)
     for i, l in enumerate(lines[:12]):
         y -= 27
         if i % 2 == 0:
-            c.setFillColor(light)
+            c.setFillColor(_PDF_LIGHT)
             c.rect(40, y - 9, W - 80, 27, stroke=0, fill=1)
-        c.setFillColor(navy)
+        c.setFillColor(_PDF_NAVY)
         c.drawString(48, y, str(l.get("name") or "")[:72])
-        c.drawRightString(W - 48, y, money(round(float(l["amount"]), 2)))
+        c.drawRightString(W - 48, y, _money(round(float(l["amount"]), 2)))
+    return y
 
+
+def _pdf_totals(c: "PDFCanvas", W: float, y: float, amounts: Dict[str, Any]) -> None:
     y -= 48
-    c.setFillColor(navy)
+    c.setFillColor(_PDF_NAVY)
     c.rect(40, y - 12, W - 80, 40, stroke=0, fill=1)
-    c.setFillColor(white)
+    c.setFillColor(_PDF_WHITE)
     c.setFont("Helvetica-Bold", 13)
     c.drawString(48, y, "YOUR FLAT TOTAL")
-    c.setFillColor(orange)
+    c.setFillColor(_PDF_ORANGE)
     c.setFont("Helvetica-Bold", 17)
-    c.drawRightString(W - 48, y, money(final))
+    c.drawRightString(W - 48, y, _money(amounts["final"]))
 
     y -= 46
-    c.setFillColor(navy)
+    c.setFillColor(_PDF_NAVY)
     c.setFont("Helvetica-Bold", 11)
-    c.drawString(48, y, f"Deposit to lock in your date ({dep_pct}%):")
-    c.drawRightString(W - 48, y, money(deposit))
+    c.drawString(48, y, f"Deposit to lock in your date ({amounts['dep_pct']}%):")
+    c.drawRightString(W - 48, y, _money(amounts["deposit"]))
     y -= 19
     c.setFont("Helvetica", 11)
     c.drawString(48, y, "Balance due on move day:")
-    c.drawRightString(W - 48, y, money(balance))
+    c.drawRightString(W - 48, y, _money(amounts["balance"]))
 
-    c.setFillColor(slate)
+
+def _pdf_footer(c: "PDFCanvas", W: float) -> None:
+    c.setFillColor(_PDF_SLATE)
     c.setFont("Helvetica", 9)
     c.drawCentredString(W / 2, 62, "One flat price — crew, truck, travel, and care all included. No hourly surprises.")
-    c.setFillColor(orange)
+    c.setFillColor(_PDF_ORANGE)
     c.setFont("Helvetica-BoldOblique", 10)
     c.drawCentredString(W / 2, 46, "Haul Yeah Moving — Weekend moves, flat price, no surprises.")
+
+
+def build_quote_pdf(b: Dict[str, Any]) -> bytes:
+    amounts = _pdf_amounts(b)
+    buf = io.BytesIO()
+    c = PDFCanvas(buf, pagesize=PDF_LETTER)
+    W, H = PDF_LETTER
+    _pdf_header(c, W, H)
+    y = _pdf_customer_block(c, b, H)
+    y = _pdf_line_items(c, W, y, amounts["lines"])
+    _pdf_totals(c, W, y, amounts)
+    _pdf_footer(c, W)
     c.showPage()
     c.save()
     return buf.getvalue()
@@ -3488,8 +3533,6 @@ async def job_timeline(assignment_id: str, request: Request):
     p = await current_principal(request)
     a = await _assignment_for_member_or_owner(assignment_id, p)
     events = []
-    if a.get("created_at"):
-        events.append({"at": a["created_at"], "kind": "created", "title": "Job put on the schedule", "by": ""})
     for ev in a.get("status_history", []):
         events.append({"at": ev.get("at"), "kind": "status", "title": f"Status: {ev.get('status')}",
                        "by": ev.get("by", "")})
@@ -3512,7 +3555,10 @@ async def job_timeline(assignment_id: str, request: Request):
                        "title": f"Photo added by {ph.get('user_name')}", "by": ph.get("user_name", "")})
     events = [e for e in events if e.get("at")]
     events.sort(key=lambda e: e["at"], reverse=True)
-    return {"events": events[:200]}
+    events = events[:199]
+    if a.get("created_at"):
+        events.append({"at": a["created_at"], "kind": "created", "title": "Job put on the schedule", "by": ""})
+    return {"events": events}
 
 
 # ------- photos (object storage)

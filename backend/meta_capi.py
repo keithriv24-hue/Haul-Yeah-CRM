@@ -87,13 +87,20 @@ def build_user_data(
     user_agent: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Assemble a Meta user_data block. PII is hashed; identifiers are raw."""
+    hashed = _hashed_user_fields(email, phone, first_name, last_name, zip_code, external_id)
+    raw = _raw_user_fields(fbc, fbp, fbclid, client_ip, user_agent)
+    return {**hashed, **raw}
+
+
+def _hashed_user_fields(email: Optional[str], phone: Optional[str], first_name: Optional[str],
+                        last_name: Optional[str], zip_code: Optional[str],
+                        external_id: Optional[str]) -> Dict[str, Any]:
     ud: Dict[str, Any] = {}
     if email:
         ud["em"] = [_sha256(_norm_email(email))]
-    if phone:
-        ph = _norm_phone(phone)
-        if ph:
-            ud["ph"] = [_sha256(ph)]
+    ph = _norm_phone(phone) if phone else ""
+    if ph:
+        ud["ph"] = [_sha256(ph)]
     if first_name:
         ud["fn"] = [_sha256(first_name.strip().lower())]
     if last_name:
@@ -102,17 +109,15 @@ def build_user_data(
         ud["zp"] = [_sha256(str(zip_code).strip().lower())]
     if external_id:
         ud["external_id"] = [_sha256(str(external_id).strip().lower())]
+    return ud
+
+
+def _raw_user_fields(fbc: Optional[str], fbp: Optional[str], fbclid: Optional[str],
+                     client_ip: Optional[str], user_agent: Optional[str]) -> Dict[str, Any]:
     if not fbc and fbclid:
         fbc = build_fbc_from_fbclid(fbclid)
-    if fbc:
-        ud["fbc"] = fbc
-    if fbp:
-        ud["fbp"] = fbp
-    if client_ip:
-        ud["client_ip_address"] = client_ip
-    if user_agent:
-        ud["client_user_agent"] = user_agent
-    return ud
+    raw = {"fbc": fbc, "fbp": fbp, "client_ip_address": client_ip, "client_user_agent": user_agent}
+    return {k: v for k, v in raw.items() if v}
 
 
 # ---------- core sender ----------
@@ -131,7 +136,16 @@ async def send_event(
     if not (c["dataset_id"] and c["token"]):
         logger.info("Meta CAPI not configured; skipping %s", event_name)
         return {"skipped": True}
+    payload = _build_payload(c, event_name, user_data, event_id=event_id, event_time=event_time,
+                             action_source=action_source, event_source_url=event_source_url,
+                             custom_data=custom_data)
+    url = f"https://graph.facebook.com/{GRAPH_VERSION}/{c['dataset_id']}/events"
+    return await _post_events(url, _auth_params(c), payload, event_name)
 
+
+def _build_payload(c: Dict[str, str], event_name: str, user_data: Dict[str, Any], *,
+                   event_id: Optional[str], event_time: Optional[int], action_source: str,
+                   event_source_url: Optional[str], custom_data: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     event: Dict[str, Any] = {
         "event_name": event_name,
         "event_time": int(event_time or time.time()),
@@ -144,11 +158,13 @@ async def send_event(
         event["event_source_url"] = event_source_url
     if custom_data:
         event["custom_data"] = custom_data
-
     payload: Dict[str, Any] = {"data": [event]}
     if c["test_code"]:
         payload["test_event_code"] = c["test_code"]
+    return payload
 
+
+def _auth_params(c: Dict[str, str]) -> Dict[str, str]:
     params = {"access_token": c["token"]}
     if c["app_secret"]:
         params["appsecret_proof"] = hmac.new(
@@ -156,17 +172,20 @@ async def send_event(
             c["token"].encode("utf-8"),
             hashlib.sha256,
         ).hexdigest()
+    return params
 
-    url = f"https://graph.facebook.com/{GRAPH_VERSION}/{c['dataset_id']}/events"
+
+async def _post_events(url: str, params: Dict[str, str], payload: Dict[str, Any],
+                       event_name: str) -> Dict[str, Any]:
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.post(url, params=params, json=payload)
-        data = resp.json() if resp.content else {}
-        if resp.status_code != 200:
-            logger.warning("Meta CAPI %s failed (%s): %s", event_name, resp.status_code, data)
-            return {"ok": False, "status": resp.status_code, "response": data}
-        logger.info("Meta CAPI %s sent: %s", event_name, data)
-        return {"ok": True, "response": data}
+            data = resp.json() if resp.content else {}
+            if resp.status_code != 200:
+                logger.warning("Meta CAPI %s failed (%s): %s", event_name, resp.status_code, data)
+                return {"ok": False, "status": resp.status_code, "response": data}
+            logger.info("Meta CAPI %s sent: %s", event_name, data)
+            return {"ok": True, "response": data}
     except Exception as exc:  # never let a marketing call break the CRM
         logger.warning("Meta CAPI %s error: %s", event_name, exc)
         return {"ok": False, "error": str(exc)}

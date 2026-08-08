@@ -1,0 +1,49 @@
+{
+  "summary": "Regression testing of E1's pure refactor changes (auth helpers, RateLimiter var init, build_quote_pdf split, apply_invoice_to_jobs split with inverted PAYMENT_PENDING branching, _job_doc_from_invoice split, meta_capi build_user_data + send_event split, and the new frontend/eslint.config.js flat config). Wrote /app/backend/tests/test_iter22_refactor_regression.py with 27 targeted regression tests — 27/27 pass. Also ran the full backend pytest suite (365 passed, 1 fail, 5 skip); the single failure is a PRE-EXISTING data-drift issue unrelated to this refactor. ESLint flat config runs clean (0 errors, 12 warnings as expected). Frontend smoke test: owner login + Dashboard render OK on preview URL.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/assignments/{id}/timeline", "issue": "test_iteration15_checklists_timeline.py::TestTimeline::test_timeline_owner_ok_and_shape fails because the QA-Montclair assignment now has >200 job_events + time_entries, and the endpoint's final `events[:200]` desc-sort truncation pushes the single 'created' event out of the response. PRE-EXISTING data-drift bug (not caused by the refactor). Two fixes possible: (a) always guarantee the 'created' event by injecting it after the sort/slice; (b) purge stale time_entries/job_events for QA-Montclair between test runs the way conftest.py already purges test-artifact portal_uploads. E1's baseline (iter18-21) showed 365 passing so this may have crept in from a later checklist/time-entry pile-up on this seeded row."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter22_refactor_regression.py",
+    "/app/test_reports/pytest/iter22_regression.xml",
+    "/app/test_reports/pytest/iter22_full.xml",
+    "/app/test_reports/iter22_dashboard.png"
+  ],
+  "action_items": [
+    "OPTIONAL / non-blocking: fix the timeline-truncation flake by moving 'created' event insertion to *after* the events[:200] slice in /api/assignments/{id}/timeline (server.py L3558-3560), OR prune stale job_events/time_entries in conftest.py for the QA-Montclair seed like it already does for portal_uploads. Not caused by this refactor — safe to defer.",
+    "OPTIONAL: consider adding pytest-asyncio to /app/backend/requirements.txt so future async unit tests don't have to be wrapped in asyncio.run() manually (this iteration works around it)."
+  ],
+  "critical_code_review_comments": [
+    "server.py apply_invoice_to_jobs L1063-1079 refactor is behaviourally equivalent to the pre-split version — confirmed via 5 monkeypatched branch tests (PAYMENT_PENDING+deposit early-return no-op, PAYMENT_PENDING+non-deposit -> _mark_job_payment_pending only, PAID+deposit -> alert+capi+ensure(mark_full=False), PAID+full -> ensure(mark_full=True) with no _mark_job_paid_in_full, PAID+final -> _mark_job_paid_in_full + commission tag 'fully', DRAFT/UNPAID/CANCELED -> pure no-op). PAYMENT_PENDING inversion is safe.",
+    "server.py _pdf_amounts L1851 drift correction still balances lines to finalQuote exactly (verified with 400+449.99 vs 850 target -> last line adjusted to 450.01), and the empty-lines fallback still injects a single 'Local Moving Service — flat rate' line at the final amount. Deposit default 25% preserved.",
+    "server.py build_quote_pdf L1954 produces a valid application/pdf response (starts with %PDF magic bytes, ~1500+ bytes) end-to-end via PUT /api/quotes/{lead_id} -> GET /api/quote-pdf/{token}. All 6 _pdf_* helpers wire together correctly.",
+    "meta_capi.build_user_data L75 hashing verified byte-for-byte: sha256('foo.bar@example.com'), sha256('12125551234') (US country-code prepending), sha256('foo'), sha256('bar'), sha256('07001'), sha256('lead-abc'); raw fields fbc/fbp/client_ip_address/client_user_agent passthrough intact; empty/None inputs drop cleanly; fbclid -> fbc reconstruction preserved.",
+    "meta_capi.send_event L125 correctly returns {skipped: True} when META_DATASET_ID/token unset — this is the current preview-env state so nothing hits the Graph API in tests. _build_payload / _auth_params / _post_events helper split appears self-consistent (only exercised via the skipped path in preview; a live-token path is impossible to test in this env without live secrets).",
+    "server.py _job_customer / _job_paid_in_full helpers verified — invoice-customer takes precedence over lead, mark_full flag toggles paid/unpaid shape correctly.",
+    "Auth decode_token / principal_from_token_string L100-178 refactor — owner login + /api/auth/me return 200 with role='owner' + ok:true; garbage tokens, wrong-signature forged tokens, expired tokens signed with wrong secret, and missing Authorization header all correctly return 401. No behaviour drift.",
+    "Role enforcement — TestCrewAdmin (crew ghost) logs in and gets 403 on /api/meta/status (owner+sales) and /api/users (owner-only). RBAC preserved after the auth refactor.",
+    "Frontend eslint.config.js — flat-config runs cleanly against /app/frontend/src, 0 errors + 12 unused-var/hook warnings (matches E1's spec). Owner login flow + Dashboard render OK on preview.",
+    "PRE-EXISTING (not from this refactor): server.py L3531 job_timeline emits the 'created' event first but then sorts desc and slices to [:200]. When time_entries + job_events grow past 200 for a seeded assignment (as they have for QA-Montclair), 'created' silently vanishes from the response, breaking test_timeline_owner_ok_and_shape. Move the 'created' insertion after the slice, or auto-prune the seed row's history in conftest.py."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter22_refactor_regression.py (new — 27 targeted regression tests, all pass)"
+  ],
+  "success_rate": {
+    "backend": "iter22 targeted: 100% (27/27). Full suite: 99.7% (365/366 excluding skips) — the 1 failure is a pre-existing data-drift flake unrelated to this refactor.",
+    "frontend": "100% smoke (login + dashboard render + eslint clean)"
+  },
+  "test_credentials": "Owner HaulYeahAdmin/HaulYeah2026!, Crew ghost TestCrewAdmin/HaulYeah2026! — both verified working via /api/auth/login (case-insensitive on username).",
+  "seed_data_creation": "One test lead_quotes row created via PUT /api/quotes/TEST_iter22_pdf_lead to exercise the /api/quote-pdf/{token} public endpoint. Safe to leave; the token is random-per-save and no SMS was sent (empty customerPhone).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "The refactor regression suite lives at /app/backend/tests/test_iter22_refactor_regression.py — run with `python -m pytest tests/test_iter22_refactor_regression.py -v -o addopts=''`. It covers: auth (5 cases), role enforcement (3), quote-PDF end-to-end + _pdf_amounts pure math + 404 (5), meta_capi build_user_data hashing & fbclid & empty & send_event skip (5), apply_invoice_to_jobs all 6 status/purpose branches via monkeypatch (6), _job_customer/_job_paid_in_full helpers (4). Async tests are wrapped in asyncio.run() because pytest-asyncio isn't installed in this env — if you add pytest-asyncio to requirements, feel free to switch back to native @pytest.mark.asyncio. The known pre-existing timeline flake (test_iteration15 TestTimeline::test_timeline_owner_ok_and_shape) is documented in action_items — do NOT retry it in isolation, it will fail deterministically until server.py L3558-3560 is patched or the QA-Montclair job_events/time_entries are purged.",
+  "rca of the issue": "Timeline test failure RCA: server.py L3531-3560 builds the events list by appending 'created' (from assignment.created_at) FIRST, then status_history + job_events (to_list(200)) + time_entries (to_list(100)) + job_photos (to_list(100)), then filters/sorts desc by 'at' and truncates events[:200]. The QA-Montclair seed (id=3b2a0120-9dfb-4fe1-88cd-d5a6025ea61d) has created_at='2026-07-22T01:10...' but has accumulated >200 checklist+clock events with newer timestamps (2026-08-08...). After desc sort, 'created' is at the bottom and gets sliced off. Reproduction: GET /api/assignments/3b2a0120-9dfb-4fe1-88cd-d5a6025ea61d/timeline as owner -> response has exactly 200 events, none with kind='created'. Mitigation A: hoist the 'created' event insertion to AFTER the [:200] slice (i.e., `return {events: ([{'at': created_at, 'kind': 'created', ...}] if created_at else []) + events[:199]}`). Mitigation B: add `db.job_events.delete_many({'assignment_id': MONTCLAIR_ID, 'title': {'$regex':'^TEST'}})` + similar for time_entries to conftest._refresh_qa_seed_dates, matching the existing portal_uploads pruning."
+}

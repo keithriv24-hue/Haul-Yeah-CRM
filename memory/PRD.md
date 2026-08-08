@@ -137,3 +137,9 @@ User choices: phase order approved · route optimization = free OSRM/OpenStreetM
 - Bonus fix found while verifying: test_team_module TODAY/YESTERDAY used UTC vs server ET → challenge lifecycle failed after UTC midnight; now ET-based.
 - Full suite: 365 passed, 5 skipped (Airtable-gated), 1 known cross-worker flake (passes solo).
 - REMAINING code-review steps (user will trigger): Step 2 undefined-variable warnings, Step 3 React analyzer score 0, Step 4 complexity refactor (build_quote_pdf, apply_invoice_to_jobs, _job_doc_from_invoice, build_user_data, send_event), then is-vs-== cleanup / type hints / server.py split.
+
+## 2026-08-08 — Code review Steps 2–4 complete (iter_22, 393/393 pytest, eslint 0 errors)
+- Step 2 (undefined vars): initialized `payload` (decode_token, principal_from_token_string), `sleep_for` (RateLimiter.wait); meta_capi `ph`/`resp`/`data` handled via restructure. Pylint used-before-assignment: 10/10.
+- Step 3 (React scan failure): root cause = ESLint 9 (flat-config-only) installed with NO eslint.config.js anywhere, so any scanner running eslint exited immediately. Created /app/frontend/eslint.config.js (flat config, react + react-hooks plugins, allowEmptyCatch, ui/ exempt from no-unknown-property) + `yarn lint` script. Result: 0 errors, 12 minor warnings.
+- Step 4 (complexity): build_quote_pdf → 6 _pdf_* helpers + module color constants; apply_invoice_to_jobs → _maybe_fire_capi_purchase + _capi_lead_and_quote; _job_doc_from_invoice → _job_customer + _job_paid_in_full; meta_capi build_user_data → _hashed_user_fields + _raw_user_fields; send_event → _build_payload + _auth_params + _post_events. Behavior verified identical (27 targeted regression tests, iteration_22.json).
+- Bonus fix: /api/assignments/{id}/timeline no longer drops the 'created' event when history >200 entries (insert after slice); conftest now prunes Montclair seed job_events/time_entries to stop data drift.

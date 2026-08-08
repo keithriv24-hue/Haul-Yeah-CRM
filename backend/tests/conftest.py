@@ -31,6 +31,12 @@ def _refresh_qa_seed_dates() -> None:
         {"$set": {"job_date": TRACK_JOB_DATE}})
     # prune test-artifact portal uploads so the 30-file cap never wedges the QA job
     db.portal_uploads.delete_many({"filename": {"$in": ["a.png", "i.pdf", "big.png", "qa_regress.png"]}})
+    # prune accumulated clock/checklist history on the Montclair seed so its
+    # timeline never outgrows the 200-event cap and drops old status events
+    montclair = db.assignments.find_one({"job_name": "QA Dispatch Move — Montclair"}, {"_id": 1})
+    if montclair:
+        db.job_events.delete_many({"assignment_id": montclair["_id"]})
+        db.time_entries.delete_many({"assignment_id": montclair["_id"]})
     client.close()
 
 
