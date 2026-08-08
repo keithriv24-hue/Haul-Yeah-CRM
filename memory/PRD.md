@@ -147,3 +147,10 @@ User choices: phase order approved · route optimization = free OSRM/OpenStreetM
 ## 2026-08-08 — React "0/100" reviewer failure: second root cause fixed
 - Root cause #1 (fixed earlier): ESLint 9 flat-config-only, no eslint.config.js → standalone lint crashed.
 - Root cause #2 (fixed now): `CI=true yarn build` failed — CRA turns warnings into errors under CI; AppContext.jsx:141 had react-hooks/exhaustive-deps warning (missing `celebrateNewPaid` dep). Added the stable dep. CI build now exits 0 (443KB gzip bundle). eslint: 0 errors/11 minor warnings. Dashboard smoke OK.
+
+## 2026-08-08 — Reviewer 0/100 FINAL reconciliation (fresh-clone install was impossible)
+- Reviewer scans a fresh clone; frontend/yarn.lock had NEVER been committed in repo history → no lockfile in any clone.
+- npm ci: instant fail (no package-lock). npm install: ERESOLVE hard fail (react-day-picker@8.10.1 peer date-fns ^2/^3 vs date-fns 4.1.0). Then CRA ajv hoisting bug (ajv-keywords@5 needs ajv@8, npm hoists ajv@6).
+- Fixes (branch main): 93859a5 commit yarn.lock + frontend/.npmrc (legacy-peer-deps=true); d4cb777 ajv@^8.17.1 direct dep; fbaf895 npm-ci-valid package-lock.json.
+- Verified on fresh clones: yarn frozen-lockfile+CI build=0, npm install+CI build=0, npm ci+CI build=0. Preview app healthy.
+- NOTE: no git remote in pod — user must push via "Save to GitHub" for external reviewer to see fixes. Maintenance: if deps change via yarn, regenerate package-lock.json (npm install) to keep npm ci valid.
