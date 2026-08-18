@@ -342,6 +342,17 @@ class RatesPayload(BaseModel):
 
 
 app = FastAPI(title="Haul Yeah Moving CRM Proxy")
+
+
+@app.get("/healthz")
+async def healthz():
+    """Unauthenticated liveness probe for the platform health check.
+
+    The existing authenticated /api/health is deliberately left untouched --
+    the frontend UpdateOverlay depends on it.
+    """
+    return {"ok": True}
+
 api_router = APIRouter(prefix="/api", dependencies=[Depends(require_auth)])
 auth_router = APIRouter(prefix="/api/auth")
 
@@ -6428,23 +6439,29 @@ async def _ops_facts() -> Dict[str, Any]:
     }
 
 
+OPS_BRIEF_SYSTEM = (
+    "You are the operations brain for Haul Yeah Moving, a small weekend moving company in New Jersey. "
+    "You get a JSON snapshot of today's operations. Write the owner (Keith) a punchy brief: "
+    "3 to 6 short bullet lines, plain text, each starting with '- '. Most urgent first. "
+    "Use specific names, job names and dollar amounts from the data. "
+    "Start a bullet with 'DO:' when it needs action today (behind jobs, no-crew jobs, conflicts, expired docs, unpaid balances). "
+    "If it's genuinely a quiet day, say so in one line and point at the best money move. "
+    "No headings, no markdown besides the dashes, no fluff, never invent data."
+)
+
+
 async def _generate_ops_brief(facts: Dict[str, Any]) -> str:
-    from emergentintegrations.llm.chat import LlmChat, UserMessage
-    chat = LlmChat(
-        api_key=os.environ.get("EMERGENT_LLM_KEY", "").strip(),
-        session_id=f"ops-brief-{uuid4().hex[:8]}",
-        system_message=(
-            "You are the operations brain for Haul Yeah Moving, a small weekend moving company in New Jersey. "
-            "You get a JSON snapshot of today's operations. Write the owner (Keith) a punchy brief: "
-            "3 to 6 short bullet lines, plain text, each starting with '- '. Most urgent first. "
-            "Use specific names, job names and dollar amounts from the data. "
-            "Start a bullet with 'DO:' when it needs action today (behind jobs, no-crew jobs, conflicts, expired docs, unpaid balances). "
-            "If it's genuinely a quiet day, say so in one line and point at the best money move. "
-            "No headings, no markdown besides the dashes, no fluff, never invent data."
-        ),
-    ).with_model("openai", "gpt-5.4")
-    resp = await chat.send_message(UserMessage(text=json.dumps(facts, default=str)))
-    return (str(resp) or "").strip()[:2500]
+    from openai import AsyncOpenAI
+    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY missing")
+    client = AsyncOpenAI(api_key=api_key)
+    resp = await client.chat.completions.create(
+        model=os.environ.get("OPS_BRIEF_MODEL", "").strip() or "gpt-4o",
+        messages=[{"role": "system", "content": OPS_BRIEF_SYSTEM},
+                  {"role": "user", "content": json.dumps(facts, default=str)}],
+    )
+    return (resp.choices[0].message.content or "").strip()[:2500]
 
 
 @api_router.get("/ai/ops-brief")
@@ -6517,11 +6534,17 @@ async def seed_on_startup():
         await seed_team_module()
     except Exception as exc:
         logger.error("Startup seeding failed: %s", exc)
-    asyncio.create_task(timelog_retry_loop())
-    asyncio.create_task(late_alert_loop())
-    asyncio.create_task(invoice_sync_loop())
-    asyncio.create_task(lead_alert_loop())
-    asyncio.create_task(meta_poll_loop())
+    # Staging safety switch. Defaults to OFF so production behaviour is unchanged.
+    # Set DISABLE_BACKGROUND_LOOPS=true on staging so it never writes to Airtable
+    # or re-syncs Square invoices against live data.
+    if os.environ.get("DISABLE_BACKGROUND_LOOPS", "").strip().lower() in ("1", "true", "yes"):
+        logger.warning("Background loops disabled via DISABLE_BACKGROUND_LOOPS.")
+    else:
+        asyncio.create_task(timelog_retry_loop())
+        asyncio.create_task(late_alert_loop())
+        asyncio.create_task(invoice_sync_loop())
+        asyncio.create_task(lead_alert_loop())
+        asyncio.create_task(meta_poll_loop())
     if not meta_capi.capi_enabled():
         logger.warning("Meta CAPI disabled — set META_DATASET_ID and META_CAPI_ACCESS_TOKEN "
                        "in the secrets panel to send ad conversion events.")
@@ -6532,10 +6555,11 @@ async def seed_on_startup():
                 "set" if capi["app_id"] else "unset",
                 "set" if capi["app_secret"] else "unset",
                 "set" if capi["test_event_code"] else "unset")
-    try:
-        await backfill_jobs_from_paid_invoices()
-    except Exception as exc:
-        logger.error("Job backfill on startup failed: %s", exc)
+    if os.environ.get("DISABLE_BACKGROUND_LOOPS", "").strip().lower() not in ("1", "true", "yes"):
+        try:
+            await backfill_jobs_from_paid_invoices()
+        except Exception as exc:
+            logger.error("Job backfill on startup failed: %s", exc)
 
 
 app.include_router(auth_router)
