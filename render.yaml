@@ -1,0 +1,168 @@
+# Haul Yeah CRM — Render Blueprint
+#
+# Secrets are NEVER stored here. Every sensitive value uses `sync: false`,
+# which means "this service needs this variable, set its value in the Render
+# dashboard". The repo only ever contains variable NAMES.
+#
+# Production backend runs on `starter` (always-on, no cold starts).
+# Staging backend runs on `free` — change it in the dashboard if Render
+# requires a paid plan for web services on your account.
+
+services:
+  # ----------------------------------------------------------- PRODUCTION API
+  - type: web
+    name: haulyeah-crm-api
+    runtime: python
+    plan: starter
+    region: ohio
+    rootDir: backend
+    branch: main
+    numInstances: 1          # MUST stay 1 — background loops are not multi-instance safe
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /healthz
+    autoDeployTrigger: commit
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: CORS_ORIGINS
+        value: https://www.haulyeahadmin.com
+      - key: APP_BASE_URL
+        value: https://www.haulyeahadmin.com
+      - key: DISABLE_BACKGROUND_LOOPS
+        value: "false"
+      - key: SQUARE_ENVIRONMENT
+        value: production
+      - key: MONGO_URL           # MongoDB Atlas SRV string
+        sync: false
+      - key: DB_NAME
+        sync: false
+      - key: JWT_SECRET          # copy EXACTLY from Emergent or every session is invalidated
+        sync: false
+      - key: OWNER_EMAIL         # copy EXACTLY — a mismatch rewrites the owner account on boot
+        sync: false
+      - key: APP_PASSWORD
+        sync: false
+      - key: AIRTABLE_API_KEY
+        sync: false
+      - key: AIRTABLE_BASE_ID
+        sync: false
+      - key: EMERGENT_LLM_KEY    # still required: authenticates the photo object store
+        sync: false
+      - key: OPENAI_API_KEY      # powers the Dashboard "Ops brain" card
+        sync: false
+      - key: OPS_BRIEF_MODEL
+        value: gpt-4o
+      - key: SQUARE_ACCESS_TOKEN
+        sync: false
+      - key: SQUARE_LOCATION_ID
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: META_APP_ID
+        sync: false
+      - key: META_APP_SECRET
+        sync: false
+      - key: META_CAPI_ACCESS_TOKEN
+        sync: false
+      - key: META_DATASET_ID
+        sync: false
+      - key: META_GRAPH_VERSION
+        sync: false
+      - key: META_TEST_EVENT_CODE
+        sync: false
+      - key: TALLY_WEBHOOK_SIGNING_SECRET
+        sync: false
+      - key: DEFAULT_STARTING_PASSWORD
+        sync: false
+      - key: TEST_GHOST_PASSWORD
+        sync: false
+      - key: TEST_EMPLOYEE_LEGACY_PASSWORD
+        sync: false
+      - key: TEST_SALES_LEGACY_PASSWORD
+        sync: false
+      - key: TEST_JUNIOR_INITIAL_PASSWORD
+        sync: false
+
+  # ------------------------------------------------------- PRODUCTION FRONTEND
+  - type: web
+    name: haulyeah-crm-web
+    runtime: static
+    rootDir: frontend
+    branch: main
+    buildCommand: yarn install --frozen-lockfile && yarn build
+    staticPublishPath: build
+    autoDeployTrigger: commit
+    envVars:
+      - key: REACT_APP_BACKEND_URL
+        value: https://haulyeah-crm-api.onrender.com   # swap to the custom API domain if you add one
+    routes:
+      # SPA fallback. Without this, refreshing /leads/rec123 or /calculator 404s.
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    headers:
+      - path: /*
+        name: X-Frame-Options
+        value: SAMEORIGIN
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+
+  # -------------------------------------------------------------- STAGING API
+  - type: web
+    name: haulyeah-crm-api-staging
+    runtime: python
+    plan: free
+    region: ohio
+    rootDir: backend
+    branch: migration/render-deploy
+    numInstances: 1
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /healthz
+    autoDeployTrigger: commit
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: DISABLE_BACKGROUND_LOOPS
+        value: "true"          # CRITICAL: stops staging writing to live Airtable / Square
+      - key: SQUARE_ENVIRONMENT
+        value: sandbox
+      - key: MONGO_URL          # MUST point at a COPY of the database, never production
+        sync: false
+      - key: DB_NAME
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: OWNER_EMAIL
+        sync: false
+      - key: APP_PASSWORD
+        sync: false
+      - key: AIRTABLE_API_KEY
+        sync: false
+      - key: AIRTABLE_BASE_ID
+        sync: false
+      - key: EMERGENT_LLM_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+
+  # --------------------------------------------------------- STAGING FRONTEND
+  - type: web
+    name: haulyeah-crm-web-staging
+    runtime: static
+    rootDir: frontend
+    branch: migration/render-deploy
+    buildCommand: yarn install --frozen-lockfile && yarn build
+    staticPublishPath: build
+    autoDeployTrigger: commit
+    envVars:
+      - key: REACT_APP_BACKEND_URL
+        value: https://haulyeah-crm-api-staging.onrender.com
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
