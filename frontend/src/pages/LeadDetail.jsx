@@ -18,6 +18,7 @@ import DepositModal from "@/components/DepositModal";
 import SquareInvoiceModal from "@/components/SquareInvoiceModal";
 import { AddNoteDialog } from "@/pages/Leads";
 import { CommissionCard } from "@/components/CommissionCard";
+import { LeadScopesCard } from "@/components/LeadScopesCard";
 import { LF, f, LEAD_STATUSES, STATUS_PILL, nextStepHint, KNOWN_LEAD_FIELD_IDS, formatExtraValue, needsFollowUp, quietDays, HOME_SIZES } from "@/lib/fields";
 import { fmtDate, gmailCompose, gmailSearch, calendarTemplate, smsLink, winBackSmsBody, payNudgeSmsBody } from "@/lib/format";
 import { quoteSmsBody } from "@/lib/quote";
@@ -264,6 +265,8 @@ export default function LeadDetail() {
           </div>
 
           <CommissionCard lead={lead} isOwner={isOwner} />
+
+          <LeadScopesCard leadId={lead.id} leadName={name} isOwner={isOwner} />
 
           <div className="surface p-5" data-testid="lead-detail-actions">
             <h2 className="font-display font-bold text-primary mb-3">Actions</h2>

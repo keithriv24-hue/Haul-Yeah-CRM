@@ -598,6 +598,7 @@ class ScopeSavePayload(BaseModel):
     pricing: Dict[str, Any]
     result: Dict[str, Any]
     survey_complete: bool = False
+    refined_from: Optional[str] = None
 
 
 @api_router.post("/scopes")
@@ -614,6 +615,7 @@ async def save_scope(payload: ScopeSavePayload, p: Dict[str, Any] = Depends(requ
         "pricing": pricing,
         "result": payload.result,
         "survey_complete": bool(payload.survey_complete),
+        "refined_from": payload.refined_from or None,
         "created_at": now_iso(),
         "updated_at": now_iso(),
     }

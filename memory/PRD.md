@@ -183,3 +183,11 @@ User choices: phase order approved · route optimization = free OSRM/OpenStreetM
 - Nav: Layout NAV entry (owner, Sales group, Boxes icon); route only in owner branch of App.js.
 - Verified: roundUp(641)=650, floor clamps exactly at 375/650 when cushioned below (note: engine's 6-mh billable floor means min real labor-only job = $525; price floor binds only when cushioned<375), jobType switches fee+floor, snapshot survives manHourRate 65→80→65 change, sales/crew API 403 + URL redirect, quote-calc canonical vector intact, build exit 0, testing agent iteration_24 100% (10/10 scenarios).
 - Next: Step 4 (scopes on the lead: list/refine/start-new) — awaiting user.
+
+## 2026-08-21 — Step 4 DONE: Scopes on the lead (refine / start new)
+- Backend: refined_from field added to lead_scopes docs (ScopeSavePayload). No other collection touched.
+- New components/LeadScopesCard.jsx on LeadDetail (owner-gated for now): lists lead's scopes newest-first with creator/date/price, "Refine this scope" per row + "Start a new scope" → /scope-calculator?lead=&name=[&refine=].
+- ScopeCalculator: reads query params; refine mode prefills inputs at LIVE pricing with banner + "Save as new version"; snapshot-view hides save card and offers "Refine this scope"; save includes lead_id + refined_from. New testids: scope-refine-banner, scope-cancel-refine-btn, scope-refine-saved-btn, scope-saved-refine-btn, scope-saved-open-btn, lead-scopes-card, lead-scope-row, lead-scope-refine-btn, lead-scope-new-btn, lead-scopes-empty.
+- Verified (curl + UI): originals never overwritten across refine & fresh saves; newest-first order; refined_from chains recorded; UI refine flow end-to-end (banner, prefill, save-as-new-version, snapshot banner). Build exit 0, lint clean. users collection fields unchanged.
+- NOTE: LeadDetail on-lead card untestable with a real lead in preview (Airtable key missing) — verified via direct URL param flow instead.
+- Next: Step 5 (access tiers + Crew-page assignment control + backend enforcement) — awaiting user.

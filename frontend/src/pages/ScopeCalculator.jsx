@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
-import { Save, RotateCcw, FolderOpen, X } from "lucide-react";
+import { Save, RotateCcw, FolderOpen, X, PencilRuler } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PageTitle } from "@/components/Bits";
-import { apiErrorMessage, getScopePricingApi, listScopesApi, saveScopeApi } from "@/lib/api";
+import { apiErrorMessage, getScopeApi, getScopePricingApi, listScopesApi, saveScopeApi } from "@/lib/api";
 
 /* Haul Yeah Moving — Job Scope Calculator (v2 port)
    Scope arithmetic (ROOMS/ITEMS/PACKING/ACCESS/MATERIALS, volume/weight maths,
@@ -175,6 +176,11 @@ const Stat = ({ label, value, last = false, accent = false }) => (
 );
 
 export default function ScopeCalculator() {
+  const [params] = useSearchParams();
+  const leadId = params.get("lead") || null;
+  const leadName = params.get("name") || "";
+  const refineId = params.get("refine") || null;
+
   const [dens, setDens] = useState({});
   const [cnt, setCnt] = useState({});
   const [qty, setQty] = useState({});
@@ -189,6 +195,7 @@ export default function ScopeCalculator() {
   const [ownerBlock, setOwnerBlock] = useState(false);
   const [livePricing, setLivePricing] = useState(null);
   const [viewingSaved, setViewingSaved] = useState(null);
+  const [refineFrom, setRefineFrom] = useState(null);
   const [savedList, setSavedList] = useState([]);
   const [showSaved, setShowSaved] = useState(false);
   const [label, setLabel] = useState("");
@@ -201,6 +208,13 @@ export default function ScopeCalculator() {
       setRate(vals.manHoursPer100CuFt || 2.1);
     }).catch((e) => toast.error(apiErrorMessage(e)));
   }, []);
+
+  /* eslint-disable react-hooks/exhaustive-deps */
+  useEffect(() => {
+    if (!refineId) return;
+    getScopeApi(refineId).then((doc) => startRefine(doc)).catch((e) => toast.error(apiErrorMessage(e)));
+  }, [refineId]);
+  /* eslint-enable react-hooks/exhaustive-deps */
 
   const P = viewingSaved ? viewingSaved.pricing : livePricing;
 
@@ -276,16 +290,27 @@ export default function ScopeCalculator() {
 
   const flagged = ROOMS.filter((x) => x.risky && (dens[x.k] || 0) >= 2).map((x) => x.n);
   const overWeight = r.lbs > TRUCK_LBS * r.trucks * 0.92;
-  const clear = () => { setDens({}); setCnt({}); setQty({}); setAcc({}); setMat({}); setPack(0); setSurveyComplete(false); setMode("range"); setViewingSaved(null); setLabel(""); };
+  const clear = () => { setDens({}); setCnt({}); setQty({}); setAcc({}); setMat({}); setPack(0); setSurveyComplete(false); setMode("range"); setViewingSaved(null); setRefineFrom(null); setLabel(""); };
 
   const loadSavedList = () => listScopesApi().then(setSavedList).catch((e) => toast.error(apiErrorMessage(e)));
 
-  const openSaved = (doc) => {
+  const applyInputs = (doc) => {
     const i = doc.inputs || {};
     setDens(i.dens || {}); setCnt(i.cnt || {}); setQty(i.qty || {}); setAcc(i.acc || {}); setMat(i.mat || {});
     setPack(i.pack || 0); setRate(i.rate || 2.1); setJobType(i.jobType || "truck");
-    setSurveyComplete(!!doc.survey_complete); setMode(i.mode === "final" && doc.survey_complete ? "final" : "range");
-    setViewingSaved(doc); setShowSaved(false); setLabel(doc.label || "");
+    setSurveyComplete(!!doc.survey_complete);
+  };
+
+  const openSaved = (doc) => {
+    applyInputs(doc);
+    setMode(doc.inputs?.mode === "final" && doc.survey_complete ? "final" : "range");
+    setViewingSaved(doc); setRefineFrom(null); setShowSaved(false); setLabel(doc.label || "");
+  };
+
+  const startRefine = (doc) => {
+    applyInputs(doc);
+    setMode("range");
+    setRefineFrom(doc); setViewingSaved(null); setShowSaved(false); setLabel(doc.label || "");
   };
 
   const backToLive = () => {
@@ -298,7 +323,9 @@ export default function ScopeCalculator() {
     setSaving(true);
     try {
       const doc = await saveScopeApi({
-        label: label.trim() || null,
+        lead_id: leadId,
+        label: label.trim() || leadName || null,
+        refined_from: refineFrom?._id || null,
         inputs: { dens, cnt, qty, acc, mat, pack, rate, jobType, mode: finalMode ? "final" : "range" },
         pricing: P,
         result: {
@@ -311,7 +338,10 @@ export default function ScopeCalculator() {
         survey_complete: surveyComplete,
       });
       setViewingSaved(doc);
-      toast.success("Scope saved with its pricing snapshot. Settings changes won't re-price it.");
+      setRefineFrom(null);
+      toast.success(refineFrom
+        ? "Saved as a new version — the original scope is untouched."
+        : "Scope saved with its pricing snapshot. Settings changes won't re-price it.");
     } catch (e) {
       toast.error(apiErrorMessage(e));
     }
@@ -326,7 +356,8 @@ export default function ScopeCalculator() {
   return (
     <div data-testid="scope-calculator-page" className="pb-16">
       <div className="flex flex-wrap items-end justify-between gap-3">
-        <PageTitle title="Job Scope Calculator" subtitle="Owner tool — scope, range, and firm pricing." />
+        <PageTitle title="Job Scope Calculator"
+          subtitle={leadId ? <>Scoping for lead: <strong className="text-primary">{leadName || leadId}</strong></> : "Owner tool — scope, range, and firm pricing."} />
         <div className="flex flex-wrap items-center gap-2 mb-4">
           <Button data-testid="scope-saved-btn" variant="outline" size="sm" className="gap-1.5"
             onClick={() => { setShowSaved(!showSaved); if (!showSaved) loadSavedList(); }}>
@@ -338,12 +369,27 @@ export default function ScopeCalculator() {
         </div>
       </div>
 
+      {refineFrom && (
+        <div data-testid="scope-refine-banner" className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-accent/40 bg-accent-wash px-4 py-2.5 text-[12.5px] text-primary">
+          <span>
+            Refining <strong>{refineFrom.created_by}</strong>'s scope from {new Date(refineFrom.created_at).toLocaleDateString()}.
+            Your edits save as a <strong>new version at today's pricing</strong> — the original is kept as-is.
+          </span>
+          <Button data-testid="scope-cancel-refine-btn" size="sm" variant="outline" className="gap-1 h-7 text-xs" onClick={clear}>
+            <X className="w-3 h-3" /> Cancel refine
+          </Button>
+        </div>
+      )}
+
       {viewingSaved && (
         <div data-testid="scope-snapshot-banner" className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-info/40 bg-info/10 px-4 py-2.5 text-[12.5px] text-primary">
           <span>
             Viewing a saved scope from <strong>{viewingSaved.created_by}</strong> ({new Date(viewingSaved.created_at).toLocaleDateString()}).
             Prices use its <strong>saved pricing snapshot</strong> — Settings changes don't touch it.
           </span>
+          <Button data-testid="scope-refine-saved-btn" size="sm" variant="outline" className="gap-1 h-7 text-xs" onClick={() => startRefine(viewingSaved)}>
+            <PencilRuler className="w-3 h-3" /> Refine this scope
+          </Button>
           <Button data-testid="scope-back-live-btn" size="sm" variant="outline" className="gap-1 h-7 text-xs" onClick={backToLive}>
             <X className="w-3 h-3" /> Back to live pricing
           </Button>
@@ -356,16 +402,20 @@ export default function ScopeCalculator() {
           {savedList.length === 0 && <p className="text-sm text-faint">Nothing saved yet.</p>}
           <div className="space-y-1">
             {savedList.map((s) => (
-              <button key={s._id} data-testid="scope-saved-row" onClick={() => openSaved(s)}
-                className="w-full flex items-center justify-between gap-2 rounded-md px-2 py-2 text-left text-[13px] hover:bg-surface-sunk">
-                <span className="truncate text-primary font-semibold">
-                  {s.label || "Untitled scope"}
-                  <span className="text-faint font-normal ml-2">{s.created_by} · {new Date(s.created_at).toLocaleString()}</span>
-                </span>
-                <span className="tnum text-ink-2 shrink-0">
+              <div key={s._id} data-testid="scope-saved-row" className="w-full flex items-center justify-between gap-2 rounded-md px-2 py-1.5 hover:bg-surface-sunk">
+                <button onClick={() => openSaved(s)} className="flex-1 min-w-0 text-left text-[13px]" data-testid="scope-saved-open-btn">
+                  <span className="truncate text-primary font-semibold">
+                    {s.label || "Untitled scope"}
+                    <span className="text-faint font-normal ml-2">{s.created_by} · {new Date(s.created_at).toLocaleString()}{s.refined_from ? " · refined" : ""}</span>
+                  </span>
+                </button>
+                <span className="tnum text-ink-2 text-[13px] shrink-0">
                   {s.result?.mode === "final" && s.result?.finalTotal ? money(s.result.finalTotal) : `${money(s.result?.bandLo || 0)}–${money(s.result?.bandHi || 0)}`}
                 </span>
-              </button>
+                <Button data-testid="scope-saved-refine-btn" size="sm" variant="outline" className="h-7 text-xs shrink-0" onClick={() => startRefine(s)}>
+                  Refine
+                </Button>
+              </div>
             ))}
           </div>
         </div>
@@ -648,17 +698,19 @@ export default function ScopeCalculator() {
             </div>
           )}
 
+          {!viewingSaved && (
           <div className="surface p-4">
             <div className="flex items-center gap-2 mb-2">
               <Input data-testid="scope-label-input" placeholder="Label (customer / address)" value={label}
                 onChange={(e) => setLabel(e.target.value)} className="h-9 flex-1" />
               <Button data-testid="scope-save-btn" size="sm" className="gap-1.5 bg-accent hover:bg-accent-press min-h-[44px]"
                 disabled={saving || r.cf === 0} onClick={saveScope}>
-                <Save className="w-3.5 h-3.5" /> {saving ? "Saving…" : "Save scope"}
+                <Save className="w-3.5 h-3.5" /> {saving ? "Saving…" : refineFrom ? "Save as new version" : "Save scope"}
               </Button>
             </div>
             <p className="text-[11px] text-faint">Saving snapshots today's pricing values with the quote. Changing Settings later never re-prices a saved scope.</p>
           </div>
+          )}
 
           <div className="surface p-4">
             <button data-testid="scope-margin-toggle" onClick={() => setOwnerBlock(!ownerBlock)}
