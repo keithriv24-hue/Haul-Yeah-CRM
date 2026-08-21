@@ -1,0 +1,29 @@
+{
+  "summary": "STEP 7/7 full frontend re-verification after 6-step build + Settings-page rewrite. All 9 review scenarios PASS on Chromium via Playwright against REACT_APP_BACKEND_URL. Owner/Sales/Crew/Marketing land correctly; Settings page has old cards removed and only shows Scope pricing + review link + integrations; Old Quote Calculator returns $1,150 – $1,250 with $312.50 deposit for 2BR/3crew/5hrs/Truck/30mi/0flights; Scope Calculator owner canonical bands ($650-$700 → hours4 $675-$775 → crew+ $950-$1,075 → resets $650-$700) all match; Final gate works (video-received unlocks Final=$650; untick re-locks; survey-complete alone also unlocks); Sales tier shows only band + crew/time card with no build/margin/calibration/mode/survey; Crew shows scope-no-access; Mobile 390px both /scope-calculator and /settings have zero horizontal scroll, chips are 44px tap targets, stepper crew-plus click works, bottom tab bar + More sheet functional. One PRE-EXISTING React hydration warning found (unrelated to this build): MetaCard renders <Badge> (a <div>) inside a <p>, causing console warning on Settings page.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "MetaCard (Settings)", "issue": "React hydration warning in console on /settings: 'In HTML, <div> cannot be a descendant of <p>'. Source is MetaCard line 131 — a <p className='text-sm font-semibold …'> contains a <Badge> which renders as <div>. Cosmetic only (no visual break) but produces console error on every Settings load. Fix: change the outer <p> to a <div> or move the Badge outside the <p>.", "selector": "[data-testid='meta-settings-card'] p (MetaCard.jsx:131)", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [
+    "OPTIONAL/LOW: Fix MetaCard.jsx:131 — replace the outer <p> wrapper with a <div> (or move the Badge outside) to eliminate the '<div> cannot be a descendant of <p>' hydration warning on /settings.",
+    "Carry-over from iteration_25 (still valid if not yet addressed by main agent): survey-tier $ leaks on ScopeCalculator lines 566/593/605 — verify main agent gated those behind showPricing before Save-to-GitHub."
+  ],
+  "critical_code_review_comments": [
+    "Settings.jsx (161 lines) is clean and well-scoped after the rewrite — old FIELDS/items/draft-bar are fully removed, ScopePricingCard is self-contained, and the review-link Save button is correctly conditional on linkChanged. No dead imports.",
+    "MetaCard hydration nesting bug is the only console error surfaced on tested pages; ignore-safe but visible in devtools.",
+    "Auth flow shows expected 401s on /login (unauthenticated /me probe) — not a bug, but if the AppContext could suppress the initial /me request when no session cookie is present, the console would be cleaner."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "not tested (main agent reports 389/389 pytest + 36/36 tier tests)", "frontend": "100% (9/9 review scenarios pass; 1 pre-existing low-priority console warning)"},
+  "test_credentials": "Owner HaulYeahAdmin / HaulYeah2026! (lands at /, Dashboard); Sales TestSalesAdmin / HaulYeah2026! (lands at /leads); Crew TestCrewAdmin / HaulYeah2026! (lands at /today, scope-no-access on /scope-calculator — access NOT granted, left as-is); Marketing TestMarketingAdmin / HaulYeah2026! (lands at /marketing). All confirmed working.",
+  "seed_data_creation": "None. No users created, no calculator access grants made. State unchanged.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Full step-7 gate passed. Verified data: (a) /calculator 2BR canonical = $1,150–$1,250 / deposit $312.50 (note: selecting 2BR auto-sets hours to 5.5; I explicitly overrode to 5 before reading the range, matching the review spec). (b) /scope-calculator owner: Living=Avg → $650–$700 crew=2; hours=4 → $675–$775; scope-crew-plus → $950–$1,075; both resets → $650–$700. (c) Final gate: scope-mode-final has disabled attribute until either scope-video-received-checkbox OR scope-survey-complete-toggle is on; video-received also auto-fills scope-video-date-input with today's date. (d) Sales tier /scope-calculator: only scope-band-value + scope-crew-time-card/scope-hours-input visible; mode-final/mode-range/margin-toggle/calibration-slider/survey-complete-toggle all absent as required; scope-no-pricing-card is NOT rendered for sales (only for survey tier — expected). (e) Crew (no access): scope-no-access renders with correct copy. (f) Mobile 390: no horizontal scroll on /scope-calculator or /settings; Avg chip bounding = 78×44 (meets 44px); stepper visual is 22×22 but click registers because of ::before expanded hit area — verified crew-plus increments crew from 2→3 on tap; bottom tab bar visible with 5 tabs (Dashboard/Leads/Jobs/Crew/More) and More opens a full-height sheet listing Dispatch/Day Sheet/Fleet/Projects/Scope Calculator/Script/Commissions/Contacts/Invoices/Subscriptions/Partner View/Team/Leaderboard/Challenges/Team HQ/Marketing/To-Do/Blog/Notifications. (g) Airtable banner appears on Leads/Calculator as expected (preview env has no key). (h) Only console warning is the MetaCard <p><div> hydration nesting on Settings — pre-existing, not introduced by this build.",
+  "rca of the issue": "MetaCard.jsx:131 hydration warning: the CAPI status badge is placed inside a <p> element. React 18 hydration validates HTML nesting rules; <div> children of <p> are invalid HTML, so React logs a warning and may cause a hydration mismatch. Reproduction: log in as owner → /settings → open console. Fix: swap the outer <p className='text-sm font-semibold text-primary flex items-center gap-2'> for a <div> with the same classes (text sizing works identically on div), or move the <Badge> sibling out of the <p>."
+}
