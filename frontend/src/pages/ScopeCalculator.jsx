@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { Save, RotateCcw, FolderOpen, X, PencilRuler } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import { PageTitle } from "@/components/Bits";
 import { apiErrorMessage, getScopeApi, getScopeAccessApi, getScopePricingValuesApi, listScopesApi, saveScopeApi } from "@/lib/api";
 
@@ -194,6 +195,9 @@ export default function ScopeCalculator() {
   const [rate, setRate] = useState(2.1);
   const [jobType, setJobType] = useState("truck");
   const [surveyComplete, setSurveyComplete] = useState(false);
+  const [crewOverride, setCrewOverride] = useState(null);
+  const [hoursOverride, setHoursOverride] = useState(null);
+  const [video, setVideo] = useState({ link: "", received: false, date: "" });
   const [mode, setMode] = useState("range");
   const [open, setOpen] = useState(null);
   const [ownerBlock, setOwnerBlock] = useState(false);
@@ -263,11 +267,18 @@ export default function ScopeCalculator() {
     let billMH = volMH + itemMH;
     const schedMH = billMH + accMH;
 
-    let crew = schedMH < 12 ? 2 : schedMH < 24 ? 3 : 4;
-    if (trucks >= 2) crew = 3 * trucks;
+    let crewRec = schedMH < 12 ? 2 : schedMH < 24 ? 3 : 4;
+    if (trucks >= 2) crewRec = 3 * trucks;
+    const crew = crewOverride || crewRec;
 
     const hourFloor = beds >= 3 ? 6 : 3;
     billMH = Math.max(billMH, hourFloor * Math.min(crew, 4));
+    const onsiteRec = schedMH / crew;
+    let onsite = onsiteRec;
+    if (hoursOverride) {
+      billMH = hoursOverride * crew;   // explicit override — the owner's call beats the billable floor
+      onsite = hoursOverride;
+    }
 
     /* ---- final pricing steps — every value from Settings, exact spec order ---- */
     const manHourRate = P?.manHourRate ?? 0;
@@ -280,13 +291,13 @@ export default function ScopeCalculator() {
     const total = Math.max(cushioned, priceFloor);                        // 6 (rounding applied at output)
 
     return { cf, lbs, trucks, sc, volMH, itemMH, accMH, accBill, itemBill, matBill,
-      billMH, schedMH, crew, onsite: schedMH / crew, labor, travel, sub, cushioned, total, beds, priceFloor };
+      billMH, schedMH, crew, crewRec, onsite, onsiteRec, labor, travel, sub, cushioned, total, beds, priceFloor };
   };
 
   /* eslint-disable react-hooks/exhaustive-deps */
-  const r = useMemo(() => price(0), [dens, cnt, qty, acc, mat, pack, rate, jobType, P]);
-  const lo = useMemo(() => price(-1), [dens, cnt, qty, acc, mat, pack, rate, jobType, P]);
-  const hi = useMemo(() => price(+1), [dens, cnt, qty, acc, mat, pack, rate, jobType, P]);
+  const r = useMemo(() => price(0), [dens, cnt, qty, acc, mat, pack, rate, jobType, crewOverride, hoursOverride, P]);
+  const lo = useMemo(() => price(-1), [dens, cnt, qty, acc, mat, pack, rate, jobType, crewOverride, hoursOverride, P]);
+  const hi = useMemo(() => price(+1), [dens, cnt, qty, acc, mat, pack, rate, jobType, crewOverride, hoursOverride, P]);
   /* eslint-enable react-hooks/exhaustive-deps */
 
   const inc = Math.max(1, P?.roundingIncrement ?? 25);
@@ -298,7 +309,13 @@ export default function ScopeCalculator() {
   const finalTotal = roundUp(r.total);
   const deposit = finalTotal * ((P?.depositPercent ?? 0) / 100);           // 8
 
-  const finalMode = mode === "final" && surveyComplete;
+  const surveyDone = surveyComplete || video.received; // a received video counts as a completed survey
+
+  useEffect(() => {
+    if (!surveyDone && mode === "final") setMode("range");
+  }, [surveyDone, mode]);
+
+  const finalMode = mode === "final" && surveyDone;
 
   /* tier gates — UI mirrors of the backend enforcement, never the other way round */
   const isOwner = tier === "owner";
@@ -311,7 +328,7 @@ export default function ScopeCalculator() {
 
   const flagged = ROOMS.filter((x) => x.risky && (dens[x.k] || 0) >= 2).map((x) => x.n);
   const overWeight = r.lbs > TRUCK_LBS * r.trucks * 0.92;
-  const clear = () => { setDens({}); setCnt({}); setQty({}); setAcc({}); setMat({}); setPack(0); setSurveyComplete(false); setMode("range"); setViewingSaved(null); setRefineFrom(null); setLabel(""); };
+  const clear = () => { setDens({}); setCnt({}); setQty({}); setAcc({}); setMat({}); setPack(0); setSurveyComplete(false); setMode("range"); setViewingSaved(null); setRefineFrom(null); setLabel(""); setCrewOverride(null); setHoursOverride(null); setVideo({ link: "", received: false, date: "" }); };
 
   const loadSavedList = () => listScopesApi().then(setSavedList).catch((e) => toast.error(apiErrorMessage(e)));
 
@@ -319,6 +336,9 @@ export default function ScopeCalculator() {
     const i = doc.inputs || {};
     setDens(i.dens || {}); setCnt(i.cnt || {}); setQty(i.qty || {}); setAcc(i.acc || {}); setMat(i.mat || {});
     setPack(i.pack || 0); setRate(i.rate || 2.1); setJobType(i.jobType || "truck");
+    setCrewOverride(i.crewOverride ?? null); setHoursOverride(i.hoursOverride ?? null);
+    const v = doc.video || {};
+    setVideo({ link: v.link || "", received: !!v.received, date: v.received_date || "" });
     setSurveyComplete(!!doc.survey_complete);
   };
 
@@ -349,16 +369,18 @@ export default function ScopeCalculator() {
         lead_id: leadId,
         label: label.trim() || leadName || null,
         refined_from: refineFrom?._id || null,
-        inputs: { dens, cnt, qty, acc, mat, pack, rate, jobType, mode: finalMode ? "final" : "range" },
+        inputs: { dens, cnt, qty, acc, mat, pack, rate, jobType, crewOverride, hoursOverride, mode: finalMode ? "final" : "range" },
         pricing: P,
         result: {
-          cf: r.cf, lbs: r.lbs, trucks: r.trucks, crew: r.crew,
+          cf: r.cf, lbs: r.lbs, trucks: r.trucks, crew: r.crew, crewRec: r.crewRec,
+          onsiteHours: Math.round(r.onsite * 10) / 10,
           billMH: Math.round(r.billMH * 100) / 100, schedMH: Math.round(r.schedMH * 100) / 100,
           bandLo, bandHi, finalTotal: finalMode ? finalTotal : null,
           deposit: finalMode ? Math.round(deposit * 100) / 100 : null,
           mode: finalMode ? "final" : "range", jobType,
         },
         survey_complete: surveyComplete,
+        video: { link: video.link, received: video.received, received_date: video.date },
       });
       setViewingSaved(doc);
       setRefineFrom(null);
@@ -478,7 +500,7 @@ export default function ScopeCalculator() {
         <div>
           <Eyebrow className="mb-1">Survey</Eyebrow>
           <button data-testid="scope-survey-complete-toggle" aria-pressed={surveyComplete}
-            onClick={() => { const next = !surveyComplete; setSurveyComplete(next); if (!next) setMode("range"); }}
+            onClick={() => setSurveyComplete(!surveyComplete)}
             className={`px-4 min-h-[44px] text-xs font-bold rounded ${surveyComplete ? "bg-success text-white" : "bg-surface-sunk text-faint"}`}>
             {surveyComplete ? "✓ Survey complete" : "Mark survey complete"}
           </button>
@@ -492,15 +514,32 @@ export default function ScopeCalculator() {
               className={`px-4 min-h-[44px] text-xs font-bold rounded ${!finalMode ? "bg-accent text-accent-foreground" : "bg-surface-sunk text-faint"}`}>
               Range
             </button>
-            <button data-testid="scope-mode-final" aria-pressed={finalMode} disabled={!surveyComplete}
-              onClick={() => surveyComplete && setMode("final")}
-              title={surveyComplete ? "" : "Locked until the survey is marked complete"}
+            <button data-testid="scope-mode-final" aria-pressed={finalMode} disabled={!surveyDone}
+              onClick={() => surveyDone && setMode("final")}
+              title={surveyDone ? "" : "Locked until the survey is complete or a video survey is received"}
               className={`px-4 min-h-[44px] text-xs font-bold rounded disabled:opacity-40 disabled:cursor-not-allowed ${finalMode ? "bg-success text-white" : "bg-surface-sunk text-faint"}`}>
-              Final {surveyComplete ? "" : "🔒"}
+              Final {surveyDone ? "" : "🔒"}
             </button>
           </div>
         </div>
         )}
+        <div className="basis-full sm:basis-auto sm:flex-1 min-w-[240px]">
+          <Eyebrow className="mb-1">Video survey</Eyebrow>
+          <div className="flex flex-wrap items-center gap-2">
+            <Input data-testid="scope-video-link-input" placeholder="Video link (Drive, iCloud, YouTube…)"
+              value={video.link} onChange={(e) => setVideo((s) => ({ ...s, link: e.target.value }))} className="h-9 w-full sm:w-60" />
+            <label className="flex items-center gap-1.5 text-xs font-semibold text-primary cursor-pointer min-h-[44px]">
+              <Checkbox data-testid="scope-video-received-checkbox" checked={video.received}
+                onCheckedChange={(v) => setVideo((s) => ({ ...s, received: !!v, date: v && !s.date ? new Date().toISOString().slice(0, 10) : s.date }))} />
+              Video received
+            </label>
+            {video.received && (
+              <Input data-testid="scope-video-date-input" type="date" className="h-9 w-[150px]"
+                value={video.date} onChange={(e) => setVideo((s) => ({ ...s, date: e.target.value }))} />
+            )}
+          </div>
+          {video.received && <p className="text-[10.5px] text-success mt-1">A received video counts as a completed survey.</p>}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_376px] gap-4 items-start">
@@ -675,6 +714,56 @@ export default function ScopeCalculator() {
                 {r.trucks} trucks required{showBuild && overWeight ? " — weight, not volume, is the binding limit" : ""}.
               </div>
             )}
+          </div>
+
+          {/* Crew & time — recommended values, overridable in every tier; the quote follows */}
+          <div className="surface p-4" data-testid="scope-crew-time-card">
+            <Eyebrow>Crew & time — recommended, override if you know better</Eyebrow>
+            <div className="flex justify-between items-center py-1.5 border-b border-border">
+              <span className="text-[12.5px] text-ink-2">
+                Crew
+                <span className="text-[10.5px] text-faint ml-1.5">recommended {r.crewRec}</span>
+              </span>
+              <span className="inline-flex items-center gap-2.5">
+                <button type="button" data-testid="scope-crew-minus" aria-label="Fewer crew"
+                  onClick={() => setCrewOverride(Math.max(1, (crewOverride || r.crewRec) - 1))}
+                  className="relative w-[22px] h-[22px] rounded bg-surface-sunk text-ink-2 text-[13px] font-bold leading-none hover:text-primary before:content-[''] before:absolute before:-inset-[11px]">–</button>
+                <span data-testid="scope-crew-value" className={`tnum text-[14px] w-[26px] text-center font-semibold ${crewOverride ? "text-accent-ink" : "text-primary"}`}>{r.crew}</span>
+                <button type="button" data-testid="scope-crew-plus" aria-label="More crew"
+                  onClick={() => setCrewOverride(Math.min(12, (crewOverride || r.crewRec) + 1))}
+                  className="relative w-[22px] h-[22px] rounded bg-surface-sunk text-ink-2 text-[13px] font-bold leading-none hover:text-primary before:content-[''] before:absolute before:-inset-[11px]">+</button>
+                {crewOverride != null && (
+                  <button data-testid="scope-crew-reset" onClick={() => setCrewOverride(null)}
+                    className="text-[10.5px] font-bold text-accent-ink hover:underline min-h-[44px]">reset</button>
+                )}
+              </span>
+            </div>
+            <div className="flex justify-between items-center py-1.5">
+              <span className="text-[12.5px] text-ink-2">
+                Hours on site
+                <span className="text-[10.5px] text-faint ml-1.5">recommended {r.onsiteRec.toFixed(1)}</span>
+              </span>
+              <span className="inline-flex items-center gap-2">
+                <Input data-testid="scope-hours-input" type="number" min="1" max="16" step="0.5"
+                  value={hoursOverride ?? ""} placeholder={r.onsiteRec.toFixed(1)}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (v === "") { setHoursOverride(null); return; }
+                    const n = Number(v);
+                    if (!Number.isNaN(n)) setHoursOverride(Math.min(16, Math.max(0.5, n)));
+                  }}
+                  className={`h-9 w-[84px] text-right tnum ${hoursOverride ? "ring-2 ring-accent/70" : ""}`} />
+                {hoursOverride != null && (
+                  <button data-testid="scope-hours-reset" onClick={() => setHoursOverride(null)}
+                    className="text-[10.5px] font-bold text-accent-ink hover:underline min-h-[44px]">reset</button>
+                )}
+              </span>
+            </div>
+            <p className="text-[10.5px] text-faint mt-1 leading-snug">
+              {crewOverride != null || hoursOverride != null
+                ? (showPricing ? "Using your numbers — the quote below follows them." : "Using your numbers.")
+                : "Using the recommended crew and time for this scope."}
+            </p>
           </div>
 
           {showPricing ? (

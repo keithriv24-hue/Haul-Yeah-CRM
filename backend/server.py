@@ -642,6 +642,16 @@ class ScopeSavePayload(BaseModel):
     result: Dict[str, Any]
     survey_complete: bool = False
     refined_from: Optional[str] = None
+    video: Optional[Dict[str, Any]] = None
+
+
+def _clean_video(v: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    v = v or {}
+    return {
+        "link": str(v.get("link") or "").strip()[:500],
+        "received": bool(v.get("received")),
+        "received_date": str(v.get("received_date") or "").strip()[:10],
+    }
 
 
 @api_router.get("/scopes/access")
@@ -685,6 +695,7 @@ async def save_scope(payload: ScopeSavePayload, request: Request):
         "pricing": pricing,
         "result": result,
         "survey_complete": bool(payload.survey_complete),
+        "video": _clean_video(payload.video),
         "refined_from": payload.refined_from or None,
         "created_at": now_iso(),
         "updated_at": now_iso(),
@@ -707,6 +718,26 @@ async def get_scope(scope_id: str, request: Request):
     doc = await mongo_db.lead_scopes.find_one({"_id": scope_id})
     if not doc:
         raise HTTPException(status_code=404, detail="No such saved scope.")
+    return redact_scope_doc(doc, tier)
+
+
+class ScopeVideoPayload(BaseModel):
+    link: Optional[str] = None
+    received: bool = False
+    received_date: Optional[str] = None
+
+
+@api_router.patch("/scopes/{scope_id}/video")
+async def patch_scope_video(scope_id: str, payload: ScopeVideoPayload, request: Request):
+    p, tier = await require_scope_tier(request)
+    doc = await mongo_db.lead_scopes.find_one({"_id": scope_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="No such saved scope.")
+    video = _clean_video(payload.model_dump())
+    await mongo_db.lead_scopes.update_one(
+        {"_id": scope_id}, {"$set": {"video": video, "updated_at": now_iso()}})
+    doc["video"] = video
+    doc["updated_at"] = now_iso()
     return redact_scope_doc(doc, tier)
 
 
