@@ -49,6 +49,7 @@ function RoleRoutes() {
           <Route path="/leads" element={<Leads />} />
           <Route path="/leads/:id" element={<LeadDetail />} />
           <Route path="/calculator" element={<Calculator />} />
+          <Route path="/scope-calculator" element={<ScopeCalculator />} />
           <Route path="/script" element={<Script />} />
           <Route path="/commissions" element={<Commissions />} />
           <Route path="/notifications" element={<Notifications />} />
@@ -69,6 +70,7 @@ function RoleRoutes() {
         <Route element={<Layout />}>
           <Route path="/today" element={<CrewToday />} />
           <Route path="/jobs" element={<CrewJobs />} />
+          <Route path="/scope-calculator" element={<ScopeCalculator />} />
           <Route path="/clock" element={<TimeClock />} />
           <Route path="/days-off" element={<DaysOff />} />
           <Route path="/tasks" element={<Tasks />} />
@@ -87,6 +89,7 @@ function RoleRoutes() {
       <Routes>
         <Route element={<Layout />}>
           <Route path="/marketing" element={<MarketingDashboard />} />
+          <Route path="/scope-calculator" element={<ScopeCalculator />} />
           <Route path="/notifications" element={<Notifications />} />
           <Route path="/tasks" element={<Tasks />} />
           <Route path="/blog" element={<Blog />} />

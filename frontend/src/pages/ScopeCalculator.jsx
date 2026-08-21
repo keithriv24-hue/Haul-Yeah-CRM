@@ -5,7 +5,7 @@ import { Save, RotateCcw, FolderOpen, X, PencilRuler } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PageTitle } from "@/components/Bits";
-import { apiErrorMessage, getScopeApi, getScopePricingApi, listScopesApi, saveScopeApi } from "@/lib/api";
+import { apiErrorMessage, getScopeApi, getScopeAccessApi, getScopePricingValuesApi, listScopesApi, saveScopeApi } from "@/lib/api";
 
 /* Haul Yeah Moving — Job Scope Calculator (v2 port)
    Scope arithmetic (ROOMS/ITEMS/PACKING/ACCESS/MATERIALS, volume/weight maths,
@@ -150,6 +150,10 @@ const MATERIALS = [
 
 const NON_TRANSPORT = "Propane tanks · gasoline & fuel cans · paint & solvents · aerosols · pool chemicals · fertilizer · ammunition · fire extinguishers · perishables · live plants";
 
+/* survey tier gets no pricing values at all — engine runs with zeros, UI shows none */
+const NO_PRICING = { manHourRate: 0, cushionPercent: 0, tripFeeTruck: 0, tripFeeLabor: 0,
+  floorTruck: 0, floorLabor: 0, roundingIncrement: 25, depositPercent: 0, manHoursPer100CuFt: 2.1 };
+
 const money = (n) => "$" + Math.round(n).toLocaleString();
 const moneyCents = (n) => "$" + Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -200,13 +204,21 @@ export default function ScopeCalculator() {
   const [showSaved, setShowSaved] = useState(false);
   const [label, setLabel] = useState("");
   const [saving, setSaving] = useState(false);
+  const [tier, setTier] = useState(null);
 
   useEffect(() => {
-    getScopePricingApi().then((d) => {
-      const { _updatedAt, ...vals } = d;
-      setLivePricing(vals);
-      setRate(vals.manHoursPer100CuFt || 2.1);
-    }).catch((e) => toast.error(apiErrorMessage(e)));
+    getScopeAccessApi().then(({ tier: t }) => {
+      setTier(t || "none");
+      if (!t) return;
+      if (t === "survey") {
+        setLivePricing(NO_PRICING);
+        return;
+      }
+      getScopePricingValuesApi().then((vals) => {
+        setLivePricing(vals);
+        setRate(vals.manHoursPer100CuFt || 2.1);
+      }).catch((e) => toast.error(apiErrorMessage(e)));
+    }).catch(() => setTier("none"));
   }, []);
 
   /* eslint-disable react-hooks/exhaustive-deps */
@@ -288,6 +300,15 @@ export default function ScopeCalculator() {
 
   const finalMode = mode === "final" && surveyComplete;
 
+  /* tier gates — UI mirrors of the backend enforcement, never the other way round */
+  const isOwner = tier === "owner";
+  const isFinalTier = tier === "final";
+  const isSurvey = tier === "survey";
+  const canFinal = isOwner || isFinalTier;
+  const canSurveyToggle = isOwner || isFinalTier || isSurvey;
+  const showBuild = isOwner || isFinalTier;   // price build + man-hour figures + weight detail
+  const showPricing = !isSurvey;              // survey tier sees no pricing at all
+
   const flagged = ROOMS.filter((x) => x.risky && (dens[x.k] || 0) >= 2).map((x) => x.n);
   const overWeight = r.lbs > TRUCK_LBS * r.trucks * 0.92;
   const clear = () => { setDens({}); setCnt({}); setQty({}); setAcc({}); setMat({}); setPack(0); setSurveyComplete(false); setMode("range"); setViewingSaved(null); setRefineFrom(null); setLabel(""); };
@@ -315,7 +336,9 @@ export default function ScopeCalculator() {
 
   const backToLive = () => {
     setViewingSaved(null);
-    getScopePricingApi().then((d) => { const { _updatedAt, ...vals } = d; setLivePricing(vals); }).catch(() => {});
+    if (tier !== "survey") {
+      getScopePricingValuesApi().then((vals) => setLivePricing(vals)).catch(() => {});
+    }
     toast("Back to live pricing — current Settings values apply.");
   };
 
@@ -348,7 +371,15 @@ export default function ScopeCalculator() {
     setSaving(false);
   };
 
-  if (!P) return <div className="text-sm text-faint p-6" data-testid="scope-loading">Loading pricing…</div>;
+  if (tier === "none") {
+    return (
+      <div data-testid="scope-no-access" className="surface p-8 text-center mt-6">
+        <p className="font-display font-bold text-primary text-lg">No calculator access</p>
+        <p className="text-sm text-faint mt-1">The owner hands out calculator access from the Crew page. Ask them if you need it.</p>
+      </div>
+    );
+  }
+  if (!P || tier === null) return <div className="text-sm text-faint p-6" data-testid="scope-loading">Loading pricing…</div>;
 
   const chip = (active) =>
     `flex-1 py-2 min-h-[44px] text-[11px] font-bold rounded transition-colors ${active ? "bg-accent text-accent-foreground" : "bg-surface-sunk text-faint hover:text-primary"}`;
@@ -357,7 +388,10 @@ export default function ScopeCalculator() {
     <div data-testid="scope-calculator-page" className="pb-16">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <PageTitle title="Job Scope Calculator"
-          subtitle={leadId ? <>Scoping for lead: <strong className="text-primary">{leadName || leadId}</strong></> : "Owner tool — scope, range, and firm pricing."} />
+          subtitle={leadId ? <>Scoping for lead: <strong className="text-primary">{leadName || leadId}</strong></>
+            : isOwner ? "Owner tool — scope, range, and firm pricing."
+            : isSurvey ? "Walk the home, scope every room, submit to the owner."
+            : "Scope the move room by room."} />
         <div className="flex flex-wrap items-center gap-2 mb-4">
           <Button data-testid="scope-saved-btn" variant="outline" size="sm" className="gap-1.5"
             onClick={() => { setShowSaved(!showSaved); if (!showSaved) loadSavedList(); }}>
@@ -410,7 +444,8 @@ export default function ScopeCalculator() {
                   </span>
                 </button>
                 <span className="tnum text-ink-2 text-[13px] shrink-0">
-                  {s.result?.mode === "final" && s.result?.finalTotal ? money(s.result.finalTotal) : `${money(s.result?.bandLo || 0)}–${money(s.result?.bandHi || 0)}`}
+                  {s.result?.mode === "final" && s.result?.finalTotal ? money(s.result.finalTotal)
+                    : s.result?.bandLo != null ? `${money(s.result.bandLo)}–${money(s.result.bandHi)}` : "—"}
                 </span>
                 <Button data-testid="scope-saved-refine-btn" size="sm" variant="outline" className="h-7 text-xs shrink-0" onClick={() => startRefine(s)}>
                   Refine
@@ -435,8 +470,11 @@ export default function ScopeCalculator() {
               Labor only
             </button>
           </div>
+          {showPricing && (
           <p className="text-[10.5px] text-faint mt-1">Sets the trip fee ({jobType === "labor" ? moneyCents(P.tripFeeLabor) : moneyCents(P.tripFeeTruck)}) and the price floor ({jobType === "labor" ? money(P.floorLabor) : money(P.floorTruck)}).</p>
+          )}
         </div>
+        {canSurveyToggle && (
         <div>
           <Eyebrow className="mb-1">Survey</Eyebrow>
           <button data-testid="scope-survey-complete-toggle" aria-pressed={surveyComplete}
@@ -445,6 +483,8 @@ export default function ScopeCalculator() {
             {surveyComplete ? "✓ Survey complete" : "Mark survey complete"}
           </button>
         </div>
+        )}
+        {canFinal && (
         <div>
           <Eyebrow className="mb-1">Output</Eyebrow>
           <div className="flex gap-1.5">
@@ -460,6 +500,7 @@ export default function ScopeCalculator() {
             </button>
           </div>
         </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_376px] gap-4 items-start">
@@ -525,7 +566,7 @@ export default function ScopeCalculator() {
                   <div className="grid grid-cols-[1fr_110px] gap-2 items-center py-1.5 border-b border-border" key={it.k}>
                     <span className="text-[13.5px] font-semibold text-primary">{it.n}
                       <span className="tnum text-faint font-normal text-[11px] ml-2">
-                        {it.cf}cf · {it.lbs}lb · +{it.mh}mh{it.bill ? ` · $${it.bill}` : ""}
+                        {it.cf}cf · {it.lbs}lb · +{it.mh}mh{showPricing && it.bill ? ` · $${it.bill}` : ""}
                       </span></span>
                     <Step v={qty[it.k] || 0} lbl={it.n} max={4} set={(v) => setQty({ ...qty, [it.k]: v })} />
                   </div>
@@ -552,7 +593,7 @@ export default function ScopeCalculator() {
               <div className="grid grid-cols-[1fr_110px] gap-2 items-center py-1.5 border-b border-border" key={a.k}>
                 <span className="text-[13.5px] font-semibold text-primary">{a.n}
                   <span className="tnum text-faint font-normal text-[11px] ml-2">
-                    +{a.per}mh{a.bill ? ` · $${a.bill}` : ""}{a.scale ? " ×vol" : ""}</span></span>
+                    +{a.per}mh{showPricing && a.bill ? ` · $${a.bill}` : ""}{a.scale ? " ×vol" : ""}</span></span>
                 {a.count
                   ? <Step v={acc[a.k] || 0} lbl={a.n} max={a.count} set={(v) => setAcc({ ...acc, [a.k]: v })} />
                   : <button className={chip(!!acc[a.k])} aria-pressed={!!acc[a.k]}
@@ -564,11 +605,12 @@ export default function ScopeCalculator() {
             {MATERIALS.map((m) => (
               <div className="grid grid-cols-[1fr_110px] gap-2 items-center py-1.5 border-b border-border" key={m.k}>
                 <span className="text-[13.5px] font-semibold text-primary">{m.n}
-                  <span className="tnum text-faint font-normal text-[11px] ml-2">${m.price} ea</span></span>
+                  {showPricing && <span className="tnum text-faint font-normal text-[11px] ml-2">${m.price} ea</span>}</span>
                 <Step v={mat[m.k] || 0} lbl={m.n} max={m.cap} set={(v) => setMat({ ...mat, [m.k]: v })} />
               </div>
             ))}
 
+            {isOwner && (
             <div className="mt-4 pt-3 border-t border-border">
               <Eyebrow className="mb-1.5">Calibration — man-hours per 100 cu ft</Eyebrow>
               <div className="flex items-center gap-3">
@@ -582,6 +624,7 @@ export default function ScopeCalculator() {
                 every job and move this to match reality after ten of them.
               </p>
             </div>
+            )}
           </div>
         </div>
 
@@ -593,8 +636,10 @@ export default function ScopeCalculator() {
               <div className="text-right">
                 <span className="tnum text-2xl font-semibold text-primary">{r.cf.toLocaleString()}
                   <span className="text-[11px] text-faint font-normal"> cu ft</span></span>
+                {showBuild && (
                 <span className={`tnum text-[15px] font-semibold ml-2.5 ${overWeight ? "text-warning" : "text-faint"}`}>{r.lbs.toLocaleString()}
                   <span className="text-[11px] font-normal"> lb</span></span>
+                )}
               </div>
             </div>
 
@@ -623,16 +668,16 @@ export default function ScopeCalculator() {
               })}
             </svg>
             <div className="text-[11.5px] text-faint">
-              26-ft box: ~{TRUCK_CF.toLocaleString()} usable cu ft, ~{TRUCK_LBS.toLocaleString()} lb payload.
-              Dense loads hit the weight limit before the volume limit.
+              26-ft box: ~{TRUCK_CF.toLocaleString()} usable cu ft{showBuild ? `, ~${TRUCK_LBS.toLocaleString()} lb payload. Dense loads hit the weight limit before the volume limit.` : "."}
             </div>
             {r.trucks > 1 && (
               <div data-testid="scope-trucks-banner" className="mt-2 rounded bg-accent-wash border border-accent/40 px-3 py-2 text-[12.5px] font-bold text-accent-ink leading-snug">
-                {r.trucks} trucks required{overWeight ? " — weight, not volume, is the binding limit" : ""}.
+                {r.trucks} trucks required{showBuild && overWeight ? " — weight, not volume, is the binding limit" : ""}.
               </div>
             )}
           </div>
 
+          {showPricing ? (
           <div className="surface p-4">
             <Eyebrow className={finalMode ? "text-success" : "text-accent-ink"}>
               {finalMode ? "Final quote — survey complete" : "Range — survey not complete · non-binding"}
@@ -662,11 +707,17 @@ export default function ScopeCalculator() {
 
             <div className="mt-3">
               <Stat label="Crew" value={r.crew} />
-              <Stat label="Block on the calendar" value={`${r.onsite.toFixed(1)} hrs`} accent />
-              <Stat label="Billable man-hours" value={r.billMH.toFixed(1)} />
-              <Stat label="Scheduling man-hours" value={r.schedMH.toFixed(1)} last />
+              {showBuild && (
+                <>
+                  <Stat label="Block on the calendar" value={`${r.onsite.toFixed(1)} hrs`} accent />
+                  <Stat label="Billable man-hours" value={r.billMH.toFixed(1)} />
+                  <Stat label="Scheduling man-hours" value={r.schedMH.toFixed(1)} last />
+                </>
+              )}
             </div>
 
+            {showBuild && (
+            <>
             <Eyebrow className="mt-3.5">Price build</Eyebrow>
             <Stat label={`Labor · ${r.billMH.toFixed(1)} mh × ${moneyCents(P.manHourRate)}`} value={money(r.labor)} />
             <Stat label={`Trip fee (${jobType === "labor" ? "labor only" : "truck"}) × ${r.trucks}`} value={money(r.travel)} />
@@ -678,14 +729,26 @@ export default function ScopeCalculator() {
               <Stat label={`Price floor (${jobType === "labor" ? "labor only" : "truck"})`} value={money(r.priceFloor)} />
             )}
             <Stat label={`Rounded UP to next $${inc}`} value={money(finalMode ? finalTotal : bandHi)} last />
+            </>
+            )}
 
-            {r.onsite > 9 && (
+            {showBuild && r.onsite > 9 && (
               <div className="mt-2 rounded bg-destructive text-destructive-foreground px-3 py-2 text-[12.5px] font-bold leading-snug">
                 {r.onsite.toFixed(1)}-hour day. Add crew or split it across two days — the last two hours
                 are when damage claims happen.
               </div>
             )}
           </div>
+          ) : (
+          <div className="surface p-4" data-testid="scope-no-pricing-card">
+            <Eyebrow className="text-info">Survey walkthrough — no pricing at this access level</Eyebrow>
+            <p className="text-[12.5px] text-primary leading-relaxed">
+              Walk every room and set its tier, count the individual items, and note the access conditions.
+              When you've seen everything, press <strong>Mark survey complete</strong> and then
+              <strong> Submit to owner</strong>. The owner prices it from your scope.
+            </p>
+          </div>
+          )}
 
           {!finalMode && flagged.length > 0 && (
             <div className="surface p-4 border-warning/50">
@@ -705,13 +768,18 @@ export default function ScopeCalculator() {
                 onChange={(e) => setLabel(e.target.value)} className="h-9 flex-1" />
               <Button data-testid="scope-save-btn" size="sm" className="gap-1.5 bg-accent hover:bg-accent-press min-h-[44px]"
                 disabled={saving || r.cf === 0} onClick={saveScope}>
-                <Save className="w-3.5 h-3.5" /> {saving ? "Saving…" : refineFrom ? "Save as new version" : "Save scope"}
+                <Save className="w-3.5 h-3.5" /> {saving ? "Saving…" : isSurvey ? "Submit to owner" : refineFrom ? "Save as new version" : "Save scope"}
               </Button>
             </div>
-            <p className="text-[11px] text-faint">Saving snapshots today's pricing values with the quote. Changing Settings later never re-prices a saved scope.</p>
+            <p className="text-[11px] text-faint">
+              {isSurvey
+                ? "Submitting sends your walkthrough scope to the owner — they price it from there."
+                : "Saving snapshots today's pricing values with the quote. Changing Settings later never re-prices a saved scope."}
+            </p>
           </div>
           )}
 
+          {isOwner && (
           <div className="surface p-4">
             <button data-testid="scope-margin-toggle" onClick={() => setOwnerBlock(!ownerBlock)}
               className="text-[11px] font-bold tracking-[.14em] uppercase text-faint hover:text-primary min-h-[44px]">
@@ -739,6 +807,7 @@ export default function ScopeCalculator() {
               );
             })()}
           </div>
+          )}
         </div>
       </div>
     </div>

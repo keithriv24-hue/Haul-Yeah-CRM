@@ -12,7 +12,7 @@ import { useAuth } from "@/components/AuthGate";
 import { NotificationsBell } from "@/components/NotificationsBell";
 import { CrewContactsBubble } from "@/components/CrewContactsBubble";
 import useGpsPing from "@/lib/useGpsPing";
-import { teamNotificationsApi, alertsUnreadApi, markAlertsReadApi } from "@/lib/api";
+import { teamNotificationsApi, alertsUnreadApi, markAlertsReadApi, getScopeAccessApi } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
@@ -40,7 +40,7 @@ const NAV = [
 
   { to: "/leads", label: "Leads", icon: Users, roles: ["owner", "sales"], group: "Sales" },
   { to: "/calculator", label: "Quote Calculator", icon: Calculator, roles: ["sales"], group: "Sales" },
-  { to: "/scope-calculator", label: "Scope Calculator", icon: Boxes, roles: ["owner"], group: "Sales" },
+  { to: "/scope-calculator", label: "Scope Calculator", icon: Boxes, roles: ["owner", "sales"], group: "Sales" },
   { to: "/script", label: "Script", icon: MessageSquareText, roles: ["owner", "sales"], group: "Sales" },
   { to: "/commissions", label: "Commissions", icon: BadgeDollarSign, roles: ["owner", "sales"], group: "Sales" },
   { to: "/contacts", label: "Contacts", icon: BookUser, roles: ["owner"], group: "Sales" },
@@ -161,7 +161,21 @@ const Badge = ({ count, testId, className = "" }) =>
 export default function Layout() {
   const { privacy, togglePrivacy, refreshAll, refreshing, health } = useApp();
   const { role, canSwitch, switchRole, user } = useAuth();
-  const navItems = useMemo(() => NAV.filter((n) => n.roles.includes(role || "owner")), [role]);
+  const [assignedCalc, setAssignedCalc] = useState(false);
+  useEffect(() => {
+    if (role === "crew" || role === "marketing") {
+      getScopeAccessApi().then((d) => setAssignedCalc(!!d.tier)).catch(() => setAssignedCalc(false));
+    } else {
+      setAssignedCalc(false);
+    }
+  }, [role]);
+  const navItems = useMemo(() => {
+    const items = NAV.filter((n) => n.roles.includes(role || "owner"));
+    if (assignedCalc && !items.some((n) => n.to === "/scope-calculator")) {
+      items.push({ to: "/scope-calculator", label: "Scope Calculator", icon: Boxes, roles: [role], group: "Sales" });
+    }
+    return items;
+  }, [role, assignedCalc]);
   const multiRoles = (user?.roles || []).length > 1 ? user.roles : null;
   const switchOptions = multiRoles || (canSwitch ? ["owner", "sales", "employee", "marketing"] : null);
   const [moreOpen, setMoreOpen] = useState(false);

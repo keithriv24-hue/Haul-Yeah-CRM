@@ -30,6 +30,11 @@ export const saveScopePricingApi = (values) => axios.put(`${API}/settings/scope-
 export const saveScopeApi = (payload) => axios.post(`${API}/scopes`, payload).then((r) => r.data);
 export const listScopesApi = (leadId) => axios.get(`${API}/scopes`, { params: leadId ? { lead_id: leadId } : {} }).then((r) => r.data.scopes);
 export const getScopeApi = (id) => axios.get(`${API}/scopes/${id}`).then((r) => r.data);
+export const getScopeAccessApi = () => axios.get(`${API}/scopes/access`).then((r) => r.data);
+export const getScopePricingValuesApi = () => axios.get(`${API}/scopes/pricing-values`).then((r) => r.data);
+export const listCalcAccessApi = () => axios.get(`${API}/users/calculator-access`).then((r) => r.data.access);
+export const setCalcAccessApi = (userId, mode) => axios.put(`${API}/users/${userId}/calculator-access`, { mode }).then((r) => r.data);
+export const removeCalcAccessApi = (userId) => axios.delete(`${API}/users/${userId}/calculator-access`).then((r) => r.data);
 export const listCalcItemsApi = () => axios.get(`${API}/settings/items`).then((r) => r.data.items);
 export const saveCalcItemsApi = (payload) => axios.put(`${API}/settings/items`, payload).then((r) => r.data.items);
 export const getBusinessApi = () => axios.get(`${API}/settings/business`).then((r) => r.data);

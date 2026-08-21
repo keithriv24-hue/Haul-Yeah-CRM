@@ -1,0 +1,30 @@
+{
+  "summary": "Frontend verification of Scope Calculator tier gating + Team-tab calculator-access assignment control. OWNER, SALES, CREW-no-access, ASSIGNMENT flow (grant/toggle/remove), and SURVEY-tier login all verified via Playwright. 8 of 9 review scenarios PASS. One real bug found: SURVEY tier still sees $ amounts on Items (specialty handling bill), Access (stairs/stops bill) and Materials (per-unit price) rows because those inline labels are not gated by showPricing/showBuild — violates the 'no pricing anywhere' spec for survey access.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "ScopeCalculator ITEMS/ACCESS/MATERIALS row labels", "issue": "Survey tier (scope-no-pricing-card visible) still renders 11 dollar-amount strings on the page: '$500'/'$800'/'$400' etc. next to specialty items (piano, safe, pool table, moto), '$85' and '$125' next to stairs/extra-stops access rows, and '$15 ea / $12 ea / $25 ea' next to Materials rows. Spec says 'NO dollar amounts anywhere on the page' for survey tier. Fix: wrap the `$${it.bill}` (line 566), `$${a.bill}` (line 593) and `$${m.price} ea` (line 605) with `{showPricing && …}` so they hide when tier==='survey'.", "selector": "[data-testid=\"scope-calculator-page\"] (survey tier)", "priority": "MEDIUM"},
+      {"component": "ScopeCalculator PageTitle subtitle", "issue": "Non-owner tiers (sales, survey) still see the subtitle 'Owner tool — scope, range, and firm pricing.' — cosmetically inaccurate for non-owner tiers. Minor.", "selector": "PageTitle subtitle on /scope-calculator", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Gate the inline `$` labels on ITEMS (line 566), ACCESS (line 593) and MATERIALS (line 605) behind `showPricing` in ScopeCalculator.jsx — survey tier currently leaks 11 dollar amounts.",
+    "Optional: soften PageTitle subtitle on /scope-calculator for non-owner tiers."
+  ],
+  "critical_code_review_comments": [
+    "ScopeCalculator.jsx is now 813 lines (was 694). Still over the 700-line threshold; prime candidate for extracting ROOMS/ITEMS/ACCESS/MATERIALS constants into a `scopeData.js` module and the pricing engine `price()` into a `useScopePricing` hook.",
+    "Tier gates (isOwner/isFinalTier/isSurvey/canFinal/canSurveyToggle/showBuild/showPricing) are computed in one place and mirrored well on the range/final/margin/calibration/load-card blocks. The three inline `$` labels on line 566/593/605 are the only cases that skip the `showPricing` gate.",
+    "Small: `getScopeAccessApi().catch(() => setTier('none'))` swallows errors silently; a 500 on that endpoint would show 'No calculator access' to an owner. Not currently observed but worth logging."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (already verified via 36 direct-API tests)", "frontend": "89% (8/9 review scenarios pass; 1 real leak found)"},
+  "test_credentials": "Owner HaulYeahAdmin/HaulYeah2026! ; Sales ghost TestSalesAdmin/HaulYeah2026! ; Crew ghost TestCrewAdmin/HaulYeah2026!. qa.crew1@haulyeah.test does NOT exist outside pytest — confirmed 'Wrong email or password'. Fallback flow used: created temp user 'QA Survey Tier' with crew role via owner UI (starting password haulyeah123 → force set new password on first login, only 2 fields shown, no current-input), granted Survey mode, logged in, verified survey UI, then logged back as owner and cleaned up.",
+  "seed_data_creation": "Two temp users created and deleted during the run (QA Temp Calc + QA Survey Tier). Nothing left behind. TestCrewAdmin was NOT modified. No permanent calculator access grants remain.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Step 5/7 tier gating is 99% correct. Only the three inline `$` labels on ITEMS/ACCESS/MATERIALS rows need to be gated behind `showPricing`. All test-IDs listed in the review request exist and behave as specified: scope-no-access, scope-no-pricing-card, scope-band-value, scope-mode-final/range, scope-survey-complete-toggle, scope-margin-toggle, scope-calibration-slider, scope-save-btn (label swaps to 'Submit to owner' for survey), calc-access-grant-btn, calc-access-dialog, calc-access-mode-survey/final, calc-access-confirm-btn, calc-access-toggle-survey/final (immediate switch on click, no confirm dialog), calc-access-remove-btn, calc-access-remove-confirm (confirm dialog reads 'Remove calculator access from {name}?'). Owner rows correctly hide the CalcAccessControl. Sales ghost sees /scope-calculator with band only (no mode buttons, no survey toggle, no calibration, no margin, no lb payload text, no billable-mh, no price build; save btn = 'Save scope'). Crew ghost is redirected to scope-no-access and has no sidebar entry. On assigned crew (survey tier), the sidebar dynamically gets the Scope Calculator link, page loads, save-btn = 'Submit to owner', clicking survey-complete does NOT unlock Final (canFinal=false for pure survey). Also: change-password form only shows New + Confirm fields for a brand-new user (change-current-input is not rendered) — my first script hit a 30s timeout on the current-input selector; fixed by conditional fill in the retry.",
+  "rca of the issue": "SURVEY $-leak: lines 566/593/605 of /app/frontend/src/pages/ScopeCalculator.jsx render `$${it.bill}` (Items), `$${a.bill}` (Access) and `$${m.price} ea` (Materials) unconditionally. The pricing gate `showPricing` is only applied to the range/final band, price-build stats, and the 'lb payload' hint. Reproduction: log in as any user granted `calculator_access='survey'`, open /scope-calculator, scroll to Items/Access/Materials rows — dollar figures like `$500`, `$85`, `$15 ea` are visible next to row labels. Mitigation: wrap those template literals with `{showPricing && …}` (or omit the ` · $X` segment when `!showPricing`)."
+}

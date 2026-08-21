@@ -6,21 +6,23 @@ import { listScopesApi } from "@/lib/api";
 
 const money = (n) => "$" + Math.round(n || 0).toLocaleString();
 
-const scopePrice = (s) =>
-  s.result?.mode === "final" && s.result?.finalTotal
-    ? `${money(s.result.finalTotal)} firm`
-    : `${money(s.result?.bandLo)}–${money(s.result?.bandHi)} range`;
+const scopePrice = (s) => {
+  if (s.result?.mode === "final" && s.result?.finalTotal) return `${money(s.result.finalTotal)} firm`;
+  if (s.result?.bandLo != null) return `${money(s.result.bandLo)}–${money(s.result.bandHi)} range`;
+  return s.tier === "survey" ? "Survey scope — priced by owner" : "No price yet";
+};
 
-export const LeadScopesCard = ({ leadId, leadName, isOwner }) => {
+export const LeadScopesCard = ({ leadId, leadName, role }) => {
   const navigate = useNavigate();
   const [scopes, setScopes] = useState(null);
+  const canSee = role === "owner" || role === "sales";
 
   useEffect(() => {
-    if (!isOwner) return;
+    if (!canSee) return;
     listScopesApi(leadId).then(setScopes).catch(() => setScopes([]));
-  }, [leadId, isOwner]);
+  }, [leadId, canSee]);
 
-  if (!isOwner) return null;
+  if (!canSee) return null;
 
   const go = (extra = "") =>
     navigate(`/scope-calculator?lead=${encodeURIComponent(leadId)}&name=${encodeURIComponent(leadName || "")}${extra}`);

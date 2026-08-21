@@ -589,7 +589,50 @@ async def save_scope_pricing(payload: ScopePricingPayload, p: Dict[str, Any] = D
     return {**values, "_updatedAt": stamps}
 
 
-# ------- Saved job scopes (lead_scopes collection; owner-only in step 3, tiers come in step 5)
+# ------- Saved job scopes (lead_scopes) + calculator access tiers
+# Tiers: owner (everything) · final (final quotes, no margin) · survey (no pricing) · sales (range only)
+
+SCOPE_MONETARY_KEYS = ("bandLo", "bandHi", "finalTotal", "deposit")
+
+
+async def scope_tier_for(p: Dict[str, Any]) -> Optional[str]:
+    if p.get("role") == "owner":
+        return "owner"
+    user = await mongo_db.users.find_one({"_id": p["user_id"]}) if p.get("user_id") else None
+    calc = (user or {}).get("calculator_access")
+    if calc in ("survey", "final"):
+        return calc
+    roles = (user or {}).get("roles") or []
+    if p.get("role") == "sales" or "sales" in roles:
+        return "sales"
+    return None
+
+
+async def require_scope_tier(request: Request) -> Tuple[Dict[str, Any], str]:
+    p = await current_principal(request)
+    tier = await scope_tier_for(p)
+    if not tier:
+        raise HTTPException(status_code=403, detail="You don't have calculator access.")
+    return p, tier
+
+
+def redact_scope_doc(doc: Dict[str, Any], tier: str) -> Dict[str, Any]:
+    """Never let margin/pricing data reach a tier that shouldn't see it — even in payloads."""
+    if tier == "owner":
+        return doc
+    d = dict(doc)
+    result = dict(d.get("result") or {})
+    if tier == "survey":
+        d["pricing"] = {}
+        for k in SCOPE_MONETARY_KEYS:
+            result.pop(k, None)
+    elif tier == "sales":
+        d["pricing"] = {}
+        result.pop("finalTotal", None)
+        result.pop("deposit", None)
+    d["result"] = result
+    return d
+
 
 class ScopeSavePayload(BaseModel):
     lead_id: Optional[str] = None
@@ -601,41 +644,106 @@ class ScopeSavePayload(BaseModel):
     refined_from: Optional[str] = None
 
 
+@api_router.get("/scopes/access")
+async def scope_access(request: Request):
+    p = await current_principal(request)
+    return {"tier": await scope_tier_for(p)}
+
+
+@api_router.get("/scopes/pricing-values")
+async def scope_pricing_values(request: Request):
+    p, tier = await require_scope_tier(request)
+    if tier == "survey":
+        raise HTTPException(status_code=403, detail="Survey access doesn't include pricing.")
+    return await get_scope_pricing_values()
+
+
 @api_router.post("/scopes")
-async def save_scope(payload: ScopeSavePayload, p: Dict[str, Any] = Depends(require_owner)):
-    pricing = {k: float(payload.pricing.get(k, v)) for k, v in DEFAULT_SCOPE_PRICING.items()}
+async def save_scope(payload: ScopeSavePayload, request: Request):
+    p, tier = await require_scope_tier(request)
+    if payload.survey_complete and tier == "sales":
+        raise HTTPException(status_code=403, detail="Sales access can't mark a survey complete.")
+    wants_final = (payload.result or {}).get("mode") == "final" or (payload.inputs or {}).get("mode") == "final"
+    if wants_final and tier not in ("owner", "final"):
+        raise HTTPException(status_code=403, detail="Your access level can't produce a final quote.")
+    if tier == "survey":
+        pricing = await get_scope_pricing_values()  # server-side snapshot; never returned to this tier
+    else:
+        pricing = {k: float(payload.pricing.get(k, v)) for k, v in DEFAULT_SCOPE_PRICING.items()}
+    result = dict(payload.result or {})
+    if tier == "survey":
+        for k in SCOPE_MONETARY_KEYS:
+            result[k] = None
     doc = {
         "_id": str(uuid4()),
         "lead_id": payload.lead_id or None,
         "label": (payload.label or "").strip(),
-        "created_by": p.get("name") or "Owner",
+        "created_by": p.get("name") or p.get("role") or "Unknown",
         "created_by_id": p.get("user_id"),
-        "tier": "owner",
+        "tier": tier,
         "inputs": payload.inputs,
         "pricing": pricing,
-        "result": payload.result,
+        "result": result,
         "survey_complete": bool(payload.survey_complete),
         "refined_from": payload.refined_from or None,
         "created_at": now_iso(),
         "updated_at": now_iso(),
     }
     await mongo_db.lead_scopes.insert_one(doc)
-    return doc
+    return redact_scope_doc(doc, tier)
 
 
 @api_router.get("/scopes")
-async def list_scopes(lead_id: Optional[str] = None, p: Dict[str, Any] = Depends(require_owner)):
+async def list_scopes(request: Request, lead_id: Optional[str] = None):
+    p, tier = await require_scope_tier(request)
     query = {"lead_id": lead_id} if lead_id else {}
     docs = await mongo_db.lead_scopes.find(query).sort("created_at", -1).to_list(100)
-    return {"scopes": docs}
+    return {"scopes": [redact_scope_doc(d, tier) for d in docs]}
 
 
 @api_router.get("/scopes/{scope_id}")
-async def get_scope(scope_id: str, p: Dict[str, Any] = Depends(require_owner)):
+async def get_scope(scope_id: str, request: Request):
+    p, tier = await require_scope_tier(request)
     doc = await mongo_db.lead_scopes.find_one({"_id": scope_id})
     if not doc:
         raise HTTPException(status_code=404, detail="No such saved scope.")
-    return doc
+    return redact_scope_doc(doc, tier)
+
+
+# ------- Calculator access assignment (owner-only)
+
+class CalcAccessPayload(BaseModel):
+    mode: str
+
+
+@api_router.get("/users/calculator-access")
+async def list_calculator_access(p: Dict[str, Any] = Depends(require_owner)):
+    docs = await mongo_db.users.find({"calculator_access": {"$in": ["survey", "final"]}}).to_list(200)
+    return {"access": {d["_id"]: d["calculator_access"] for d in docs}}
+
+
+@api_router.put("/users/{user_id}/calculator-access")
+async def set_calculator_access(user_id: str, payload: CalcAccessPayload, p: Dict[str, Any] = Depends(require_owner)):
+    if payload.mode not in ("survey", "final"):
+        raise HTTPException(status_code=422, detail="Mode must be 'survey' or 'final'.")
+    u = await mongo_db.users.find_one({"_id": user_id})
+    if not u:
+        raise HTTPException(status_code=404, detail="No such team member.")
+    prev = u.get("calculator_access")
+    await mongo_db.users.update_one({"_id": user_id}, {"$set": {"calculator_access": payload.mode}})
+    await audit(p, "changed calculator access mode" if prev else "granted calculator access",
+                u.get("name") or user_id, {"mode": payload.mode, "was": prev})
+    return {"user_id": user_id, "calculator_access": payload.mode}
+
+
+@api_router.delete("/users/{user_id}/calculator-access")
+async def remove_calculator_access(user_id: str, p: Dict[str, Any] = Depends(require_owner)):
+    u = await mongo_db.users.find_one({"_id": user_id})
+    if not u:
+        raise HTTPException(status_code=404, detail="No such team member.")
+    await mongo_db.users.update_one({"_id": user_id}, {"$unset": {"calculator_access": ""}})
+    await audit(p, "removed calculator access", u.get("name") or user_id, {"was": u.get("calculator_access")})
+    return {"user_id": user_id, "calculator_access": None}
 
 
 DEFAULT_ITEMS = [

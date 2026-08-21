@@ -266,7 +266,7 @@ export default function LeadDetail() {
 
           <CommissionCard lead={lead} isOwner={isOwner} />
 
-          <LeadScopesCard leadId={lead.id} leadName={name} isOwner={isOwner} />
+          <LeadScopesCard leadId={lead.id} leadName={name} role={role} />
 
           <div className="surface p-5" data-testid="lead-detail-actions">
             <h2 className="font-display font-bold text-primary mb-3">Actions</h2>

@@ -191,3 +191,12 @@ User choices: phase order approved · route optimization = free OSRM/OpenStreetM
 - Verified (curl + UI): originals never overwritten across refine & fresh saves; newest-first order; refined_from chains recorded; UI refine flow end-to-end (banner, prefill, save-as-new-version, snapshot banner). Build exit 0, lint clean. users collection fields unchanged.
 - NOTE: LeadDetail on-lead card untestable with a real lead in preview (Airtable key missing) — verified via direct URL param flow instead.
 - Next: Step 5 (access tiers + Crew-page assignment control + backend enforcement) — awaiting user.
+
+## 2026-08-21 — Step 5 DONE: Access tiers + assignment control + backend enforcement
+- Tier resolution (scope_tier_for): owner role → owner; users.calculator_access ("survey"/"final") → that; sales role/roles → sales; else none.
+- New endpoints: GET /api/scopes/access (tier), GET /api/scopes/pricing-values (403 for survey/none), PUT/DELETE /api/users/{id}/calculator-access + GET /api/users/calculator-access (owner-only, audit-logged via existing audit()).
+- POST/GET /api/scopes now tier-gated with redact_scope_doc: sales loses finalTotal/deposit/pricing; survey loses ALL monetary + pricing (server injects snapshot for owner's benefit); final full minus margin (margin never stored/served). Final-quote saves + survey_complete rejected per tier (403).
+- Frontend: ScopeCalculator tier gates (no-access page, survey no-pricing card + Submit to owner, sales range-only: no mode buttons/survey toggle/price build/man-hours/weight/calibration/margin; final = owner minus margin+calibration). Layout: static nav owner+sales, dynamic for assigned crew/marketing. Routes added to sales/crew/marketing branches. TeamTab CalcAccessControl (grant dialog w/ Confirm, immediate 2-way toggle, ✕ w/ confirm; hidden on owner rows). LeadScopesCard now owner+sales.
+- users doc: NEW optional field calculator_access only. Login flow untouched.
+- Verified: 36/36 direct-API enforcement tests (script /tmp/test_tiers.py, all tiers, immediate toggle/removal, audit trail 3 entries); testing agent iteration_25 8/9 → survey $-leak in Items/Access/Materials labels fixed + retested (0 dollar strings); build exit 0; crew/team/auth pytest 98 passed (1 known parallel flake passes isolated).
+- Next: Step 6 (video survey fields on lead_scopes; video counts as completed survey) — awaiting user.

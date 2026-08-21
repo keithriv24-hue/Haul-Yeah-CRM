@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { UserPlus, KeyRound, UserX, UserCheck, Truck, Plus, DollarSign, Pencil, Trash2, IdCard, Copy } from "lucide-react";
+import { UserPlus, KeyRound, UserX, UserCheck, Truck, Plus, DollarSign, Pencil, Trash2, IdCard, Copy, Calculator } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -15,7 +15,7 @@ import { EmployeeFileDialog } from "@/components/crew/EmployeeFileDialog";
 import { SearchBar, searchMatch } from "@/components/Bits";
 import {
   listUsersApi, createUserApi, patchUserApi, deleteUserApi, listTrucksApi, createTruckApi, patchTruckApi, deleteTruckApi,
-  getCrewRatesApi, saveCrewRatesApi, apiErrorMessage,
+  getCrewRatesApi, saveCrewRatesApi, apiErrorMessage, listCalcAccessApi, setCalcAccessApi, removeCalcAccessApi,
 } from "@/lib/api";
 
 const ROW_LINK =
@@ -26,6 +26,106 @@ const ROLE_BADGE = {
   sales: "bg-info/12 text-info border-info/30",
   crew: "bg-accent/12 text-accent-ink border-accent/30",
   marketing: "bg-success/12 text-success border-success/30",
+};
+
+/* Owner-only control: grant / toggle / remove Job Scope Calculator access */
+const CalcAccessControl = ({ user, mode, onChanged }) => {
+  const [pickOpen, setPickOpen] = useState(false);
+  const [picked, setPicked] = useState("survey");
+  const [busy, setBusy] = useState(false);
+
+  const grant = async () => {
+    setBusy(true);
+    try {
+      await setCalcAccessApi(user.id, picked);
+      toast.success(`${user.name} now has calculator access — ${picked === "survey" ? "Survey quote" : "Final quote"} mode.`);
+      setPickOpen(false);
+      onChanged();
+    } catch (e) { toast.error(apiErrorMessage(e)); }
+    setBusy(false);
+  };
+
+  const toggle = async (m) => {
+    if (m === mode) return;
+    try {
+      await setCalcAccessApi(user.id, m);
+      toast.success(`${user.name} switched to ${m === "survey" ? "Survey quote" : "Final quote"} mode.`);
+      onChanged();
+    } catch (e) { toast.error(apiErrorMessage(e)); }
+  };
+
+  const remove = async () => {
+    try {
+      await removeCalcAccessApi(user.id);
+      toast.success(`Calculator access removed from ${user.name}.`);
+      onChanged();
+    } catch (e) { toast.error(apiErrorMessage(e)); }
+  };
+
+  if (!mode) {
+    return (
+      <>
+        <Button data-testid="calc-access-grant-btn" variant="outline" size="sm" className="gap-1.5"
+          onClick={() => { setPicked("survey"); setPickOpen(true); }}>
+          <Calculator className="w-3.5 h-3.5" /> Give calculator access
+        </Button>
+        <Dialog open={pickOpen} onOpenChange={setPickOpen}>
+          <DialogContent data-testid="calc-access-dialog">
+            <DialogHeader>
+              <DialogTitle className="font-display">Calculator access for {user.name}</DialogTitle>
+              <DialogDescription>Pick which mode they start in. You can flip it any time from their row.</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-2">
+              <button data-testid="calc-access-mode-survey" onClick={() => setPicked("survey")}
+                className={`w-full text-left rounded-lg border p-3 ${picked === "survey" ? "border-accent bg-accent-wash" : "border-border"}`}>
+                <p className="font-semibold text-primary text-sm">Survey quote</p>
+                <p className="text-xs text-faint mt-0.5">Walks the home, scopes every room, marks the survey complete and submits to you. Sees no pricing at all.</p>
+              </button>
+              <button data-testid="calc-access-mode-final" onClick={() => setPicked("final")}
+                className={`w-full text-left rounded-lg border p-3 ${picked === "final" ? "border-accent bg-accent-wash" : "border-border"}`}>
+                <p className="font-semibold text-primary text-sm">Final quote</p>
+                <p className="text-xs text-faint mt-0.5">Can produce a firm price and deposit like you. Margin and crew costs stay hidden.</p>
+              </button>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setPickOpen(false)}>Cancel</Button>
+              <Button data-testid="calc-access-confirm-btn" disabled={busy} onClick={grant} className="bg-accent hover:bg-accent-press">Confirm</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </>
+    );
+  }
+
+  return (
+    <span className="inline-flex items-center gap-1" data-testid="calc-access-control">
+      <span className="inline-flex rounded-md border border-border overflow-hidden">
+        <button data-testid="calc-access-toggle-survey" onClick={() => toggle("survey")}
+          className={`px-2 py-1.5 text-[11px] font-bold ${mode === "survey" ? "bg-accent text-accent-foreground" : "bg-surface-sunk text-faint hover:text-primary"}`}>
+          Survey quote
+        </button>
+        <button data-testid="calc-access-toggle-final" onClick={() => toggle("final")}
+          className={`px-2 py-1.5 text-[11px] font-bold ${mode === "final" ? "bg-accent text-accent-foreground" : "bg-surface-sunk text-faint hover:text-primary"}`}>
+          Final quote
+        </button>
+      </span>
+      <AlertDialog>
+        <AlertDialogTrigger asChild>
+          <button data-testid="calc-access-remove-btn" aria-label={`Remove calculator access from ${user.name}`}
+            className="w-7 h-7 inline-flex items-center justify-center rounded-md text-destructive hover:bg-destructive/10 font-bold">✕</button>
+        </AlertDialogTrigger>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="font-display">Remove calculator access from {user.name}?</AlertDialogTitle>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep it</AlertDialogCancel>
+            <AlertDialogAction data-testid="calc-access-remove-confirm" onClick={remove} className="bg-destructive hover:bg-destructive/90">Yes, remove</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </span>
+  );
 };
 
 const RoleChecks = ({ roles, onToggle, idPrefix }) => (
@@ -208,6 +308,7 @@ const EditTruckDialog = ({ truck, onOpenChange, onSaved }) => {
 export const TeamTab = () => {
   const [users, setUsers] = useState([]);
   const [trucks, setTrucks] = useState([]);
+  const [calcAccess, setCalcAccess] = useState({});
   const [rates, setRates] = useState({ driver: 28, helper: 24 });
   const [addOpen, setAddOpen] = useState(false);
   const [resetUser, setResetUser] = useState(null);
@@ -220,10 +321,11 @@ export const TeamTab = () => {
 
   const load = useCallback(async () => {
     try {
-      const [u, t, r] = await Promise.all([listUsersApi(), listTrucksApi(), getCrewRatesApi()]);
+      const [u, t, r, ca] = await Promise.all([listUsersApi(), listTrucksApi(), getCrewRatesApi(), listCalcAccessApi().catch(() => ({}))]);
       setUsers(u);
       setTrucks(t);
       setRates(r);
+      setCalcAccess(ca);
     } catch (e) {
       toast.error(apiErrorMessage(e));
     }
@@ -329,6 +431,9 @@ export const TeamTab = () => {
                 <Button data-testid="edit-roles-btn" variant="outline" size="sm" className="gap-1.5" onClick={() => setRolesUser(u)}>
                   <Pencil className="w-3.5 h-3.5" /> Roles
                 </Button>
+                {!(u.roles?.length ? u.roles : [u.role]).includes("owner") && (
+                  <CalcAccessControl user={u} mode={calcAccess[u.id]} onChanged={load} />
+                )}
                 <div className="ml-auto flex flex-wrap items-center gap-x-0.5 sm:ml-1">
                   {u.active && (
                     <button data-testid="copy-invite-btn" onClick={() => copyInvite(u)} className={ROW_LINK}>
