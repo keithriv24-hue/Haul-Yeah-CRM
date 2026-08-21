@@ -10,20 +10,20 @@ export const BADGE_ICONS = {
 };
 
 const RARITY_RING = {
-  bronze: "from-amber-500 via-amber-600 to-amber-800",
-  silver: "from-slate-300 via-slate-400 to-slate-500",
-  gold: "from-yellow-300 via-amber-400 to-amber-500",
+  bronze: "from-warning via-amber-600 to-warning",
+  silver: "from-border-strong via-slate-400 to-faint",
+  gold: "from-warning via-amber-400 to-warning",
 };
 
 export const RARITY_CHIP = {
-  bronze: "bg-amber-100 text-amber-800 border-amber-300",
-  silver: "bg-slate-100 text-slate-600 border-slate-300",
-  gold: "bg-yellow-100 text-yellow-800 border-yellow-300",
+  bronze: "bg-warning/12 text-warning border-warning/30",
+  silver: "bg-surface-sunk text-ink-2 border-border-strong",
+  gold: "bg-warning/12 text-warning border-warning/30",
 };
 
 export const TEAM_CHIP = {
-  crew: "bg-orange-100 text-orange-800 border-orange-300",
-  sales: "bg-sky-100 text-sky-800 border-sky-300",
+  crew: "bg-accent/12 text-accent-ink border-accent/30",
+  sales: "bg-info/12 text-info border-info/30",
 };
 
 const SIZES = {
@@ -40,11 +40,11 @@ export const BadgeMedallion = ({ badge, unlocked = true, size = "md", testId }) 
       data-testid={testId || "badge-medallion"}
       title={`${badge.name}${badge.description ? ` — ${badge.description}` : ""}`}
       className={`rounded-full shrink-0 ${s.outer} ${
-        unlocked ? `bg-gradient-to-br ${RARITY_RING[badge.rarity] || RARITY_RING.bronze} shadow-sm` : "bg-slate-200"
+        unlocked ? `bg-gradient-to-br ${RARITY_RING[badge.rarity] || RARITY_RING.bronze} shadow-sm` : "bg-muted"
       }`}
     >
-      <div className={`w-full h-full rounded-full flex items-center justify-center ${unlocked ? "bg-[#1B2A4A]" : "bg-slate-100"}`}>
-        <Icon className={`${s.icon} ${unlocked ? "text-[#E8743B]" : "text-slate-300"}`} />
+      <div className={`w-full h-full rounded-full flex items-center justify-center ${unlocked ? "bg-primary" : "bg-surface-sunk"}`}>
+        <Icon className={`${s.icon} ${unlocked ? "text-accent-ink" : "text-faint/70"}`} />
       </div>
     </div>
   );

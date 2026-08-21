@@ -36,25 +36,25 @@ export default function DaysOff() {
   return (
     <div data-testid="days-off-page" className="space-y-6 max-w-xl">
       <div>
-        <h1 className="text-2xl font-bold text-[#1B2A4A]">Days Off</h1>
-        <p className="text-sm text-slate-500">Tell the boss when you can't work.</p>
+        <h1 className="text-2xl font-bold text-primary">Days Off</h1>
+        <p className="text-sm text-faint">Tell the boss when you can't work.</p>
       </div>
       <InstructionBanner testId="days-off-banner">
         Tap any day you can't work — it turns red so you won't get booked. Tap again if plans change.
       </InstructionBanner>
-      <div className="bg-white rounded-lg border border-slate-200 p-4">
+      <div className="surface p-4">
         <div className="flex items-center justify-between mb-3">
           <Button data-testid="daysoff-prev-month" variant="outline" size="sm" onClick={() => setMonth((m) => m.subtract(1, "month"))}>
             <ChevronLeft className="w-4 h-4" />
           </Button>
-          <p data-testid="daysoff-month-label" className="font-bold text-[#1B2A4A]">{month.format("MMMM YYYY")}</p>
+          <p data-testid="daysoff-month-label" className="font-bold text-primary">{month.format("MMMM YYYY")}</p>
           <Button data-testid="daysoff-next-month" variant="outline" size="sm" onClick={() => setMonth((m) => m.add(1, "month"))}>
             <ChevronRight className="w-4 h-4" />
           </Button>
         </div>
         <div className="grid grid-cols-7 gap-1 text-center">
           {WEEKDAYS.map((d) => (
-            <div key={d} className="text-[10px] uppercase tracking-wide text-slate-400 font-bold py-1">{d}</div>
+            <div key={d} className="text-[10px] uppercase tracking-wide text-faint font-bold py-1">{d}</div>
           ))}
           {cells.map((d, i) => {
             if (d === null) return <div key={`b${i}`} />;
@@ -68,8 +68,8 @@ export default function DaysOff() {
                 data-date={dateStr}
                 onClick={() => toggle(dateStr)}
                 className={`aspect-square rounded-md text-sm font-semibold flex flex-col items-center justify-center transition-colors ${
-                  off ? "bg-red-500 text-white border border-red-600 shadow-inner" : "bg-slate-50 text-[#1B2A4A] border border-transparent hover:border-slate-300"
-                } ${isToday ? "ring-2 ring-[#E8743B]" : ""}`}
+                  off ? "bg-destructive text-white border border-destructive shadow-inner" : "bg-surface-sunk text-primary border border-transparent hover:border-border-strong"
+                } ${isToday ? "ring-2 ring-accent" : ""}`}
               >
                 {d}
                 {off && <span className="text-[8px] font-bold uppercase">off</span>}
@@ -78,7 +78,7 @@ export default function DaysOff() {
           })}
         </div>
       </div>
-      <p className="text-xs text-slate-400">Weekends are our busy days — flag them early if you need one off.</p>
+      <p className="text-xs text-faint">Weekends are our busy days — flag them early if you need one off.</p>
     </div>
   );
 }

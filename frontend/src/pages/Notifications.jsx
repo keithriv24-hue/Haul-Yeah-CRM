@@ -13,10 +13,10 @@ import { SocialFeed } from "@/components/SocialFeed";
 
 const KIND_ICON = { new_lead: UserPlus, booked: Handshake, review: Star, custom: Bell };
 const KIND_COLOR = {
-  new_lead: "bg-sky-100 text-sky-700 border-sky-200",
-  booked: "bg-emerald-100 text-emerald-700 border-emerald-200",
-  review: "bg-yellow-100 text-yellow-700 border-yellow-200",
-  custom: "bg-slate-100 text-slate-600 border-slate-200",
+  new_lead: "bg-info/12 text-info border-info/25",
+  booked: "bg-success/12 text-success border-success/25",
+  review: "bg-warning/12 text-warning border-warning/25",
+  custom: "bg-surface-sunk text-ink-2 border-border",
 };
 
 const ago = (iso) => {
@@ -36,17 +36,17 @@ const LeadTimer = ({ createdAt, contactedAt }) => {
   if (contactedAt) {
     const mins = Math.max(0, Math.round((new Date(contactedAt) - new Date(createdAt)) / 60000));
     return (
-      <span data-testid="lead-timer-contacted" className="border rounded-full px-2 py-0.5 text-[11px] font-bold bg-emerald-100 text-emerald-700 border-emerald-300">
+      <span data-testid="lead-timer-contacted" className="border rounded-full px-2 py-0.5 text-[11px] font-bold bg-success/12 text-success border-success/30">
         Contacted in {mins}m
       </span>
     );
   }
   const mins = Math.floor((Date.now() - new Date(createdAt).getTime()) / 60000);
   const cls = mins >= 15
-    ? "bg-red-600 text-white border-red-600 animate-pulse"
+    ? "bg-destructive text-white border-destructive animate-pulse"
     : mins >= 5
-      ? "bg-orange-500 text-white border-orange-500"
-      : "bg-emerald-100 text-emerald-700 border-emerald-300";
+      ? "bg-accent text-white border-accent"
+      : "bg-success/12 text-success border-success/30";
   return (
     <span data-testid="lead-timer" className={`border rounded-full px-2 py-0.5 text-[11px] font-bold ${cls}`}>
       Uncontacted {mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins}m`}
@@ -63,16 +63,16 @@ const AlertRow = ({ a, canOpenLead }) => {
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex flex-wrap items-center gap-2">
-          <span className={`text-sm ${a.unread ? "font-bold text-[#1B2A4A]" : "font-semibold text-slate-600"}`}>{a.title}</span>
+          <span className={`text-sm ${a.unread ? "font-bold text-primary" : "font-semibold text-ink-2"}`}>{a.title}</span>
           {a.kind === "new_lead" && <LeadTimer createdAt={a.created_at} contactedAt={a.contacted_at} />}
-          {a.source === "zapier" && <Badge variant="outline" className="text-[9px] gap-0.5 text-slate-500"><Zap className="w-2.5 h-2.5" /> Zapier</Badge>}
+          {a.source === "zapier" && <Badge variant="outline" className="text-[9px] gap-0.5 text-faint"><Zap className="w-2.5 h-2.5" /> Zapier</Badge>}
         </div>
-        {a.body && <p className="text-xs text-slate-500 mt-0.5">{a.body}</p>}
+        {a.body && <p className="text-xs text-faint mt-0.5">{a.body}</p>}
       </div>
-      <span className="text-[11px] text-slate-400 shrink-0">{ago(a.created_at)}</span>
+      <span className="text-[11px] text-faint shrink-0">{ago(a.created_at)}</span>
     </div>
   );
-  const cls = `block border-b border-slate-100 last:border-0 ${a.unread ? "bg-orange-50/50" : ""} ${canOpenLead && a.lead_id ? "hover:bg-slate-50" : ""}`;
+  const cls = `block border-b border-border last:border-0 ${a.unread ? "bg-accent/10" : ""} ${canOpenLead && a.lead_id ? "hover:bg-surface-sunk" : ""}`;
   return canOpenLead && a.lead_id ? (
     <Link data-testid="alert-row" to={`/leads/${a.lead_id}`} className={cls}>{inner}</Link>
   ) : (
@@ -89,14 +89,14 @@ const ZapierCard = () => {
   const url = `${process.env.REACT_APP_BACKEND_URL}${info.path}?token=${info.token}`;
   const copy = () => navigator.clipboard.writeText(url).then(() => toast.success("Webhook URL copied.")).catch(() => toast.error("Couldn't copy."));
   return (
-    <div data-testid="zapier-webhook-card" className="bg-white border border-slate-200 rounded-lg p-4 mt-4">
-      <h3 className="font-bold text-[#1B2A4A] flex items-center gap-2"><Zap className="w-4 h-4 text-[#E8743B]" /> Push alerts in from Zapier <span className="text-xs font-normal text-slate-400">(only you see this)</span></h3>
-      <p className="text-xs text-slate-500 mt-1">
+    <div data-testid="zapier-webhook-card" className="surface p-4 mt-4">
+      <h3 className="font-bold text-primary flex items-center gap-2"><Zap className="w-4 h-4 text-accent-ink" /> Push alerts in from Zapier <span className="text-xs font-normal text-faint">(only you see this)</span></h3>
+      <p className="text-xs text-faint mt-1">
         In Zapier: pick a trigger (new Google review, form entry, anything) → add a <strong>Webhooks by Zapier → POST</strong> step → paste this URL.
-        Optional JSON fields: <code className="bg-slate-100 px-1 rounded">kind</code> (new_lead / booked / review / custom), <code className="bg-slate-100 px-1 rounded">title</code>, <code className="bg-slate-100 px-1 rounded">body</code>, <code className="bg-slate-100 px-1 rounded">lead_name</code>.
+        Optional JSON fields: <code className="bg-surface-sunk px-1 rounded">kind</code> (new_lead / booked / review / custom), <code className="bg-surface-sunk px-1 rounded">title</code>, <code className="bg-surface-sunk px-1 rounded">body</code>, <code className="bg-surface-sunk px-1 rounded">lead_name</code>.
       </p>
       <div className="flex items-center gap-2 mt-2">
-        <code data-testid="zapier-webhook-url" className="flex-1 text-[11px] bg-slate-50 border border-slate-200 rounded px-2 py-1.5 truncate">{url}</code>
+        <code data-testid="zapier-webhook-url" className="flex-1 text-[11px] bg-surface-sunk border border-border rounded px-2 py-1.5 truncate">{url}</code>
         <Button data-testid="zapier-copy-btn" variant="outline" size="sm" className="gap-1.5" onClick={copy}><Copy className="w-3.5 h-3.5" /> Copy</Button>
       </div>
     </div>
@@ -104,13 +104,13 @@ const ZapierCard = () => {
 };
 
 const ComingSoonCard = ({ icon: Icon, title, note, testId }) => (
-  <div data-testid={testId} className="bg-white border border-dashed border-slate-300 rounded-lg p-5 flex items-start gap-3">
-    <div className="w-10 h-10 rounded-lg bg-slate-100 flex items-center justify-center shrink-0">
-      <Icon className="w-5 h-5 text-slate-400" />
+  <div data-testid={testId} className="bg-surface border border-dashed border-border-strong rounded-lg p-5 flex items-start gap-3">
+    <div className="w-10 h-10 rounded-lg bg-surface-sunk flex items-center justify-center shrink-0">
+      <Icon className="w-5 h-5 text-faint" />
     </div>
     <div>
-      <p className="font-semibold text-[#1B2A4A] flex items-center gap-1.5">{title} <Lock className="w-3.5 h-3.5 text-slate-300" /></p>
-      <p className="text-xs text-slate-500 mt-0.5">{note}</p>
+      <p className="font-semibold text-primary flex items-center gap-1.5">{title} <Lock className="w-3.5 h-3.5 text-faint/70" /></p>
+      <p className="text-xs text-faint mt-0.5">{note}</p>
     </div>
   </div>
 );
@@ -136,9 +136,9 @@ export default function Notifications() {
   const pendingBoxes = (gmail?.mailboxes || []).filter((m) => !m.connected);
 
   const Feed = ({ items }) => (
-    <div className="bg-white border border-slate-200 rounded-lg mt-3" data-testid="alerts-feed">
+    <div className="surface mt-3" data-testid="alerts-feed">
       {items.length === 0 ? (
-        <p className="text-sm text-slate-400 text-center py-10">Nothing here yet. New leads, bookings, and reviews will land in this feed.</p>
+        <p className="text-sm text-faint text-center py-10">Nothing here yet. New leads, bookings, and reviews will land in this feed.</p>
       ) : (
         items.map((a) => <AlertRow key={a.id} a={a} canOpenLead={canOpenLead} />)
       )}
@@ -181,8 +181,8 @@ export default function Notifications() {
                   />
                 ))}
                 {isOwner && (
-                  <p className="text-xs text-slate-500">
-                    Hook these up on the <Link to="/settings" className="font-semibold text-[#E8743B] hover:underline" data-testid="email-setup-link">Settings page</Link> — takes one Google sign-in per inbox.
+                  <p className="text-xs text-faint">
+                    Hook these up on the <Link to="/settings" className="font-semibold text-accent-ink hover:underline" data-testid="email-setup-link">Settings page</Link> — takes one Google sign-in per inbox.
                   </p>
                 )}
               </div>

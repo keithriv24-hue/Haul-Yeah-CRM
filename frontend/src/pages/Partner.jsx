@@ -41,10 +41,10 @@ export default function Partner() {
         <KpiCard testId="partner-avg-job" label="Average job value" value={fmtMoney(avgJob)} sub={`${projects.length} active jobs`} />
       </div>
 
-      <div className="border border-[#1B2A4A]/15 bg-white rounded-lg p-6 flex items-start gap-3">
-        <Handshake className="w-6 h-6 text-[#E8743B] shrink-0" />
-        <div className="text-sm text-slate-600">
-          <p className="font-semibold text-[#1B2A4A] mb-1">How to read this page</p>
+      <div className="border border-primary/15 bg-surface rounded-lg p-6 flex items-start gap-3">
+        <Handshake className="w-6 h-6 text-accent-ink shrink-0" />
+        <div className="text-sm text-ink-2">
+          <p className="font-semibold text-primary mb-1">How to read this page</p>
           <p>
             Booked revenue is work we've won. Collected is cash in hand. Receivables is money on the way.
             Pipeline is what we're still chasing. This page is read-only — nothing here can change the books.

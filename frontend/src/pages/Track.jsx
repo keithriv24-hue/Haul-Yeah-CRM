@@ -47,7 +47,7 @@ export default function Track() {
   const crewNames = (data?.crew || []).map((c) => c.name.split(" ")[0]).join(", ");
 
   return (
-    <div data-testid="track-page" className="min-h-screen bg-[#1B2A4A] text-white flex flex-col items-center px-4 py-10 gap-4">
+    <div data-testid="track-page" className="min-h-screen bg-primary text-white flex flex-col items-center px-4 py-10 gap-4">
       <img src="/logo.png" alt="Haul Yeah Moving" className="w-48 rounded-lg" />
       <div className="w-full max-w-md mt-4 bg-white/5 border border-white/10 rounded-2xl p-6 text-center">
         {error ? (
@@ -67,12 +67,12 @@ export default function Track() {
               </p>
             )}
             {days != null && days > 0 && (
-              <p data-testid="track-countdown" className="mt-3 inline-flex items-center gap-2 rounded-full bg-[#E8743B]/20 border border-[#E8743B]/40 text-[#E8743B] font-bold text-sm px-4 py-1.5">
+              <p data-testid="track-countdown" className="mt-3 inline-flex items-center gap-2 rounded-full bg-accent/20 border border-accent/40 text-accent-ink font-bold text-sm px-4 py-1.5">
                 <CalendarDays className="w-4 h-4" /> {days} day{days === 1 ? "" : "s"} until your move
               </p>
             )}
             {days === 0 && (
-              <p data-testid="track-countdown" className="mt-3 inline-flex items-center gap-2 rounded-full bg-emerald-400/20 border border-emerald-300/40 text-emerald-300 font-bold text-sm px-4 py-1.5">
+              <p data-testid="track-countdown" className="mt-3 inline-flex items-center gap-2 rounded-full bg-success/20 border border-success/30 text-success font-bold text-sm px-4 py-1.5">
                 <Truck className="w-4 h-4" /> Move day is today!
               </p>
             )}
@@ -82,15 +82,15 @@ export default function Track() {
             <div className="mt-5">
               {data.live && pos ? (
                 <>
-                  <p data-testid="track-status" className="inline-flex items-center gap-2 text-emerald-300 font-bold">
-                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
+                  <p data-testid="track-status" className="inline-flex items-center gap-2 text-success font-bold">
+                    <span className="w-2.5 h-2.5 rounded-full bg-success animate-pulse" />
                     Your crew is on the move!
                   </p>
                   <div className="mt-4 rounded-xl overflow-hidden border border-white/15">
                     <iframe
                       title="Crew location"
                       data-testid="track-map"
-                      className="w-full h-72 bg-white"
+                      className="w-full h-72 bg-surface"
                       src={`https://www.openstreetmap.org/export/embed.html?bbox=${bbox}&layer=mapnik&marker=${pos.lat},${pos.lng}`}
                     />
                   </div>
@@ -99,11 +99,11 @@ export default function Track() {
                   )}
                 </>
               ) : data.live ? (
-                <p data-testid="track-status" className="inline-flex items-center gap-2 text-emerald-300 font-bold">
+                <p data-testid="track-status" className="inline-flex items-center gap-2 text-success font-bold">
                   <Truck className="w-5 h-5" /> Crew is on the clock — waiting for a location signal…
                 </p>
               ) : data.updated_minutes_ago != null && data.updated_minutes_ago <= 120 ? (
-                <p data-testid="track-status" className="text-amber-300 font-bold">
+                <p data-testid="track-status" className="text-warning font-bold">
                   Crew is en route — last updated {data.updated_minutes_ago} minute{data.updated_minutes_ago === 1 ? "" : "s"} ago.
                 </p>
               ) : (

@@ -61,7 +61,7 @@ export default function Subscriptions() {
         title="Subscriptions"
         subtitle="What the business pays for each month."
         action={
-          <Button data-testid="new-sub-btn" onClick={() => setModalOpen(true)} className="gap-1.5 bg-[#E8743B] hover:bg-[#d4632e]">
+          <Button data-testid="new-sub-btn" onClick={() => setModalOpen(true)} className="gap-1.5 bg-accent hover:bg-accent-press">
             <Plus className="w-4 h-4" /> New subscription
           </Button>
         }
@@ -84,7 +84,7 @@ export default function Subscriptions() {
       ) : subs.length === 0 ? (
         <EmptyState>{query ? "No subscriptions match that search." : "No subscriptions tracked yet."}</EmptyState>
       ) : (
-        <div className="bg-white border border-slate-200 rounded-lg overflow-x-auto">
+        <div className="surface overflow-x-auto">
           <Table>
             <TableHeader>
               <TableRow>
@@ -104,10 +104,10 @@ export default function Subscriptions() {
                 return (
                   <TableRow key={s.id} data-testid="subscription-row">
                     <TableCell className="font-semibold">{f(s, SF.name) || "—"}</TableCell>
-                    <TableCell className="hidden sm:table-cell text-xs text-slate-500">{f(s, SF.category) || "—"}</TableCell>
-                    <TableCell className="font-bold text-[#1B2A4A]"><Money value={f(s, SF.monthlyCost)} /></TableCell>
-                    <TableCell className="hidden sm:table-cell text-xs text-slate-500">{f(s, SF.billingCycle) || "—"}</TableCell>
-                    <TableCell className={`text-xs ${soon ? "text-red-600 font-bold" : "text-slate-500"}`}>
+                    <TableCell className="hidden sm:table-cell text-xs text-faint">{f(s, SF.category) || "—"}</TableCell>
+                    <TableCell className="font-bold text-primary"><Money value={f(s, SF.monthlyCost)} /></TableCell>
+                    <TableCell className="hidden sm:table-cell text-xs text-faint">{f(s, SF.billingCycle) || "—"}</TableCell>
+                    <TableCell className={`text-xs ${soon ? "text-destructive font-bold" : "text-faint"}`}>
                       {fmtDate(f(s, SF.nextRenewal))}{soon && " (soon)"}
                     </TableCell>
                     <TableCell>
@@ -157,7 +157,7 @@ export default function Subscriptions() {
               <Input type="date" value={form.nextRenewal} onChange={set("nextRenewal")} />
             </div>
           </div>
-          <Button data-testid="sub-save-btn" onClick={save} disabled={saving} className="w-full gap-2 bg-[#E8743B] hover:bg-[#d4632e]">
+          <Button data-testid="sub-save-btn" onClick={save} disabled={saving} className="w-full gap-2 bg-accent hover:bg-accent-press">
             <Plus className="w-4 h-4" /> {saving ? "Saving…" : "Save subscription"}
           </Button>
         </DialogContent>

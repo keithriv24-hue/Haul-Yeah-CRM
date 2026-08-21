@@ -1,101 +1,104 @@
 {
-  "theme": "Light mode primary with Dark mode toggle. High-contrast utility.",
+  "_note": "This file describes the design system the app actually uses. It replaced the generic scaffold guidelines, which contradicted themselves (2-3x more spacing AND high density; glassmorphism AND no AI slop). Follow this and the app stays consistent.",
+  "product": "Haul Yeah Moving — internal operations app. Password-gated. No customers see it.",
+  "priority": "Phone first. Crew and sales live on a phone in a truck. Desktop is the owner's dense read of the same data.",
+
+  "single_source_of_truth": {
+    "tokens": "frontend/src/index.css (:root CSS variables)",
+    "tailwind": "frontend/tailwind.config.js maps every token to a utility",
+    "rule": "Never write a raw hex or a raw Tailwind palette class (slate-400, red-600, emerald-50) in a component. If a colour is missing, add a token."
+  },
+
+  "colour": {
+    "ground": "--background, a warm off-white. Cards are --surface (white). Wells and inactive segments are --surface-sunk.",
+    "ink": "--foreground for primary text, --ink-2 for secondary, --faint for labels and metadata. All three clear 4.5:1 on white.",
+    "brand": "--primary #1B2A4A navy for structure and the nav. --navy-deep for the nav bars.",
+    "accent": "--accent #E8743B is the ACTION colour and nothing else. Never use it for status, decoration, or emphasis.",
+    "accent_text": "--accent-ink when orange has to be text or an icon on a light surface. --accent stays bright on navy.",
+    "accent_foreground": "Near-black, not white. White on #E8743B is 3.09:1 and fails AA at button sizes; near-black on the same orange is 5.9:1 and keeps the exact brand hex.",
+    "status": "--success, --warning, --destructive, --info. These describe state (paid, late, overdue, scheduled). They are never buttons.",
+    "forbidden": ["#1B93A4", "#7351B7", "purple or blue-purple gradients", "any raw palette class"]
+  },
+
   "typography": {
-    "headings": "Cabinet Grotesk",
-    "body": "IBM Plex Sans",
-    "rules": [
-      "No Inter for headings. No Space Grotesk.",
-      "Tight letter spacing (tracking-tight) for large headers.",
-      "6th-grade reading level plain language across all copy."
-    ]
-  },
-  "colors": {
-    "brand_primary": "#1B2A4A",
-    "brand_accent": "#E8743B",
-    "archetype": "The Performance Pro / Swiss Brutalist hybrid.",
-    "forbidden_colors": ["#1B93A4", "#7351B7"],
-    "rules": [
-      "Never use pure black or gray, tint neutral greys with blue (cool).",
-      "Use #1B2A4A as primary anchor and #E8743B as the kinetic trigger for actions."
-    ]
-  },
-  "visual_enhancers": {
-    "surface_strategies": [
-      "Sharp edges, cardless or max 8px border-radius.",
-      "CRITICAL: DO NOT use complete transparent background in header, overlays, or Dropdowns."
-    ],
-    "shadows_and_depth": [
-      "Use 1px solid strokes or 2px inner glow highlights instead of soft shadows.",
-      "Glassmorphism (12-24px blur) with backdrop-saturate for sticky headers."
-    ]
-  },
-  "component_instructions": {
-    "buttons": "EVERY button MUST have a text label (icon + word, NEVER icon alone).",
-    "instruction_banners": "EVERY screen MUST have a one-line instruction banner telling the user what to do.",
-    "header": "MUST include 'Data: live from Airtable' indicator with manual refresh button AND a Global Privacy Mode toggle.",
-    "privacy_mode": "When toggled, blurs/masks every customer name, phone, email, address, and dollar figure across ALL views (persisted in localStorage).",
-    "leads_timer": "Live 'age' timer for New leads. Turns RED if > 5 minutes.",
-    "navigation": "Persistent left sidebar on desktop. Bottom tab bar on mobile."
-  },
-  "views_required": {
-    "Dashboard": "KPI cards (uncontacted New leads with oldest wait time turning RED if >5 min, open leads, pipeline value, booked revenue, collected, outstanding, monthly burn). Doughnut chart (leads by status). Bar chart (money overview). Upcoming jobs list. High-priority tasks list.",
-    "Leads": "Card grid ONLY (NOT a table). Live 'age' timer for New leads turning red past 5 mins. Action buttons (Call, Email, Quote, Deposit, Book as job). Status dropdown. Filter chips. '+ New lead' modal. 'Quote calculator' modal showing price RANGES.",
-    "Contacts": "Card grid grouped by Type.",
-    "Projects": "Job list sorted by date, editable.",
-    "To-Do Board": "4-column drag-and-drop kanban (Backlog, To Do, In Progress, Done) with priority + category pills, red overdue dates.",
-    "Blog": "Content pipeline by status.",
-    "Invoices": "KPI row + table with status dropdown and one-click Mark paid.",
-    "Subscriptions": "Monthly burn + annualized totals, table.",
-    "Partner View": "Read-only financial summary, NO customer names.",
-    "Help": "Page explaining lead-to-cash flow."
-  },
-  "grids": {
-    "mobile": "Mobile-first PWA. 1-column grid scaling up.",
-    "dashboard": "High Density Grid (grid-cols-1 md:grid-cols-3 lg:grid-cols-4) with tight gaps (gap-4 or gap-6)."
-  },
-  "layouts": {
-    "app_shell": "Desktop: Left Sidebar (w-64) + Main Content. Mobile: Main Content + Bottom Tab Bar.",
-    "spacing": "Generous Spacing Philosophy. Tailwind Scale p-4, p-6, p-8. Containers with borders must have internal padding."
-  },
-  "motion": {
-    "interactions": "Hover states on all interactive elements. Explicitly set text color.",
-    "transitions": "Specific properties only (e.g. transition-colors, transition-transform). No 'transition-all'."
-  },
-  "accessibility": {
-    "contrast": "APCA standard. High contrast text.",
-    "testing": "All interactive and key informational elements MUST include data-testid attribute."
-  },
-  "media": {
-    "icons": "Use lucide-react (default). Never use AI assistant Emoji characters.",
-    "charts": "Use Recharts or Shadcn chart components. Doughnut and Bar charts required."
-  },
-  "3d_libraries": {
-    "usage": "Not required for this high-density CRM utility app. Stick to clean 2D data visualization."
-  },
-  "image_urls": {
-    "avatars": {
-      "url": "https://images.pexels.com/photos/34299170/pexels-photo-34299170.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
-      "category": "User Profile / Partner",
-      "description": "Confident man in grey suit"
+    "display": "Cabinet Grotesk (Fontshare), 700/800, tracking -0.028em. Names, figures, page titles.",
+    "body": "IBM Plex Sans. Everything read as a sentence.",
+    "numbers": "Every figure carries .tnum (tabular numerals) so columns line up.",
+    "scale": {
+      "page_title": "22px phone / 26px desktop, weight 800. Not 36-48px — the nav already said where you are.",
+      "section_label": ".label-eyebrow — 11px, 700, uppercase, 0.12em tracking, --faint. The only uppercase text in the app.",
+      "body": "13.5-14.5px",
+      "figure": "Figure component: sm 22px, md 28px, lg 36px"
     },
-    "backgrounds": {
-      "url": "https://images.pexels.com/photos/15084344/pexels-photo-15084344.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
-      "category": "Empty States / Login",
-      "description": "Moving truck parked"
-    }
+    "rule": "Three sizes per screen. Hierarchy comes from weight and colour, not from ever-larger text."
   },
-  "UNIVERSAL_GUIDELINES_FOR_MAIN_AGENT": [
-    "Share the guideline for .js files not for .tsx files.",
-    "Do not converge toward generic 'AI slop' aesthetics. Make creative, distinctive frontends.",
-    "Create depth through layered design elements with z-index hierarchy.",
-    "Use glass-morphism effects with backdrop filters (12-24px blur).",
-    "CRITICAL: DO NOT use complete transparent background in header, overlays, any surface that has content under it.",
-    "You MUST NOT apply universal transition (transition: all).",
-    "You MUST NOT center align the app container (.App { text-align: center; }).",
-    "NEVER use AI assistant Emoji characters (\ud83e\udd16\ud83e\udde0\ud83d\udcad\ud83d\udca1\ud83d\udd2e\ud83c\udfaf) for icons.",
-    "Every interaction needs micro-animations - hover states, transitions.",
-    "Use 2-3x more spacing than feels comfortable. Cramped designs look cheap.",
-    "Use sonner for toasts. Sonner component are located in /app/src/components/ui/sonner.js",
-    "Ensure the app is styled as a PWA (mobile-responsive, installable)."
-  ]
+
+  "action_ladder": {
+    "why": "The old cards showed seven identical outline buttons, so nothing was the next step.",
+    "levels": [
+      "accent — the one thing to do on this panel. Full-width band in the thumb zone on a phone. Never more than one per panel.",
+      "outline — the two or three actions reached for on most jobs.",
+      "text link — everything else. Still one tap away, visually quiet."
+    ],
+    "labels": "Name the verb and the object: \"Call Danielle\", not \"Call\".",
+    "contextual": "The primary action follows nextStepHint() in lib/fields.js, so the sentence and the button never disagree."
+  },
+
+  "surface": {
+    "card": ".surface — white, 1px --border, 12px radius. .surface-interactive adds a hover lift on pointer devices only.",
+    "radius": "12px cards, 10px buttons, 8px inputs. Nothing is a pill except badge counts.",
+    "shadow": "Almost never. One soft lift on hover, one pop for floating panels. No glassmorphism, no glow, no gradients."
+  },
+
+  "motion": {
+    "tokens": "--dur-fast 120ms, --dur 190ms, --dur-slow 300ms, --ease-out cubic-bezier(0.22,1,0.36,1)",
+    "buttons": "Every button scales to 0.975 on press and transitions its own colours. Never transition-all.",
+    "page": "Route content fades up 6px on mount.",
+    "sheets_menus": "sheet-up for the mobile More sheet, pop-in for floating panels.",
+    "status": "The late-lead clock ticks. Nothing else loops.",
+    "reduced_motion": "prefers-reduced-motion disables all of it. Honour it."
+  },
+
+  "navigation": {
+    "phone": "Four fixed destinations per role plus More. The More sheet holds the rest, grouped, plus privacy / refresh / account / log out.",
+    "desktop": "Grouped sidebar — Today, Sales, Money, Team, Business. Global jump-to palette (Cmd/Ctrl+K) in the header.",
+    "rule": "Never put more than five items in the phone tab bar. A horizontally scrolling nav strip is not navigation."
+  },
+
+  "components": {
+    "buttons": "Always icon + word. Minimum 44px tall on a phone (h-11), 40px on desktop.",
+    "instruction_banners": "One quiet line with an icon at the top of every screen. Not a coloured box.",
+    "figures": "Use <Figure> for any number the owner reads. Label above, number on its own line, caption below. Nothing overlaps it.",
+    "empty_states": "Use <EmptyState>. Say what will appear here and what puts it there.",
+    "empty_rosters": "Do not render thirteen rows of \"Not active right now\". Show what is happening and put the rest behind a toggle.",
+    "tables": "Hide non-essential columns below sm: rather than crushing them.",
+    "calendars": "On phones a day cell is ~44px wide. Show one dot per job with a legend, not three characters of a job name.",
+    "tabs": "TabsList scrolls horizontally. It must never wrap to a second line."
+  },
+
+  "accessibility": {
+    "contrast": "Every text style clears WCAG AA (4.5:1 normal, 3:1 large). Verified programmatically across all 62 screen/viewport combinations.",
+    "focus": "One focus ring for the whole app, defined in index.css.",
+    "icons": "Decorative icons carry aria-hidden. Icon-only controls carry aria-label.",
+    "overlap": "No text may overlap or clip. Audited across every route at 390px and 1440px."
+  },
+
+  "data_display": {
+    "tracking_fields": "utm_*, fbclid, fbc, fbp and friends are collapsed behind a toggle on the lead card. A sales rep does not need a Facebook click ID.",
+    "privacy_mode": "Wrap any customer name, phone, email, address or dollar figure in <Private> or <Money> so the header toggle can mask it."
+  },
+
+  "protected_functionality": [
+    "Airtable proxy and the field-ID map in lib/fields.js",
+    "Auth, role gating and the RoleRoutes table in App.js",
+    "Quote logic in lib/quote.js and lib/pricing.js",
+    "Meta CAPI, GPS pings, optimistic writes in AppContext",
+    "Every data-testid attribute",
+    "The PostHog snippet in public/index.html"
+  ],
+
+  "media": {
+    "icons": "lucide-react only. Never emoji.",
+    "charts": "Recharts, using the --chart-* tokens."
+  }
 }

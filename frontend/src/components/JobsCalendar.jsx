@@ -6,6 +6,13 @@ import { Private } from "@/components/Bits";
 import { PF, f, STATUS_PILL } from "@/lib/fields";
 
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+const DOT = {
+  "Pending Deposit": "bg-warning",
+  Scheduled: "bg-info",
+  "In Progress": "bg-primary",
+  Completed: "bg-success",
+};
+
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 export default function JobsCalendar({ projects }) {
@@ -38,16 +45,16 @@ export default function JobsCalendar({ projects }) {
   const dateKey = (day) => `${ym.y}-${String(ym.m + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 
   return (
-    <div data-testid="jobs-calendar" className="bg-white border border-slate-200 rounded-lg p-4 mb-6">
+    <div data-testid="jobs-calendar" className="surface p-4 mb-6">
       <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-        <h2 className="font-display font-bold text-lg text-[#1B2A4A] flex items-center gap-2">
-          <CalendarDays className="w-5 h-5 text-[#E8743B]" /> Calendar
+        <h2 className="font-display font-bold text-lg text-primary flex items-center gap-2">
+          <CalendarDays className="w-5 h-5 text-accent-ink" /> Calendar
         </h2>
         <div className="flex items-center gap-1.5">
           <Button data-testid="calendar-prev-btn" variant="outline" size="sm" className="gap-1 text-xs" onClick={() => shiftMonth(-1)}>
             <ChevronLeft className="w-3.5 h-3.5" /> Prev
           </Button>
-          <span data-testid="calendar-month-label" className="text-sm font-bold text-[#1B2A4A] w-36 text-center">
+          <span data-testid="calendar-month-label" className="text-sm font-bold text-primary w-36 text-center">
             {MONTHS[ym.m]} {ym.y}
           </span>
           <Button data-testid="calendar-next-btn" variant="outline" size="sm" className="gap-1 text-xs" onClick={() => shiftMonth(1)}>
@@ -56,7 +63,7 @@ export default function JobsCalendar({ projects }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-bold uppercase tracking-wide text-slate-400 mb-1">
+      <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-bold uppercase tracking-wide text-faint mb-1">
         {WEEKDAYS.map((d) => <div key={d}>{d}</div>)}
       </div>
       <div className="grid grid-cols-7 gap-1">
@@ -67,18 +74,33 @@ export default function JobsCalendar({ projects }) {
           return (
             <div
               key={i}
-              className={`min-h-[64px] rounded-md border p-1 ${day ? "bg-white border-slate-200" : "bg-transparent border-transparent"} ${isToday ? "ring-2 ring-[#E8743B]" : ""}`}
+              className={`min-h-[52px] rounded-md border p-1 sm:min-h-[70px] ${day ? "border-border bg-surface" : "border-transparent bg-transparent"} ${isToday ? "ring-2 ring-accent" : ""}`}
             >
               {day && (
                 <>
-                  <div className={`text-[10px] font-bold ${isToday ? "text-[#E8743B]" : "text-slate-400"}`}>{day}</div>
-                  <div className="space-y-0.5">
+                  <div className={`text-[11px] font-bold tnum ${isToday ? "text-accent-ink" : "text-faint"}`}>{day}</div>
+                  {/* A phone cell is ~44px wide. Three characters of a job name is
+                      not information, so small screens get one dot per job and the
+                      full labels appear from sm: up. */}
+                  <div className="mt-1 flex flex-wrap gap-1 sm:hidden">
+                    {jobs.slice(0, 4).map((p) => (
+                      <span
+                        key={p.id}
+                        data-testid="calendar-job-pill"
+                        title={f(p, PF.jobName) || "Job"}
+                        aria-label={f(p, PF.jobName) || "Job"}
+                        className={`h-1.5 w-1.5 rounded-full ${DOT[f(p, PF.status)] || "bg-faint"}`}
+                      />
+                    ))}
+                    {jobs.length > 4 && <span className="text-[9px] font-bold leading-none text-faint">+{jobs.length - 4}</span>}
+                  </div>
+                  <div className="hidden space-y-0.5 sm:block">
                     {jobs.map((p) => (
                       <div
                         key={p.id}
                         data-testid="calendar-job-pill"
                         title={f(p, PF.jobName) || "Job"}
-                        className={`text-[9px] leading-tight border rounded px-1 py-0.5 truncate font-semibold ${STATUS_PILL[f(p, PF.status)] || "bg-slate-100 text-slate-600 border-slate-300"}`}
+                        className={`truncate rounded px-1 py-0.5 text-[10px] font-semibold leading-tight ${STATUS_PILL[f(p, PF.status)] || "bg-surface-sunk text-ink-2"}`}
                       >
                         <Private>{f(p, PF.jobName) || "Job"}</Private>
                       </div>
@@ -90,7 +112,14 @@ export default function JobsCalendar({ projects }) {
           );
         })}
       </div>
-      <p className="text-xs text-slate-500 mt-2">
+      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 sm:hidden">
+        {Object.entries(DOT).map(([label, cls]) => (
+          <span key={label} className="inline-flex items-center gap-1.5 text-[11px] text-faint">
+            <span className={`h-1.5 w-1.5 rounded-full ${cls}`} aria-hidden="true" /> {label}
+          </span>
+        ))}
+      </div>
+      <p className="text-[12.5px] text-faint mt-2">
         {isOwner ? "Shows every job that isn't cancelled." : "Shows jobs that are Scheduled or In Progress."}
       </p>
     </div>

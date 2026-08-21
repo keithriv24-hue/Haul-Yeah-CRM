@@ -1,0 +1,41 @@
+{
+  "summary": "Frontend-only regression verification of the user-supplied redesign (STEP 1 of 7). All 8 requested checks pass. Owner login lands on Dashboard with grouped sidebar (TODAY/SALES/MONEY/TEAM/BUSINESS sections all render). Owner can navigate to /leads, /jobs, /invoices, /crew, /settings — none crash or blank. Quote Calculator math is UNCHANGED: 2BR + 3 crew + 5 hrs + Truck + 30 mi + 0 flights => Final Quote $1,150 - $1,250, Deposit $312.50 (exact match to spec). Mobile 390px shows exactly 4 fixed tabs (Dashboard/Leads/Jobs/Crew) + tab-more-btn; More sheet opens and contains grouped links plus tab-privacy-btn, tab-refresh-btn, tab-logout-btn, tab-account-select. No horizontal scroll on Dashboard or Leads at 390px. Desktop privacy-toggle-btn toggles state (Privacy off <-> Privacy on) and body text changes. Ghost logins: TestCrewAdmin -> /today, TestSalesAdmin -> /leads, TestMarketingAdmin -> /marketing — all render without crash. Only console noise: 2 pre-existing 401s on load (unrelated to this refactor, present in prior iterations — likely /api/notifications or /api/meta/status when Meta is not configured) plus one PRE-EXISTING hydration warning on /settings (MetaCard.jsx L131 renders a <Badge>/<div> inside a <p> — not touched by this refactor). Nothing functional broke.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/settings (MetaCard)", "issues": ["PRE-EXISTING (not from this refactor) React hydration warning: In HTML, <div> cannot be a descendant of <p>. Source: /app/frontend/src/components/MetaCard.jsx line 131 renders a <Badge> (renders as <div>) inside a <p> element. Cosmetic — page still renders. Fix: swap the outer <p> for a <div> or move the Badge outside the paragraph."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/test_reports/owner_dashboard.png",
+    "/app/test_reports/calculator.png",
+    "/app/test_reports/mobile_more.png",
+    "/app/test_reports/crew_landing.png",
+    "/app/test_reports/sales_landing.png",
+    "/app/test_reports/marketing_landing.png"
+  ],
+  "action_items": [
+    "OPTIONAL / non-blocking: fix pre-existing hydration warning in MetaCard.jsx L131 by replacing the outer <p> with a <div> (or moving the Badge sibling out). Not caused by this redesign; visible on /settings only."
+  ],
+  "critical_code_review_comments": [
+    "Layout.jsx grouped sidebar renders all 5 expected section headers (TODAY / SALES / MONEY / TEAM / BUSINESS) for the owner role — verified visually.",
+    "Mobile bottom nav renders exactly 4 fixed tabs (data-testid tab-dashboard, tab-leads, tab-jobs, tab-crew) + data-testid tab-more-btn — matches spec.",
+    "More sheet exposes the required actions with the expected testids: tab-privacy-btn, tab-refresh-btn, tab-logout-btn, tab-account-select — all present and clickable.",
+    "QuoteCalculator.jsx math preserved: canonical test vector (2BR / 3 crew / 5 hrs / Truck / 30 mi / 0 flights) produces the exact expected Final Quote $1,150 - $1,250 and Deposit $312.50. All required testids (calc-size-select, calc-crew-select, calc-hours-input, calc-travel-select, calc-miles-input, final-quote-value, deposit-value) still resolve.",
+    "privacy-toggle-btn on desktop toggles the app-wide privacy state (verified via body-text diff between toggle states + header label switches between 'Privacy off' and 'Privacy on').",
+    "No horizontal scroll on Dashboard or Leads at 390px viewport — document.documentElement.scrollWidth <= clientWidth in both cases.",
+    "All three ghost accounts land on the correct role-specific first page: TestCrewAdmin -> /today, TestSalesAdmin -> /leads, TestMarketingAdmin -> /marketing.",
+    "Airtable-empty banner ('One step left: add your Airtable token…') renders on Dashboard/Leads as expected — this is documented preview behaviour, not a bug.",
+    "PRE-EXISTING (not from this redesign): MetaCard.jsx L131 <p> contains a Badge (renders as <div>), producing a React hydration console warning on /settings. Cosmetic. Recommend swapping the wrapper element to a <div>."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (skipped per request)", "frontend": "100% — all 8 requested regression checks pass"},
+  "test_credentials": "Owner HaulYeahAdmin/HaulYeah2026!, Crew ghost TestCrewAdmin/HaulYeah2026!, Sales ghost TestSalesAdmin/HaulYeah2026!, Marketing ghost TestMarketingAdmin/HaulYeah2026! — all four verified working.",
+  "seed_data_creation": "None.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Step 1 of the 7-step redesign passed a full frontend regression. Nothing functional changed. The only new console warning we observed on /settings (React hydration: <div> descendant of <p>) is PRE-EXISTING in MetaCard.jsx L131 and untouched by this redesign — do not blame future steps for it. Mobile bottom tab testids follow the pattern data-testid='tab-<label>' (e.g. tab-dashboard, tab-leads, tab-jobs, tab-crew) plus tab-more-btn — use `[data-testid^=\"tab-\"]` NOT `[data-testid$=\"-tab\"]` when writing selectors. Calculator canonical vector (2BR/3/5/Truck/30/0) => $1,150 - $1,250, deposit $312.50 is a reliable smoke assertion for quote-math regression in future steps.",
+  "rca of the issue": "N/A — no failures. The two 401 console errors present on every role's initial load are the same pre-existing 401s documented in prior iterations (endpoints that only respond 200 for certain roles); they are not caused by this redesign step and do not surface as user-visible errors."
+}

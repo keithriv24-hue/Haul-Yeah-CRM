@@ -36,23 +36,23 @@ export const CreditPromptsCard = ({ onResolved }) => {
 
   if (!prompts.length) return null;
   return (
-    <div data-testid="credit-prompts-card" className="border border-[#E8743B]/40 bg-orange-50/70 rounded-lg p-4 mb-4">
-      <h2 className="font-display font-bold text-[#1B2A4A] flex items-center gap-2 mb-2">
-        <Medal className="w-4 h-4 text-[#E8743B]" /> Give credit?
+    <div data-testid="credit-prompts-card" className="border border-accent/40 bg-accent/10 rounded-lg p-4 mb-4">
+      <h2 className="font-display font-bold text-primary flex items-center gap-2 mb-2">
+        <Medal className="w-4 h-4 text-accent-ink" /> Give credit?
       </h2>
       <div className="space-y-2">
         {prompts.map((p) => (
-          <div key={p.id} data-testid="credit-prompt-item" className="flex flex-wrap items-center gap-2 bg-white border border-orange-200 rounded-md px-3 py-2.5">
-            <div className="flex-1 min-w-[220px] text-sm text-[#1B2A4A]">
+          <div key={p.id} data-testid="credit-prompt-item" className="flex flex-wrap items-center gap-2 bg-surface border border-accent/25 rounded-md px-3 py-2.5">
+            <div className="flex-1 min-w-[220px] text-sm text-primary">
               {p.message}
-              {p.date && <span className="text-xs text-slate-400 ml-1.5">({fmtDate(p.date)})</span>}
+              {p.date && <span className="text-xs text-faint ml-1.5">({fmtDate(p.date)})</span>}
             </div>
             <Button
               data-testid="credit-prompt-approve"
               size="sm"
               disabled={busy === p.id}
               onClick={() => resolve(p.id, true)}
-              className="gap-1 bg-emerald-600 hover:bg-emerald-700"
+              className="gap-1 bg-success hover:bg-success"
             >
               <Check className="w-3.5 h-3.5" /> Yes, give the tally
             </Button>
@@ -62,7 +62,7 @@ export const CreditPromptsCard = ({ onResolved }) => {
               variant="outline"
               disabled={busy === p.id}
               onClick={() => resolve(p.id, false)}
-              className="gap-1 text-slate-500"
+              className="gap-1 text-faint"
             >
               <X className="w-3.5 h-3.5" /> Not this time
             </Button>

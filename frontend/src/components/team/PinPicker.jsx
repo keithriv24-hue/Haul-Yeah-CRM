@@ -46,7 +46,7 @@ export const PinPicker = ({ open, onOpenChange, member, onSaved }) => {
           <DialogDescription>Pick up to 3 unlocked badges to show at the top of your profile.</DialogDescription>
         </DialogHeader>
         {unlocked.length === 0 ? (
-          <p className="text-sm text-slate-500 py-4 text-center">No badges unlocked yet — your first one is close!</p>
+          <p className="text-sm text-faint py-4 text-center">No badges unlocked yet — your first one is close!</p>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             {unlocked.map((b) => (
@@ -55,12 +55,12 @@ export const PinPicker = ({ open, onOpenChange, member, onSaved }) => {
                 data-testid={`pin-option-${b.id}`}
                 onClick={() => toggle(b.id)}
                 className={`flex items-center gap-2.5 rounded-lg border p-2 text-left transition-colors ${
-                  picked.includes(b.id) ? "border-[#E8743B] bg-orange-50" : "border-slate-200 hover:border-slate-300"
+                  picked.includes(b.id) ? "border-accent bg-accent/10" : "border-border hover:border-border-strong"
                 }`}
               >
                 <BadgeMedallion badge={b} size="sm" />
                 <span className="min-w-0">
-                  <span className="block text-sm font-semibold text-[#1B2A4A] truncate">{b.name}</span>
+                  <span className="block text-sm font-semibold text-primary truncate">{b.name}</span>
                   <span className={`inline-block border rounded-full px-1.5 text-[10px] font-bold capitalize ${RARITY_CHIP[b.rarity]}`}>{b.rarity}</span>
                 </span>
               </button>
@@ -69,7 +69,7 @@ export const PinPicker = ({ open, onOpenChange, member, onSaved }) => {
         )}
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button data-testid="pin-save-btn" disabled={busy} onClick={save} className="bg-[#E8743B] hover:bg-[#d4632e]">
+          <Button data-testid="pin-save-btn" disabled={busy} onClick={save} className="bg-accent hover:bg-accent-press">
             Save pins ({picked.length}/3)
           </Button>
         </DialogFooter>

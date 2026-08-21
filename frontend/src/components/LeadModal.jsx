@@ -57,7 +57,7 @@ export default function LeadModal({ open, onOpenChange }) {
       <DialogContent data-testid="new-lead-modal" className="max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="font-display flex items-center gap-2">
-            <UserPlus className="w-5 h-5 text-[#E8743B]" /> New lead
+            <UserPlus className="w-5 h-5 text-accent-ink" /> New lead
           </DialogTitle>
           <DialogDescription>Fill in what you know. Name is the only must-have.</DialogDescription>
         </DialogHeader>
@@ -129,7 +129,7 @@ export default function LeadModal({ open, onOpenChange }) {
             <Textarea data-testid="lead-notes-input" value={form.notes} onChange={set("notes")} rows={2} />
           </div>
         </div>
-        <Button data-testid="lead-save-btn" onClick={save} disabled={saving} className="w-full gap-2 bg-[#E8743B] hover:bg-[#d4632e]">
+        <Button data-testid="lead-save-btn" onClick={save} disabled={saving} className="w-full gap-2 bg-accent hover:bg-accent-press">
           <UserPlus className="w-4 h-4" /> {saving ? "Saving…" : "Save lead"}
         </Button>
       </DialogContent>

@@ -81,7 +81,7 @@ export const EditProfileDialog = ({ open, onOpenChange, member, onSaved }) => {
               </>
             )}
             {member.has_photo && (
-              <Button data-testid="profile-photo-remove-btn" variant="outline" size="sm" className="gap-1.5 text-red-600 border-red-200 hover:bg-red-50" disabled={busy} onClick={removePhoto}>
+              <Button data-testid="profile-photo-remove-btn" variant="outline" size="sm" className="gap-1.5 text-destructive border-destructive/25 hover:bg-destructive/10" disabled={busy} onClick={removePhoto}>
                 <Trash2 className="w-4 h-4" /> Remove photo
               </Button>
             )}
@@ -99,7 +99,7 @@ export const EditProfileDialog = ({ open, onOpenChange, member, onSaved }) => {
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button data-testid="profile-save-btn" disabled={busy} onClick={save} className="bg-[#E8743B] hover:bg-[#d4632e]">Save profile</Button>
+          <Button data-testid="profile-save-btn" disabled={busy} onClick={save} className="bg-accent hover:bg-accent-press">Save profile</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

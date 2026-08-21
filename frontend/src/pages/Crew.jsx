@@ -11,11 +11,11 @@ export default function Crew() {
   return (
     <div data-testid="crew-page" className="space-y-4">
       <div>
-        <h1 className="text-2xl font-bold text-[#1B2A4A]">Crew</h1>
-        <p className="text-sm text-slate-500">Your team, their schedule, their hours, and payroll — all in one spot.</p>
+        <h1 className="text-2xl font-bold text-primary">Crew</h1>
+        <p className="text-sm text-faint">Your team, their schedule, their hours, and payroll — all in one spot.</p>
       </div>
       <Tabs defaultValue="team">
-        <TabsList className="flex-wrap h-auto">
+        <TabsList>
           <TabsTrigger data-testid="crew-tab-team" value="team">Team</TabsTrigger>
           <TabsTrigger data-testid="crew-tab-schedule" value="schedule">Schedule</TabsTrigger>
           <TabsTrigger data-testid="crew-tab-availability" value="availability">Availability</TabsTrigger>

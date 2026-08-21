@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
-import { InstructionBanner, SearchBar, searchMatch } from "@/components/Bits";
+import { InstructionBanner, SearchBar, searchMatch, EmptyState } from "@/components/Bits";
 import { JobChecklists } from "@/components/JobChecklists";
 import { InspectionDialog } from "@/components/fleet/InspectionDialog";
 import { myJobsApi, myTimeApi, setJobStatusApi, uploadJobPhotoApi, listJobPhotosApi, photoUrl, apiErrorMessage } from "@/lib/api";
@@ -16,11 +16,11 @@ const NEXT_LABEL = { "En Route": "I'm on the way", Arrived: "I've arrived", "In 
 const NEXT_ICON = { "En Route": Navigation, Arrived: MapPin, "In Progress": Play, Complete: Flag };
 const STATUS_ORDER = ["Assigned", "En Route", "Arrived", "In Progress", "Complete"];
 const STATUS_STYLE = {
-  Assigned: "bg-slate-100 text-slate-600 border-slate-300",
-  "En Route": "bg-sky-100 text-sky-800 border-sky-300",
-  Arrived: "bg-amber-100 text-amber-800 border-amber-300",
-  "In Progress": "bg-indigo-100 text-indigo-800 border-indigo-300",
-  Complete: "bg-emerald-100 text-emerald-800 border-emerald-300",
+  Assigned: "bg-surface-sunk text-ink-2 border-border-strong",
+  "En Route": "bg-info/12 text-info border-info/30",
+  Arrived: "bg-warning/12 text-warning border-warning/30",
+  "In Progress": "bg-primary/10 text-primary border-primary/25",
+  Complete: "bg-success/12 text-success border-success/30",
 };
 
 const DELAY_FACTORS = ["Stairs", "Long carry", "Elevator wait", "Customer not packed", "Heavy/specialty items", "Traffic", "Weather", "Customer added items", "None"];
@@ -54,14 +54,14 @@ const PhotoSection = ({ jobId }) => {
   };
 
   return (
-    <div className="mt-3 border-t border-slate-100 pt-3">
+    <div className="mt-3 border-t border-border pt-3">
       <div className="flex items-center gap-2">
         <Button data-testid="job-photos-toggle-btn" variant="outline" size="sm" className="gap-1.5 text-xs" onClick={toggle}>
           <Images className="w-3.5 h-3.5" /> {open ? "Hide photos" : `Photos${photos ? ` (${photos.length})` : ""}`}
         </Button>
         <label className="inline-flex">
           <input data-testid="job-photo-input" type="file" accept="image/*" className="hidden" onChange={onFile} disabled={uploading} />
-          <span className="inline-flex items-center gap-1.5 cursor-pointer rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 transition-colors">
+          <span className="inline-flex items-center gap-1.5 cursor-pointer rounded-md border border-border bg-surface px-3 py-1.5 text-xs font-medium text-ink-2 hover:bg-surface-sunk transition-colors">
             {uploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Camera className="w-3.5 h-3.5" />}
             {uploading ? "Uploading…" : "Add photo"}
           </span>
@@ -69,10 +69,10 @@ const PhotoSection = ({ jobId }) => {
       </div>
       {open && photos && (
         <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 mt-3">
-          {photos.length === 0 && <p className="col-span-full text-xs text-slate-400">No photos yet — snap the truck, the rooms, or any damage before you start.</p>}
+          {photos.length === 0 && <p className="col-span-full text-xs text-faint">No photos yet — snap the truck, the rooms, or any damage before you start.</p>}
           {photos.map((p) => (
             <a key={p.id} href={photoUrl(p.id)} target="_blank" rel="noreferrer">
-              <img data-testid="job-photo-thumb" src={photoUrl(p.id)} alt={`By ${p.by}`} className="w-full h-20 object-cover rounded-md border border-slate-200" />
+              <img data-testid="job-photo-thumb" src={photoUrl(p.id)} alt={`By ${p.by}`} className="w-full h-20 object-cover rounded-md border border-border" />
             </a>
           ))}
         </div>
@@ -85,7 +85,7 @@ const ChecklistSection = ({ job, onChanged, clockedIn }) => {
   const [open, setOpen] = useState(false);
   const [inspOpen, setInspOpen] = useState(false);
   return (
-    <div className="mt-3 border-t border-slate-100 pt-3">
+    <div className="mt-3 border-t border-border pt-3">
       <div className="flex items-center gap-2">
         <Button data-testid="job-checklists-toggle-btn" variant="outline" size="sm" className="gap-1.5 text-xs" onClick={() => setOpen((o) => !o)}>
           <ListChecks className="w-3.5 h-3.5" /> {open ? "Hide checklists" : "Checklists"}
@@ -135,11 +135,11 @@ const JobCard = ({ job, onChanged, clockedIn }) => {
   };
 
   return (
-    <div data-testid="crew-job-card" className="bg-white rounded-lg border border-slate-200 p-4">
+    <div data-testid="crew-job-card" className="surface p-4">
       <div className="flex items-start justify-between gap-2">
         <div>
-          <p className="font-bold text-[#1B2A4A]">{job.job_name}</p>
-          <p className="text-xs text-slate-500 mt-0.5">
+          <p className="font-bold text-primary">{job.job_name}</p>
+          <p className="text-xs text-faint mt-0.5">
             {fmtDate(job.job_date)}
             {job.arrival_time ? ` · arrive ${job.arrival_time}` : ""}
           </p>
@@ -150,15 +150,15 @@ const JobCard = ({ job, onChanged, clockedIn }) => {
       </div>
       <div className="mt-2 space-y-1 text-sm">
         {job.start_address && (
-          <a data-testid="job-address-link" href={mapsLink(job.start_address)} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-[#1B2A4A] underline decoration-dotted underline-offset-2">
-            <MapPin className="w-3.5 h-3.5 text-[#E8743B] shrink-0" /> {job.start_address}
+          <a data-testid="job-address-link" href={mapsLink(job.start_address)} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-primary underline decoration-dotted underline-offset-2">
+            <MapPin className="w-3.5 h-3.5 text-accent-ink shrink-0" /> {job.start_address}
           </a>
         )}
-        <p className="flex items-center gap-3 text-xs text-slate-500">
+        <p className="flex items-center gap-3 text-xs text-faint">
           {job.truck_name && (
             <span className="inline-flex items-center gap-1"><Truck className="w-3.5 h-3.5" /> {job.truck_name}</span>
           )}
-          {job.my_position && <span className="font-semibold text-[#E8743B]">You're the {job.my_position}</span>}
+          {job.my_position && <span className="font-semibold text-accent-ink">You're the {job.my_position}</span>}
         </p>
       </div>
       {next && (
@@ -166,13 +166,13 @@ const JobCard = ({ job, onChanged, clockedIn }) => {
           data-testid="job-next-status-btn"
           disabled={busy}
           onClick={() => (next === "Complete" ? setCompleteOpen(true) : advance(next))}
-          className="w-full mt-3 gap-2 bg-[#1B2A4A] hover:bg-[#152238]"
+          className="w-full mt-3 gap-2 bg-primary hover:bg-[#152238]"
         >
           <NextIcon className="w-4 h-4" /> {NEXT_LABEL[next]}
         </Button>
       )}
       {job.exec_status === "Complete" && job.completion_notes && (
-        <p className="text-xs text-slate-500 mt-2 bg-slate-50 rounded p-2">Notes: {job.completion_notes}</p>
+        <p className="text-xs text-faint mt-2 bg-surface-sunk rounded p-2">Notes: {job.completion_notes}</p>
       )}
       <ChecklistSection job={job} onChanged={onChanged} clockedIn={clockedIn} />
       <PhotoSection jobId={job.id} />
@@ -183,7 +183,7 @@ const JobCard = ({ job, onChanged, clockedIn }) => {
             <DialogDescription>Add a quick note about how it went (optional). The boss gets pinged to ask the customer for a review.</DialogDescription>
           </DialogHeader>
           <div>
-            <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">Anything slow you down?</p>
+            <p className="text-xs font-bold uppercase tracking-wide text-faint mb-2">Anything slow you down?</p>
             <div className="grid grid-cols-2 gap-x-3 gap-y-2">
               {DELAY_FACTORS.map((fct) => (
                 <label key={fct} data-testid="delay-factor-option" className="flex items-center gap-2 text-sm cursor-pointer">
@@ -196,7 +196,7 @@ const JobCard = ({ job, onChanged, clockedIn }) => {
           <Textarea data-testid="complete-notes-input" placeholder="Anything to flag? Damage, extra stops, great customer…" value={notes} onChange={(e) => setNotes(e.target.value)} />
           <DialogFooter>
             <Button variant="outline" onClick={() => setCompleteOpen(false)}>Not yet</Button>
-            <Button data-testid="complete-confirm-btn" disabled={busy} onClick={() => advance("Complete", notes, factors.length ? factors : ["None"])} className="bg-emerald-600 hover:bg-emerald-700 gap-1.5">
+            <Button data-testid="complete-confirm-btn" disabled={busy} onClick={() => advance("Complete", notes, factors.length ? factors : ["None"])} className="bg-success hover:bg-success gap-1.5">
               <Flag className="w-4 h-4" /> Mark complete
             </Button>
           </DialogFooter>
@@ -227,9 +227,9 @@ export default function CrewJobs() {
 
   const Section = ({ title, items, testId }) => (
     <div data-testid={testId}>
-      <h2 className="text-sm font-bold uppercase tracking-wide text-slate-500 mb-2">{title}</h2>
+      <h2 className="text-sm font-bold uppercase tracking-wide text-faint mb-2">{title}</h2>
       {items.length === 0 ? (
-        <p className="text-sm text-slate-400 bg-white border border-dashed border-slate-200 rounded-lg p-4">Nothing here.</p>
+        <EmptyState>Nothing on the board yet. Jobs land here as soon as dispatch assigns you.</EmptyState>
       ) : (
         <div className="space-y-3">{items.map((j) => <JobCard key={j.id} job={j} onChanged={load} clockedIn={clockedIn} />)}</div>
       )}
@@ -239,15 +239,15 @@ export default function CrewJobs() {
   return (
     <div data-testid="crew-jobs-page" className="space-y-6 max-w-xl">
       <div>
-        <h1 className="text-2xl font-bold text-[#1B2A4A]">My Jobs</h1>
-        <p className="text-sm text-slate-500">Your moves for the next two weeks.</p>
+        <h1 className="text-2xl font-bold text-primary">My Jobs</h1>
+        <p className="text-sm text-faint">Your moves for the next two weeks.</p>
       </div>
       <InstructionBanner testId="crew-jobs-banner">
         Tap the big button as your day moves along: on the way → arrived → start → finish. Snap photos before and after.
       </InstructionBanner>
       <SearchBar value={query} onChange={setQuery} placeholder="Search your jobs…" testId="crew-jobs-search-input" />
       {jobs === null ? (
-        <p className="text-sm text-slate-400">Loading your jobs…</p>
+        <p className="text-sm text-faint">Loading your jobs…</p>
       ) : (
         <>
           <Section title="Today" items={todays} testId="jobs-today-section" />

@@ -84,7 +84,7 @@ export default function Invoices() {
         title="Invoices"
         subtitle="Bill it, send it, mark it paid."
         action={
-          <Button data-testid="new-invoice-btn" onClick={() => setModalOpen(true)} className="gap-1.5 bg-[#E8743B] hover:bg-[#d4632e]">
+          <Button data-testid="new-invoice-btn" onClick={() => setModalOpen(true)} className="gap-1.5 bg-accent hover:bg-accent-press">
             <Plus className="w-4 h-4" /> New invoice
           </Button>
         }
@@ -108,7 +108,7 @@ export default function Invoices() {
       ) : invoices.length === 0 ? (
         <EmptyState>{query ? "No invoices match that search." : 'No invoices yet. Press "+ New invoice".'}</EmptyState>
       ) : (
-        <div className="bg-white border border-slate-200 rounded-lg overflow-x-auto">
+        <div className="surface overflow-x-auto">
           <Table>
             <TableHeader>
               <TableRow>
@@ -129,7 +129,7 @@ export default function Invoices() {
                   <TableRow key={inv.id} data-testid="invoice-row">
                     <TableCell className="font-semibold">{f(inv, IF.number) || "—"}</TableCell>
                     <TableCell><Private>{f(inv, IF.customer) || "—"}</Private></TableCell>
-                    <TableCell className="font-bold text-[#1B2A4A]"><Money value={f(inv, IF.amount)} /></TableCell>
+                    <TableCell className="font-bold text-primary"><Money value={f(inv, IF.amount)} /></TableCell>
                     <TableCell>
                       <Select value={status} onValueChange={(v) => updateRecord("invoices", inv.id, { [IF.status]: v }).catch(() => {})}>
                         <SelectTrigger data-testid="invoice-status-select" className={`w-[110px] h-8 text-xs font-semibold border ${STATUS_PILL[status] || ""}`}>
@@ -138,13 +138,13 @@ export default function Invoices() {
                         <SelectContent>{INVOICE_STATUSES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
                       </Select>
                     </TableCell>
-                    <TableCell className="hidden sm:table-cell text-xs text-slate-500">{fmtDate(f(inv, IF.issueDate))}</TableCell>
-                    <TableCell className="hidden sm:table-cell text-xs text-slate-500">{fmtDate(f(inv, IF.dueDate))}</TableCell>
-                    <TableCell className="hidden md:table-cell text-xs text-slate-500">{f(inv, IF.payMethod) || "—"}</TableCell>
+                    <TableCell className="hidden sm:table-cell text-xs text-faint">{fmtDate(f(inv, IF.issueDate))}</TableCell>
+                    <TableCell className="hidden sm:table-cell text-xs text-faint">{fmtDate(f(inv, IF.dueDate))}</TableCell>
+                    <TableCell className="hidden md:table-cell text-xs text-faint">{f(inv, IF.payMethod) || "—"}</TableCell>
                     <TableCell>
                       <div className="flex gap-1.5">
                         {status !== "Paid" && (
-                          <Button data-testid="mark-paid-btn" size="sm" variant="outline" className="gap-1 text-xs text-emerald-700 border-emerald-300 hover:bg-emerald-50" onClick={() => markPaid(inv)}>
+                          <Button data-testid="mark-paid-btn" size="sm" variant="outline" className="gap-1 text-xs text-success border-success/30 hover:bg-success/10" onClick={() => markPaid(inv)}>
                             <CheckCircle2 className="w-3.5 h-3.5" /> Mark paid
                           </Button>
                         )}
@@ -156,7 +156,7 @@ export default function Invoices() {
                               asChild
                               size="sm"
                               variant="outline"
-                              className="gap-1 text-xs text-amber-700 border-amber-300 hover:bg-amber-50"
+                              className="gap-1 text-xs text-warning border-warning/30 hover:bg-warning/10"
                               disabled={!custPhone}
                               title={custPhone ? "Text them a payment nudge" : "No phone found for this customer in Contacts or Leads"}
                             >
@@ -218,7 +218,7 @@ export default function Invoices() {
               </Select>
             </div>
           </div>
-          <Button data-testid="invoice-save-btn" onClick={save} disabled={saving} className="w-full gap-2 bg-[#E8743B] hover:bg-[#d4632e]">
+          <Button data-testid="invoice-save-btn" onClick={save} disabled={saving} className="w-full gap-2 bg-accent hover:bg-accent-press">
             <Plus className="w-4 h-4" /> {saving ? "Saving…" : "Save invoice"}
           </Button>
         </DialogContent>

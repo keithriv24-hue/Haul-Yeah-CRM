@@ -58,17 +58,17 @@ export const GmailCard = () => {
 
   if (!status) return null;
   return (
-    <div data-testid="gmail-settings-card" className="bg-white border border-slate-200 rounded-lg p-5 mt-4">
-      <h2 className="font-display font-bold text-[#1B2A4A] flex items-center gap-2">
-        <Mail className="w-4 h-4 text-[#E8743B]" /> Email inboxes
+    <div data-testid="gmail-settings-card" className="surface p-5 mt-4">
+      <h2 className="font-display font-bold text-primary flex items-center gap-2">
+        <Mail className="w-4 h-4 text-accent-ink" /> Email inboxes
       </h2>
-      <p className="text-xs text-slate-500 mt-1">
+      <p className="text-xs text-faint mt-1">
         Connect the business Gmail accounts with Google sign-in — no passwords ever stored. Emails show up on the Notifications page.
       </p>
 
       {!status.configured && (
-        <div data-testid="gmail-setup-instructions" className="mt-3 border border-amber-200 bg-amber-50/70 rounded-lg p-4 text-sm text-slate-700">
-          <p className="font-semibold text-[#1B2A4A] mb-2">One-time setup (about 10 minutes):</p>
+        <div data-testid="gmail-setup-instructions" className="mt-3 border border-warning/25 bg-warning/10 rounded-lg p-4 text-sm text-ink-2">
+          <p className="font-semibold text-primary mb-2">One-time setup (about 10 minutes):</p>
           <ol className="list-decimal pl-5 space-y-1 text-xs">
             <li>Go to <strong>console.cloud.google.com</strong> → create a project (name it "Haul Yeah Admin").</li>
             <li><strong>APIs &amp; Services → Library</strong> → search "Gmail API" → Enable.</li>
@@ -77,7 +77,7 @@ export const GmailCard = () => {
             <li>Copy the <strong>Client ID</strong> and <strong>Client Secret</strong> it gives you and send them to me in the Emergent chat — I'll wire them in and the Connect buttons below light up.</li>
           </ol>
           <div className="flex items-center gap-2 mt-3">
-            <code data-testid="gmail-redirect-uri" className="flex-1 text-[11px] bg-white border border-slate-200 rounded px-2 py-1.5 truncate">{status.redirect_uri}</code>
+            <code data-testid="gmail-redirect-uri" className="flex-1 text-[11px] bg-surface border border-border rounded px-2 py-1.5 truncate">{status.redirect_uri}</code>
             <Button data-testid="gmail-copy-uri-btn" variant="outline" size="sm" className="gap-1.5" onClick={copyUri}>
               <Copy className="w-3.5 h-3.5" /> Copy
             </Button>
@@ -87,32 +87,32 @@ export const GmailCard = () => {
 
       <div className="mt-3 space-y-2">
         {(status.mailboxes || []).map((mb) => (
-          <div key={mb.id} data-testid={`gmail-mailbox-${mb.id}`} className="flex flex-wrap items-center gap-2 border border-slate-200 rounded-lg px-3 py-2.5">
+          <div key={mb.id} data-testid={`gmail-mailbox-${mb.id}`} className="flex flex-wrap items-center gap-2 border border-border rounded-lg px-3 py-2.5">
             <div className="flex-1 min-w-[200px]">
-              <p className="text-sm font-semibold text-[#1B2A4A]">{mb.email}</p>
-              <p className="text-[11px] text-slate-400">{mb.label}</p>
+              <p className="text-sm font-semibold text-primary">{mb.email}</p>
+              <p className="text-[11px] text-faint">{mb.label}</p>
             </div>
             {mb.connected ? (
               <>
-                <Badge variant="outline" className="text-[10px] bg-emerald-100 text-emerald-700 border-emerald-300">
+                <Badge variant="outline" className="text-[10px] bg-success/12 text-success border-success/30">
                   Connected {mb.connected_at ? fmtDate(mb.connected_at.slice(0, 10)) : ""}
                 </Badge>
                 <Button data-testid={`gmail-reconnect-${mb.id}`} variant="outline" size="sm" className="gap-1 text-xs" disabled={busy || !status.configured} onClick={() => connect(mb.id)}>
                   <Plug className="w-3.5 h-3.5" /> Reconnect
                 </Button>
-                <Button data-testid={`gmail-disconnect-${mb.id}`} variant="outline" size="sm" className="gap-1 text-xs text-red-600 border-red-200 hover:bg-red-50" disabled={busy} onClick={() => disconnect(mb.id)}>
+                <Button data-testid={`gmail-disconnect-${mb.id}`} variant="outline" size="sm" className="gap-1 text-xs text-destructive border-destructive/25 hover:bg-destructive/10" disabled={busy} onClick={() => disconnect(mb.id)}>
                   <Unplug className="w-3.5 h-3.5" /> Disconnect
                 </Button>
               </>
             ) : (
-              <Button data-testid={`gmail-connect-${mb.id}`} size="sm" className="gap-1.5 bg-[#E8743B] hover:bg-[#d4632e]" disabled={busy || !status.configured} onClick={() => connect(mb.id)}>
+              <Button data-testid={`gmail-connect-${mb.id}`} size="sm" className="gap-1.5 bg-accent hover:bg-accent-press" disabled={busy || !status.configured} onClick={() => connect(mb.id)}>
                 <Plug className="w-3.5 h-3.5" /> Connect with Google
               </Button>
             )}
           </div>
         ))}
       </div>
-      {!status.configured && <p className="text-[11px] text-slate-400 mt-2">Buttons unlock once the Google credentials are in.</p>}
+      {!status.configured && <p className="text-[11px] text-faint mt-2">Buttons unlock once the Google credentials are in.</p>}
     </div>
   );
 };

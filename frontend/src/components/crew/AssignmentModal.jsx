@@ -172,7 +172,7 @@ export const AssignmentModal = ({ open, onOpenChange, initial, users, trucks, on
           <div>
             <Label>Crew</Label>
             <div className="space-y-2 mt-1">
-              {crewUsers.length === 0 && <p className="text-xs text-slate-400">No active crew accounts yet — add them on the Team tab.</p>}
+              {crewUsers.length === 0 && <p className="text-xs text-faint">No active crew accounts yet — add them on the Team tab.</p>}
               {crewUsers.map((u) => (
                 <div key={u.id} data-testid="assignment-crew-row" className="flex items-center gap-3">
                   <Checkbox data-testid="assignment-crew-checkbox" id={`crew-${u.id}`} checked={!!crewSel[u.id]} onCheckedChange={() => toggleCrew(u.id)} />
@@ -191,10 +191,10 @@ export const AssignmentModal = ({ open, onOpenChange, initial, users, trucks, on
             </div>
           </div>
           {warnings.length > 0 && (
-            <div data-testid="assignment-warnings" className="bg-amber-50 border border-amber-200 rounded-md p-3 space-y-1">
-              <p className="text-xs font-bold text-amber-800 flex items-center gap-1"><AlertTriangle className="w-3.5 h-3.5" /> Hold on:</p>
+            <div data-testid="assignment-warnings" className="bg-warning/10 border border-warning/25 rounded-md p-3 space-y-1">
+              <p className="text-xs font-bold text-warning flex items-center gap-1"><AlertTriangle className="w-3.5 h-3.5" /> Hold on:</p>
               {warnings.map((w, i) => (
-                <p key={i} className="text-xs text-amber-800">• {w}</p>
+                <p key={i} className="text-xs text-warning">• {w}</p>
               ))}
             </div>
           )}
@@ -202,11 +202,11 @@ export const AssignmentModal = ({ open, onOpenChange, initial, users, trucks, on
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
           {warnings.length > 0 ? (
-            <Button data-testid="assignment-force-save" disabled={busy} onClick={() => save(true)} className="bg-amber-600 hover:bg-amber-700">
+            <Button data-testid="assignment-force-save" disabled={busy} onClick={() => save(true)} className="bg-warning hover:bg-warning">
               Assign anyway
             </Button>
           ) : (
-            <Button data-testid="assignment-save" disabled={busy || !form.job_name || !form.job_date} onClick={() => save(false)} className="bg-[#E8743B] hover:bg-[#d4632e]">
+            <Button data-testid="assignment-save" disabled={busy || !form.job_name || !form.job_date} onClick={() => save(false)} className="bg-accent hover:bg-accent-press">
               {initial ? "Save changes" : "Assign job"}
             </Button>
           )}

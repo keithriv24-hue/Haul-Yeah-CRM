@@ -67,27 +67,27 @@ const Overview = ({ truck, onChanged }) => {
         <div><Label className="text-xs">Policy #</Label><Input data-testid="truck-ins-policy" className="h-8" value={form.ins_policy} onChange={set("ins_policy")} /></div>
         <div><Label className="text-xs">Ins. expires</Label><Input data-testid="truck-ins-expires" type="date" className="h-8" value={form.ins_expires} onChange={set("ins_expires")} /></div>
       </div>
-      <Button data-testid="truck-overview-save" size="sm" className="bg-[#E8743B] hover:bg-[#d4632e]" onClick={save}>Save truck file</Button>
+      <Button data-testid="truck-overview-save" size="sm" className="bg-accent hover:bg-accent-press" onClick={save}>Save truck file</Button>
 
-      <div className="border-t border-slate-100 pt-3">
-        <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">Maintenance reminders</p>
+      <div className="border-t border-border pt-3">
+        <p className="text-xs font-bold uppercase tracking-wide text-faint mb-2">Maintenance reminders</p>
         <div className="space-y-1.5">
           {reminders.map((r) => (
             <div key={r.id} data-testid="truck-reminder-row" className="flex items-center gap-2 text-sm">
-              <span className={`flex-1 ${r.done ? "line-through text-slate-400" : "text-slate-700"}`}>
-                {r.title} {r.due_date && <span className="text-[10px] text-slate-400">due {fmtDate(r.due_date)}</span>}
+              <span className={`flex-1 ${r.done ? "line-through text-faint" : "text-ink-2"}`}>
+                {r.title} {r.due_date && <span className="text-[10px] text-faint">due {fmtDate(r.due_date)}</span>}
               </span>
               <Button data-testid="truck-reminder-toggle" variant="ghost" size="sm" className="h-6 px-1.5"
                 onClick={() => saveReminders(reminders.map((x) => (x.id === r.id ? { ...x, done: !x.done } : x)))}>
-                {r.done ? <RotateCcw className="w-3.5 h-3.5 text-slate-400" /> : <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />}
+                {r.done ? <RotateCcw className="w-3.5 h-3.5 text-faint" /> : <CheckCircle2 className="w-3.5 h-3.5 text-success" />}
               </Button>
-              <Button data-testid="truck-reminder-delete" variant="ghost" size="sm" className="h-6 px-1.5 text-red-500"
+              <Button data-testid="truck-reminder-delete" variant="ghost" size="sm" className="h-6 px-1.5 text-destructive"
                 onClick={() => saveReminders(reminders.filter((x) => x.id !== r.id))}>
                 <Trash2 className="w-3.5 h-3.5" />
               </Button>
             </div>
           ))}
-          {reminders.length === 0 && <p className="text-xs text-slate-400">Nothing scheduled — add oil changes, DOT dates, tire rotations…</p>}
+          {reminders.length === 0 && <p className="text-xs text-faint">Nothing scheduled — add oil changes, DOT dates, tire rotations…</p>}
           <div className="flex gap-2 pt-1">
             <Input data-testid="truck-reminder-title" className="h-8" placeholder="Oil change" value={newRem.title} onChange={(e) => setNewRem((s) => ({ ...s, title: e.target.value }))} />
             <Input data-testid="truck-reminder-date" type="date" className="h-8 w-36" value={newRem.due_date} onChange={(e) => setNewRem((s) => ({ ...s, due_date: e.target.value }))} />
@@ -141,31 +141,31 @@ const ServiceLog = ({ truck }) => {
         {form.kind === "fuel" && <Input data-testid="log-gallons" type="number" className="h-8" placeholder="Gallons" value={form.gallons} onChange={set("gallons")} />}
       </div>
       <Input data-testid="log-notes" className="h-8" placeholder="What was done? (oil change, brake pads…)" value={form.notes} onChange={set("notes")} />
-      <Button data-testid="log-add-btn" size="sm" className="bg-[#1B2A4A] hover:bg-[#152238]" onClick={add}>Add entry</Button>
+      <Button data-testid="log-add-btn" size="sm" className="bg-primary hover:bg-[#152238]" onClick={add}>Add entry</Button>
 
       {data && (
         <>
-          <p className="text-xs text-slate-500">
+          <p className="text-xs text-faint">
             Lifetime: <strong>{fmtMoney(data.totals?.maintenance || 0)}</strong> maintenance · <strong>{fmtMoney(data.totals?.fuel || 0)}</strong> fuel
           </p>
           <div className="space-y-1.5 max-h-[38vh] overflow-y-auto">
             {(data.logs || []).map((l) => (
-              <div key={l.id} data-testid="truck-log-row" className="flex items-center gap-2 border border-slate-100 rounded-md px-2.5 py-1.5 text-sm">
-                {l.kind === "fuel" ? <Fuel className="w-3.5 h-3.5 text-sky-500 shrink-0" /> : <Wrench className="w-3.5 h-3.5 text-[#E8743B] shrink-0" />}
+              <div key={l.id} data-testid="truck-log-row" className="flex items-center gap-2 border border-border rounded-md px-2.5 py-1.5 text-sm">
+                {l.kind === "fuel" ? <Fuel className="w-3.5 h-3.5 text-info shrink-0" /> : <Wrench className="w-3.5 h-3.5 text-accent-ink shrink-0" />}
                 <div className="flex-1 min-w-0">
-                  <p className="text-xs text-slate-700 truncate">{l.notes || (l.kind === "fuel" ? "Fuel" : "Maintenance")}</p>
-                  <p className="text-[10px] text-slate-400">
+                  <p className="text-xs text-ink-2 truncate">{l.notes || (l.kind === "fuel" ? "Fuel" : "Maintenance")}</p>
+                  <p className="text-[10px] text-faint">
                     {fmtDate(l.date)}{l.odometer ? ` · ${Math.round(l.odometer).toLocaleString()} mi` : ""}{l.gallons ? ` · ${l.gallons} gal` : ""}
                   </p>
                 </div>
-                {l.cost != null && <span className="text-xs font-semibold text-[#1B2A4A]">{fmtMoney(l.cost)}</span>}
-                <Button data-testid="truck-log-delete" variant="ghost" size="sm" className="h-6 px-1.5 text-red-500"
+                {l.cost != null && <span className="text-xs font-semibold text-primary">{fmtMoney(l.cost)}</span>}
+                <Button data-testid="truck-log-delete" variant="ghost" size="sm" className="h-6 px-1.5 text-destructive"
                   onClick={() => deleteTruckLogApi(l.id).then(load).catch((e) => toast.error(apiErrorMessage(e)))}>
                   <Trash2 className="w-3.5 h-3.5" />
                 </Button>
               </div>
             ))}
-            {(data.logs || []).length === 0 && <p className="text-xs text-slate-400">No entries yet.</p>}
+            {(data.logs || []).length === 0 && <p className="text-xs text-faint">No entries yet.</p>}
           </div>
         </>
       )}
@@ -184,23 +184,23 @@ const Inspections = ({ truck, onChanged }) => {
         <ClipboardCheck className="w-3.5 h-3.5" /> File an inspection now
       </Button>
       <div className="space-y-1.5 max-h-[42vh] overflow-y-auto">
-        {list === null && <p className="text-xs text-slate-400">Loading…</p>}
-        {list && list.length === 0 && <p className="text-xs text-slate-400">No inspections yet — crew file them from the Warehouse Departure checklist.</p>}
+        {list === null && <p className="text-xs text-faint">Loading…</p>}
+        {list && list.length === 0 && <p className="text-xs text-faint">No inspections yet — crew file them from the Warehouse Departure checklist.</p>}
         {(list || []).map((i) => (
-          <div key={i.id} data-testid="inspection-row" className="border border-slate-100 rounded-md px-2.5 py-2">
+          <div key={i.id} data-testid="inspection-row" className="border border-border rounded-md px-2.5 py-2">
             <div className="flex items-center gap-2">
-              <Badge variant="outline" className={`text-[10px] ${i.passed ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-red-50 text-red-700 border-red-200"}`}>
+              <Badge variant="outline" className={`text-[10px] ${i.passed ? "bg-success/10 text-success border-success/25" : "bg-destructive/10 text-destructive border-destructive/25"}`}>
                 {i.passed ? "Passed" : "Issues"}
               </Badge>
-              <span className="text-xs text-slate-600 flex-1">{fmtDate(i.date)} · {i.by}{i.odometer ? ` · ${Math.round(i.odometer).toLocaleString()} mi` : ""}</span>
+              <span className="text-xs text-ink-2 flex-1">{fmtDate(i.date)} · {i.by}{i.odometer ? ` · ${Math.round(i.odometer).toLocaleString()} mi` : ""}</span>
             </div>
-            {i.failed.length > 0 && <p className="text-[11px] text-red-600 mt-1">Flagged: {i.failed.join(", ")}</p>}
-            {i.notes && <p className="text-[11px] text-slate-500 mt-0.5">{i.notes}</p>}
+            {i.failed.length > 0 && <p className="text-[11px] text-destructive mt-1">Flagged: {i.failed.join(", ")}</p>}
+            {i.notes && <p className="text-[11px] text-faint mt-0.5">{i.notes}</p>}
             {i.photos.length > 0 && (
               <div className="flex gap-1.5 mt-1.5">
                 {i.photos.map((pid) => (
                   <a key={pid} href={truckPhotoUrl(pid)} target="_blank" rel="noreferrer">
-                    <img data-testid="inspection-photo-thumb" src={truckPhotoUrl(pid)} alt="inspection" className="w-12 h-12 object-cover rounded border border-slate-200" />
+                    <img data-testid="inspection-photo-thumb" src={truckPhotoUrl(pid)} alt="inspection" className="w-12 h-12 object-cover rounded border border-border" />
                   </a>
                 ))}
               </div>
@@ -246,21 +246,21 @@ const Damage = ({ truck, onChanged }) => {
       <div className="flex items-center gap-2">
         <label className="inline-flex">
           <input data-testid="damage-photo-input" type="file" accept="image/*" multiple className="hidden" onChange={(e) => setFiles(Array.from(e.target.files || []))} />
-          <span className="inline-flex items-center gap-1.5 cursor-pointer rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">
+          <span className="inline-flex items-center gap-1.5 cursor-pointer rounded-md border border-border bg-surface px-3 py-1.5 text-xs font-medium text-ink-2 hover:bg-surface-sunk">
             <Camera className="w-3.5 h-3.5" /> {files.length ? `${files.length} attached` : "Attach photos"}
           </span>
         </label>
-        <Button data-testid="damage-report-btn" size="sm" disabled={busy || !desc.trim()} onClick={report} className="bg-red-600 hover:bg-red-700">
+        <Button data-testid="damage-report-btn" size="sm" disabled={busy || !desc.trim()} onClick={report} className="bg-destructive hover:bg-destructive/90">
           Report damage
         </Button>
       </div>
       <div className="space-y-1.5 max-h-[38vh] overflow-y-auto">
         {(list || []).map((d) => (
-          <div key={d.id} data-testid="damage-row" className={`border rounded-md px-2.5 py-2 ${d.resolved ? "border-slate-100 opacity-60" : "border-red-200 bg-red-50/40"}`}>
+          <div key={d.id} data-testid="damage-row" className={`border rounded-md px-2.5 py-2 ${d.resolved ? "border-border opacity-60" : "border-destructive/25 bg-destructive/10"}`}>
             <div className="flex items-start gap-2">
               <div className="flex-1">
-                <p className="text-sm text-slate-700">{d.description}</p>
-                <p className="text-[10px] text-slate-400 mt-0.5">{d.by} · {fmtDate((d.created_at || "").slice(0, 10))}{d.resolved ? " · resolved" : ""}</p>
+                <p className="text-sm text-ink-2">{d.description}</p>
+                <p className="text-[10px] text-faint mt-0.5">{d.by} · {fmtDate((d.created_at || "").slice(0, 10))}{d.resolved ? " · resolved" : ""}</p>
               </div>
               <Button data-testid="damage-resolve-btn" variant="outline" size="sm" className="h-7 text-[11px]"
                 onClick={() => patchDamageApi(d.id, !d.resolved).then(() => { load(); onChanged(); }).catch((e) => toast.error(apiErrorMessage(e)))}>
@@ -271,14 +271,14 @@ const Damage = ({ truck, onChanged }) => {
               <div className="flex gap-1.5 mt-1.5">
                 {d.photos.map((pid) => (
                   <a key={pid} href={truckPhotoUrl(pid)} target="_blank" rel="noreferrer">
-                    <img data-testid="damage-photo-thumb" src={truckPhotoUrl(pid)} alt="damage" className="w-12 h-12 object-cover rounded border border-slate-200" />
+                    <img data-testid="damage-photo-thumb" src={truckPhotoUrl(pid)} alt="damage" className="w-12 h-12 object-cover rounded border border-border" />
                   </a>
                 ))}
               </div>
             )}
           </div>
         ))}
-        {list && list.length === 0 && <p className="text-xs text-slate-400">No damage on record. Knock on wood.</p>}
+        {list && list.length === 0 && <p className="text-xs text-faint">No damage on record. Knock on wood.</p>}
       </div>
     </div>
   );

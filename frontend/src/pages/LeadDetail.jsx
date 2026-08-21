@@ -26,9 +26,9 @@ import { bookLeadAsJob } from "@/lib/leadActions";
 
 const InfoRow = ({ icon: Icon, label, children, isPrivate = true }) => (
   <div className="flex items-start gap-2 text-sm">
-    <Icon className="w-4 h-4 text-slate-400 mt-0.5 shrink-0" />
-    <span className="text-slate-500 shrink-0">{label}:</span>
-    {isPrivate ? <Private className="min-w-0 break-words font-medium text-[#1B2A4A]">{children}</Private> : <span className="min-w-0 break-words font-medium text-[#1B2A4A]">{children}</span>}
+    <Icon className="w-4 h-4 text-faint mt-0.5 shrink-0" />
+    <span className="text-faint shrink-0">{label}:</span>
+    {isPrivate ? <Private className="min-w-0 break-words font-medium text-primary">{children}</Private> : <span className="min-w-0 break-words font-medium text-primary">{children}</span>}
   </div>
 );
 
@@ -148,11 +148,11 @@ export default function LeadDetail() {
       <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
         <div className="min-w-0">
           <div className="flex items-center gap-3 flex-wrap">
-            <Private className="font-display text-3xl sm:text-4xl font-extrabold tracking-tight text-[#1B2A4A]" data-testid="lead-detail-name">{name}</Private>
+            <Private className="font-display text-[22px] sm:text-[26px] font-extrabold text-primary" data-testid="lead-detail-name">{name}</Private>
             {status === "New" && <AgeTimer createdTime={lead.createdTime} />}
             {needsFollowUp(lead) && <FollowUpBadge days={quietDays(lead)} />}
           </div>
-          <div className="text-sm text-slate-500 mt-1 space-x-3">
+          <div className="text-sm text-faint mt-1 space-x-3">
             {phone && <Private>{phone}</Private>}
             {email && <Private>{email}</Private>}
           </div>
@@ -171,9 +171,9 @@ export default function LeadDetail() {
 
       <div className="grid lg:grid-cols-2 gap-4 items-start">
         <div className="space-y-4">
-          <div className="bg-white border border-slate-200 rounded-lg p-5 space-y-3" data-testid="lead-detail-info">
+          <div className="surface p-5 space-y-3" data-testid="lead-detail-info">
             <div className="flex items-center justify-between">
-              <h2 className="font-display font-bold text-[#1B2A4A]">Move details</h2>
+              <h2 className="font-display font-bold text-primary">Move details</h2>
               {!editing && (
                 <Button data-testid="lead-detail-edit-btn" variant="outline" size="sm" className="gap-1 text-xs" onClick={startEdit}>
                   <Pencil className="w-3.5 h-3.5" /> Edit
@@ -214,7 +214,7 @@ export default function LeadDetail() {
                   <Input data-testid="lead-edit-to-input" value={form.to} onChange={setF("to")} />
                 </div>
                 <div className="col-span-2 flex gap-2">
-                  <Button data-testid="lead-edit-save-btn" onClick={saveEdit} disabled={savingEdit} className="flex-1 gap-1.5 bg-[#E8743B] hover:bg-[#d4632e]">
+                  <Button data-testid="lead-edit-save-btn" onClick={saveEdit} disabled={savingEdit} className="flex-1 gap-1.5 bg-accent hover:bg-accent-press">
                     <Save className="w-4 h-4" /> {savingEdit ? "Saving…" : "Save changes"}
                   </Button>
                   <Button data-testid="lead-edit-cancel-btn" variant="outline" onClick={() => setEditing(false)} className="gap-1.5">
@@ -239,20 +239,20 @@ export default function LeadDetail() {
             )}
           </div>
 
-          <div className="bg-white border border-slate-200 rounded-lg p-5" data-testid="lead-detail-quote">
-            <h2 className="font-display font-bold text-[#1B2A4A] mb-2">Quote</h2>
+          <div className="surface p-5" data-testid="lead-detail-quote">
+            <h2 className="font-display font-bold text-primary mb-2">Quote</h2>
             {quote ? (
               <div>
-                <span className="font-bold text-[#1B2A4A] text-lg">Quoted: <Money value={quote} /></span>
+                <span className="font-bold text-primary text-lg">Quoted: <Money value={quote} /></span>
                 {!isSales && (
-                  <span className={`ml-2 text-sm font-semibold ${depositPaid ? "text-emerald-600" : "text-amber-600"}`}>
+                  <span className={`ml-2 text-sm font-semibold ${depositPaid ? "text-success" : "text-warning"}`}>
                     {depositPaid ? "Deposit paid" : "No deposit yet"}
                   </span>
                 )}
-                <div className="text-xs text-slate-400 mt-1">Final price confirmed by phone.</div>
+                <div className="text-xs text-faint mt-1">Final price confirmed by phone.</div>
               </div>
             ) : (
-              <span className="text-sm text-slate-400">No quote yet. Press Quote below to price this move.</span>
+              <span className="text-sm text-faint">No quote yet. Press Quote below to price this move.</span>
             )}
             {isOwner && invoicesForLead(lead.id).length > 0 && (
               <div className="flex flex-wrap gap-1.5 mt-3" data-testid="lead-detail-invoices">
@@ -265,8 +265,8 @@ export default function LeadDetail() {
 
           <CommissionCard lead={lead} isOwner={isOwner} />
 
-          <div className="bg-white border border-slate-200 rounded-lg p-5" data-testid="lead-detail-actions">
-            <h2 className="font-display font-bold text-[#1B2A4A] mb-3">Actions</h2>
+          <div className="surface p-5" data-testid="lead-detail-actions">
+            <h2 className="font-display font-bold text-primary mb-3">Actions</h2>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
               <Button data-testid="lead-detail-call-btn" asChild variant="outline" size="sm" className="gap-1 text-xs" disabled={!phone}>
                 <a href={phone ? `tel:${phone}` : undefined}><Phone className="w-3.5 h-3.5" /> Call</a>
@@ -300,7 +300,7 @@ export default function LeadDetail() {
                 </a>
               </Button>
               {!!quote && ["Quoted", "Booked"].includes(status) && (
-                <Button data-testid="lead-detail-pdf-btn" variant="outline" size="sm" className="gap-1 text-xs border-[#E8743B]/40 text-[#E8743B] hover:bg-orange-50 hover:text-[#d4632e]" onClick={() => setPdfOpen(true)}>
+                <Button data-testid="lead-detail-pdf-btn" variant="outline" size="sm" className="gap-1 text-xs border-accent/40 text-accent-ink hover:bg-accent/10 hover:text-accent-ink" onClick={() => setPdfOpen(true)}>
                   <FileText className="w-3.5 h-3.5" /> Quote PDF
                 </Button>
               )}
@@ -308,7 +308,7 @@ export default function LeadDetail() {
                 <StickyNote className="w-3.5 h-3.5" /> Add note
               </Button>
               {["Lost", "Cold"].includes(status) && (
-                <Button data-testid="lead-detail-winback-btn" asChild variant="outline" size="sm" className="gap-1 text-xs border-sky-300 text-sky-700 hover:bg-sky-50 hover:text-sky-800" disabled={!phone}>
+                <Button data-testid="lead-detail-winback-btn" asChild variant="outline" size="sm" className="gap-1 text-xs border-info/30 text-info hover:bg-info/10 hover:text-info" disabled={!phone}>
                   <a
                     href={phone ? smsLink(phone, winBackSmsBody(name)) : undefined}
                     onClick={() => stampNote(`Win-back text sent ${new Date().toLocaleDateString("en-US")}.`)}
@@ -318,7 +318,7 @@ export default function LeadDetail() {
                 </Button>
               )}
               {unpaidInvoice && (
-                <Button data-testid="lead-detail-nudge-btn" asChild variant="outline" size="sm" className="gap-1 text-xs border-amber-300 text-amber-700 hover:bg-amber-50 hover:text-amber-800" disabled={!phone}>
+                <Button data-testid="lead-detail-nudge-btn" asChild variant="outline" size="sm" className="gap-1 text-xs border-warning/30 text-warning hover:bg-warning/10 hover:text-warning" disabled={!phone}>
                   <a
                     href={phone ? smsLink(phone, payNudgeSmsBody(name, unpaidInvoice.amount, unpaidInvoice.public_url)) : undefined}
                     onClick={() => stampNote(`Payment nudge text sent ${new Date().toLocaleDateString("en-US")}.`)}
@@ -338,7 +338,7 @@ export default function LeadDetail() {
                   <Button
                     data-testid="lead-detail-book-btn"
                     size="sm"
-                    className="gap-1 text-xs bg-[#1B2A4A] hover:bg-[#26395f]"
+                    className="gap-1 text-xs bg-primary hover:bg-[#26395f]"
                     onClick={bookAsJob}
                     disabled={booking || status === "Booked"}
                   >
@@ -361,17 +361,17 @@ export default function LeadDetail() {
           </div>
         </div>
 
-        <div className="bg-white border border-slate-200 rounded-lg p-5" data-testid="lead-detail-notes">
-          <h2 className="font-display font-bold text-[#1B2A4A] mb-3 flex items-center gap-2">
-            <History className="w-4 h-4 text-[#E8743B]" /> Notes history
+        <div className="surface p-5" data-testid="lead-detail-notes">
+          <h2 className="font-display font-bold text-primary mb-3 flex items-center gap-2">
+            <History className="w-4 h-4 text-accent-ink" /> Notes history
           </h2>
           {noteEntries.length === 0 ? (
             <EmptyState>No notes yet. Press "Add note" after every call or text.</EmptyState>
           ) : (
             <div className="space-y-2">
               {noteEntries.map((line, i) => (
-                <div key={i} data-testid="lead-note-entry" className="flex items-start gap-2 text-sm border border-slate-100 bg-slate-50/70 rounded-md px-3 py-2">
-                  <StickyNote className="w-3.5 h-3.5 text-slate-400 mt-0.5 shrink-0" />
+                <div key={i} data-testid="lead-note-entry" className="flex items-start gap-2 text-sm border border-border bg-surface-sunk/70 rounded-md px-3 py-2">
+                  <StickyNote className="w-3.5 h-3.5 text-faint mt-0.5 shrink-0" />
                   <Private className="min-w-0 break-words whitespace-pre-wrap">{line}</Private>
                 </div>
               ))}

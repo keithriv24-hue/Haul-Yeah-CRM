@@ -12,9 +12,9 @@ import { memberDetailApi, listChallengesApi } from "@/lib/api";
 import { fmtDate } from "@/lib/format";
 
 const StatBox = ({ label, value, testId }) => (
-  <div data-testid={testId} className="bg-white border border-slate-200 rounded-lg p-3 text-center">
-    <div className="font-display text-2xl font-extrabold text-[#1B2A4A]">{value}</div>
-    <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{label}</div>
+  <div data-testid={testId} className="surface p-3 text-center">
+    <div className="font-display text-2xl font-extrabold text-primary tnum">{value}</div>
+    <div className="text-[11px] font-semibold uppercase tracking-wide text-faint">{label}</div>
   </div>
 );
 
@@ -55,38 +55,38 @@ export default function MemberProfile() {
 
   return (
     <div data-testid="member-profile-page" className="space-y-4">
-      <Link to="/team" data-testid="back-to-team-link" className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#E8743B] hover:underline">
+      <Link to="/team" data-testid="back-to-team-link" className="inline-flex items-center gap-1.5 text-sm font-semibold text-accent-ink hover:underline">
         <ArrowLeft className="w-4 h-4" /> Team
       </Link>
 
-      <div className="bg-white border border-slate-200 rounded-lg p-5">
+      <div className="surface p-5">
         <div className="flex flex-wrap items-start gap-4">
           <MemberAvatar id={detail.id} name={detail.profile.display_name || detail.name} hasPhoto={detail.has_photo} size="lg" version={photoVer} />
           <div className="flex-1 min-w-[200px]">
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="font-display text-2xl font-extrabold text-[#1B2A4A]" data-testid="profile-name">
+              <h1 className="font-display text-2xl font-extrabold text-primary tnum" data-testid="profile-name">
                 {detail.profile.display_name || detail.name}
               </h1>
-              {detail.profile.nickname && <span className="text-slate-500">“{detail.profile.nickname}”</span>}
+              {detail.profile.nickname && <span className="text-faint">“{detail.profile.nickname}”</span>}
             </div>
             <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
               {detail.teams.map((t) => (
                 <Badge key={t} variant="outline" className={`text-[10px] capitalize ${TEAM_CHIP[t]}`}>{t}</Badge>
               ))}
               {(detail.titles || []).map((t) => (
-                <Badge key={t} data-testid="profile-title-chip" variant="outline" className="text-[10px] gap-1 bg-yellow-50 text-yellow-800 border-yellow-300">
+                <Badge key={t} data-testid="profile-title-chip" variant="outline" className="text-[10px] gap-1 bg-warning/10 text-warning border-warning/30">
                   <Trophy className="w-3 h-3" /> {t}
                 </Badge>
               ))}
             </div>
-            <p className="text-xs text-slate-400 mt-1.5">
-              {detail.profile.role_title && <span className="font-semibold text-slate-500">{detail.profile.role_title} · </span>}
+            <p className="text-xs text-faint mt-1.5">
+              {detail.profile.role_title && <span className="font-semibold text-faint">{detail.profile.role_title} · </span>}
               On the team since {fmtDate(detail.member_since?.slice(0, 10))}
             </p>
-            {detail.profile.bio && <p className="text-sm text-slate-600 mt-2" data-testid="profile-bio-text">{detail.profile.bio}</p>}
-            <div className="flex flex-wrap gap-x-6 gap-y-1 mt-2 text-xs text-slate-500">
-              {detail.profile.favorite_move && <span><strong className="text-slate-600">Favorite move:</strong> {detail.profile.favorite_move}</span>}
-              {detail.profile.fun_fact && <span><strong className="text-slate-600">Fun fact:</strong> {detail.profile.fun_fact}</span>}
+            {detail.profile.bio && <p className="text-sm text-ink-2 mt-2" data-testid="profile-bio-text">{detail.profile.bio}</p>}
+            <div className="flex flex-wrap gap-x-6 gap-y-1 mt-2 text-xs text-faint">
+              {detail.profile.favorite_move && <span><strong className="text-ink-2">Favorite move:</strong> {detail.profile.favorite_move}</span>}
+              {detail.profile.fun_fact && <span><strong className="text-ink-2">Fun fact:</strong> {detail.profile.fun_fact}</span>}
             </div>
           </div>
           {detail.can_edit && (
@@ -98,9 +98,9 @@ export default function MemberProfile() {
       </div>
 
       {detail.teams.length > 0 && (
-        <div className="bg-white border border-slate-200 rounded-lg p-5">
+        <div className="surface p-5">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="font-display font-bold text-lg text-[#1B2A4A]">Pinned badges</h2>
+            <h2 className="label-eyebrow">Pinned badges</h2>
             {detail.is_self && (
               <Button data-testid="pin-badges-btn" variant="outline" size="sm" className="gap-1.5" onClick={() => setPinOpen(true)}>
                 <Pin className="w-3.5 h-3.5" /> Pin badges
@@ -108,7 +108,7 @@ export default function MemberProfile() {
             )}
           </div>
           {(detail.pinned || []).length === 0 ? (
-            <p className="text-sm text-slate-400" data-testid="no-pins-note">
+            <p className="text-sm text-faint" data-testid="no-pins-note">
               {detail.is_self
                 ? detail.unlocked_count > 0
                   ? "Pick up to 3 badges to show off here."
@@ -120,7 +120,7 @@ export default function MemberProfile() {
               {detail.pinned.map((b) => (
                 <div key={b.id} data-testid="pinned-badge" className="flex flex-col items-center gap-1.5 w-24 text-center">
                   <BadgeMedallion badge={b} size="md" />
-                  <span className="text-xs font-semibold text-[#1B2A4A] leading-tight">{b.name}</span>
+                  <span className="text-xs font-semibold text-primary leading-tight">{b.name}</span>
                   <span className={`border rounded-full px-1.5 text-[10px] font-bold capitalize ${RARITY_CHIP[b.rarity]}`}>{b.rarity}</span>
                 </div>
               ))}
@@ -130,19 +130,19 @@ export default function MemberProfile() {
       )}
 
       {isRookie && (
-        <div data-testid="rookie-card" className="border-2 border-dashed border-[#E8743B]/50 bg-orange-50/60 rounded-lg p-5">
-          <h2 className="font-display font-bold text-[#1B2A4A] flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-[#E8743B]" /> Rookie
+        <div data-testid="rookie-card" className="border-2 border-dashed border-accent/50 bg-accent/10 rounded-lg p-5">
+          <h2 className="font-display font-bold text-primary flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-accent-ink" /> Rookie
           </h2>
-          <p className="text-sm text-slate-600 mt-1">
+          <p className="text-sm text-ink-2 mt-1">
             {detail.is_self ? "Your first badge is one job away. Here's what's closest:" : "Every legend starts at zero — the first badge is one job away."}
           </p>
           {detail.can_see_numbers && nearest.length > 0 && (
             <div className="flex flex-wrap gap-4 mt-3">
               {nearest.map((p) => (
-                <div key={p.badge_id} className="flex items-center gap-2 bg-white border border-orange-200 rounded-md px-3 py-2 text-sm">
-                  <span className="font-semibold text-[#1B2A4A]">{p.name}</span>
-                  <span className="text-xs text-slate-500 font-mono">{p.count}/{p.threshold}</span>
+                <div key={p.badge_id} className="flex items-center gap-2 bg-surface border border-accent/25 rounded-md px-3 py-2 text-sm">
+                  <span className="font-semibold text-primary">{p.name}</span>
+                  <span className="text-xs text-faint font-mono">{p.count}/{p.threshold}</span>
                 </div>
               ))}
             </div>
@@ -169,32 +169,32 @@ export default function MemberProfile() {
             )}
           </div>
           {detail.teams.length > 0 && (
-            <p className="text-[11px] text-slate-400 mt-1.5">Only {detail.is_self ? "you" : "they"} and the owner can see these numbers.</p>
+            <p className="text-[11px] text-faint mt-1.5">Only {detail.is_self ? "you" : "they"} and the owner can see these numbers.</p>
           )}
         </div>
       )}
 
       {detail.is_self && myChallenges.length > 0 && (
-        <div className="bg-white border border-slate-200 rounded-lg p-5" data-testid="profile-active-challenges">
+        <div className="surface p-5" data-testid="profile-active-challenges">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="font-display font-bold text-lg text-[#1B2A4A]">Your live challenges</h2>
-            <Link to="/challenges" className="text-xs font-semibold text-[#E8743B] hover:underline">See all</Link>
+            <h2 className="label-eyebrow">Your live challenges</h2>
+            <Link to="/challenges" className="text-xs font-semibold text-accent-ink hover:underline">See all</Link>
           </div>
           <div className="space-y-2">
             {myChallenges.map((ch) => {
               const mine = (ch.progress || []).find((r) => r.user_id === detail.id);
               const pct = ch.target ? Math.min(100, Math.round(((mine?.value || 0) / ch.target) * 100)) : null;
               return (
-                <div key={ch.id} className="rounded-md border border-slate-100 px-3 py-2">
+                <div key={ch.id} className="rounded-md border border-border px-3 py-2">
                   <div className="flex items-center justify-between text-sm">
-                    <span className="font-semibold text-[#1B2A4A]">{ch.name}</span>
-                    <span className="text-xs text-slate-500 font-mono">
+                    <span className="font-semibold text-primary">{ch.name}</span>
+                    <span className="text-xs text-faint font-mono">
                       {ch.target ? `${mine?.value || 0}/${ch.target}` : `${mine?.value || 0} so far`}
                     </span>
                   </div>
                   {pct !== null && (
-                    <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden mt-1">
-                      <div className={`h-full rounded-full ${pct >= 100 ? "bg-emerald-500" : "bg-[#E8743B]"}`} style={{ width: `${pct}%` }} />
+                    <div className="h-1.5 bg-surface-sunk rounded-full overflow-hidden mt-1">
+                      <div className={`h-full rounded-full ${pct >= 100 ? "bg-success" : "bg-accent"}`} style={{ width: `${pct}%` }} />
                     </div>
                   )}
                 </div>
@@ -207,30 +207,30 @@ export default function MemberProfile() {
       {detail.teams.length === 0 ? (
         <EmptyState>No badge tracks here — badges live on the Crew and Sales teams.</EmptyState>
       ) : (
-        <div className="bg-white border border-slate-200 rounded-lg p-5" data-testid="badge-gallery">
-          <h2 className="font-display font-bold text-lg text-[#1B2A4A] mb-1">All badges</h2>
-          <p className="text-xs text-slate-400 mb-4">Colored ones are unlocked. Grey ones are still out there.</p>
+        <div className="surface p-5" data-testid="badge-gallery">
+          <h2 className="font-display font-bold text-lg text-primary mb-1">All badges</h2>
+          <p className="text-xs text-faint mb-4">Colored ones are unlocked. Grey ones are still out there.</p>
           {detail.teams.map((t) => (
             <div key={t} className="mb-5 last:mb-0">
-              <h3 className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-3">{TRACK_LABEL[t]}</h3>
+              <h3 className="text-xs font-bold uppercase tracking-wide text-faint mb-3">{TRACK_LABEL[t]}</h3>
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
                 {(detail.gallery[t] || []).map((b) => {
                   const prog = !b.unlocked ? progressMap[b.id] : null;
                   return (
-                    <div key={b.id} data-testid={`gallery-badge-${b.id}`} className={`flex items-center gap-2.5 rounded-lg border p-2.5 ${b.unlocked ? "border-slate-200" : "border-slate-100 bg-slate-50/60"}`}>
+                    <div key={b.id} data-testid={`gallery-badge-${b.id}`} className={`flex items-center gap-2.5 rounded-lg border p-2.5 ${b.unlocked ? "border-border" : "border-border bg-surface-sunk/60"}`}>
                       <BadgeMedallion badge={b} unlocked={b.unlocked} size="sm" />
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1">
-                          <span className={`text-xs font-semibold truncate ${b.unlocked ? "text-[#1B2A4A]" : "text-slate-400"}`}>{b.name}</span>
-                          {!b.unlocked && <Lock className="w-3 h-3 text-slate-300 shrink-0" />}
+                          <span className={`text-xs font-semibold truncate ${b.unlocked ? "text-primary" : "text-faint"}`}>{b.name}</span>
+                          {!b.unlocked && <Lock className="w-3 h-3 text-faint/70 shrink-0" />}
                         </div>
                         <span className={`inline-block border rounded-full px-1.5 text-[9px] font-bold capitalize ${RARITY_CHIP[b.rarity]}`}>{b.rarity}</span>
                         {prog && (
                           <div className="mt-1">
-                            <div className="h-1 bg-slate-200 rounded-full overflow-hidden">
-                              <div className="h-full bg-[#E8743B] rounded-full" style={{ width: `${Math.min(100, Math.round((prog.count / prog.threshold) * 100))}%` }} />
+                            <div className="h-1 bg-muted rounded-full overflow-hidden">
+                              <div className="h-full bg-accent rounded-full" style={{ width: `${Math.min(100, Math.round((prog.count / prog.threshold) * 100))}%` }} />
                             </div>
-                            <span className="text-[9px] text-slate-400 font-mono">{prog.count}/{prog.threshold}</span>
+                            <span className="text-[9px] text-faint font-mono">{prog.count}/{prog.threshold}</span>
                           </div>
                         )}
                       </div>
@@ -244,15 +244,15 @@ export default function MemberProfile() {
       )}
 
       {(detail.challenge_wins || []).length > 0 && (
-        <div className="bg-white border border-slate-200 rounded-lg p-5" data-testid="challenge-wins-section">
-          <h2 className="font-display font-bold text-lg text-[#1B2A4A] mb-3">Challenge wins</h2>
+        <div className="surface p-5" data-testid="challenge-wins-section">
+          <h2 className="label-eyebrow mb-3">Challenge wins</h2>
           <ul className="space-y-2">
             {detail.challenge_wins.map((w) => (
               <li key={w.id} className="flex items-center gap-2 text-sm">
-                <Trophy className="w-4 h-4 text-amber-500 shrink-0" />
-                <span className="font-semibold text-[#1B2A4A]">{w.name}</span>
+                <Trophy className="w-4 h-4 text-warning shrink-0" />
+                <span className="font-semibold text-primary">{w.name}</span>
                 <Badge variant="outline" className={`text-[10px] capitalize ${TEAM_CHIP[w.team]}`}>{w.team}</Badge>
-                <span className="text-xs text-slate-400 ml-auto">{fmtDate(w.end)}</span>
+                <span className="text-xs text-faint ml-auto">{fmtDate(w.end)}</span>
               </li>
             ))}
           </ul>

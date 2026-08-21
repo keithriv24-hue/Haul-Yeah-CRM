@@ -37,21 +37,21 @@ export const ReportTab = () => {
       </div>
 
       <div className="grid grid-cols-3 gap-3">
-        <div className="bg-white rounded-lg border border-slate-200 p-4">
-          <p className="text-[11px] uppercase tracking-wide text-slate-400">Jobs done</p>
-          <p data-testid="report-jobs-completed" className="text-2xl font-bold text-[#1B2A4A]">{t.jobs_completed ?? "—"}</p>
+        <div className="surface p-4">
+          <p className="text-[11px] uppercase tracking-wide text-faint">Jobs done</p>
+          <p data-testid="report-jobs-completed" className="text-2xl font-bold text-primary">{t.jobs_completed ?? "—"}</p>
         </div>
-        <div className="bg-white rounded-lg border border-slate-200 p-4">
-          <p className="text-[11px] uppercase tracking-wide text-slate-400">Crew hours</p>
-          <p data-testid="report-total-hours" className="text-2xl font-bold text-[#1B2A4A]">{t.total_hours ?? "—"}</p>
+        <div className="surface p-4">
+          <p className="text-[11px] uppercase tracking-wide text-faint">Crew hours</p>
+          <p data-testid="report-total-hours" className="text-2xl font-bold text-primary">{t.total_hours ?? "—"}</p>
         </div>
-        <div className="bg-white rounded-lg border border-slate-200 p-4">
-          <p className="text-[11px] uppercase tracking-wide text-slate-400">Labor cost</p>
-          <Private><p data-testid="report-labor-cost" className="text-2xl font-bold text-[#1B2A4A]">{t.total_labor_cost != null ? fmtMoney(t.total_labor_cost) : "—"}</p></Private>
+        <div className="surface p-4">
+          <p className="text-[11px] uppercase tracking-wide text-faint">Labor cost</p>
+          <Private><p data-testid="report-labor-cost" className="text-2xl font-bold text-primary">{t.total_labor_cost != null ? fmtMoney(t.total_labor_cost) : "—"}</p></Private>
         </div>
       </div>
 
-      <div className="bg-white rounded-lg border border-slate-200 overflow-x-auto">
+      <div className="surface overflow-x-auto">
         <Table>
           <TableHeader>
             <TableRow>
@@ -73,19 +73,19 @@ export const ReportTab = () => {
                 <TableCell>{j.hours}</TableCell>
                 <TableCell><Private>{fmtMoney(j.labor_cost)}</Private></TableCell>
                 <TableCell><Private>{j.revenue != null ? fmtMoney(j.revenue) : "—"}</Private></TableCell>
-                <TableCell className={j.margin != null && j.margin < 0 ? "text-red-600 font-bold" : "font-bold"}>
+                <TableCell className={j.margin != null && j.margin < 0 ? "text-destructive font-bold" : "font-bold"}>
                   <Private>{j.margin != null ? fmtMoney(j.margin) : "—"}</Private>
                 </TableCell>
               </TableRow>
             ))}
             {report && report.jobs.length === 0 && (
-              <TableRow><TableCell colSpan={7} className="text-center text-slate-400 py-8">No assigned jobs in this range yet.</TableCell></TableRow>
+              <TableRow><TableCell colSpan={7} className="text-center text-faint py-8">No assigned jobs in this range yet.</TableCell></TableRow>
             )}
           </TableBody>
         </Table>
       </div>
       {report && (report.unassigned_hours || 0) > 0 && (
-        <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+        <p className="text-xs text-warning bg-warning/10 border border-warning/25 rounded-md px-3 py-2">
           {report.unassigned_hours} clocked hours (<Private className="inline">{fmtMoney(report.unassigned_cost)}</Private>) weren't tied to any job — check the Time clock tab.
         </p>
       )}

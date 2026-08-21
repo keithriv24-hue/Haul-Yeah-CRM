@@ -36,18 +36,18 @@ export const NotificationsBell = () => {
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <button data-testid="notifications-bell-btn" className="relative p-2 rounded-full hover:bg-slate-100 transition-colors" aria-label="Notifications">
-          <Bell className="w-5 h-5 text-slate-600" />
+        <button data-testid="notifications-bell-btn" className="relative p-2 rounded-full hover:bg-surface-sunk transition-colors" aria-label="Notifications">
+          <Bell className="w-5 h-5 text-ink-2" />
           {unread > 0 && (
-            <span data-testid="notifications-unread-badge" className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-[#E8743B] text-white text-[10px] font-bold flex items-center justify-center">
+            <span data-testid="notifications-unread-badge" className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-accent text-white text-[10px] font-bold flex items-center justify-center">
               {unread}
             </span>
           )}
         </button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-80 p-0">
-        <div className="flex items-center justify-between px-4 py-2.5 border-b border-slate-100">
-          <span className="text-sm font-bold text-[#1B2A4A]">Notifications</span>
+        <div className="flex items-center justify-between px-4 py-2.5 border-b border-border">
+          <span className="text-sm font-bold text-primary">Notifications</span>
           {unread > 0 && (
             <Button data-testid="notifications-mark-read-btn" variant="ghost" size="sm" className="h-7 gap-1 text-xs" onClick={markAll}>
               <CheckCheck className="w-3.5 h-3.5" /> Mark all read
@@ -55,15 +55,15 @@ export const NotificationsBell = () => {
           )}
         </div>
         <div className="max-h-80 overflow-y-auto">
-          {items.length === 0 && <p className="text-sm text-slate-400 text-center py-8">Nothing yet.</p>}
+          {items.length === 0 && <p className="text-sm text-faint text-center py-8">Nothing yet.</p>}
           {items.map((n) => (
-            <div key={n.id} data-testid="notification-item" className={`px-4 py-3 border-b border-slate-50 ${n.read ? "" : "bg-orange-50/60"}`}>
+            <div key={n.id} data-testid="notification-item" className={`px-4 py-3 border-b border-border ${n.read ? "" : "bg-accent/10"}`}>
               <div className="flex items-start gap-2">
-                {!n.read && <span className="w-2 h-2 rounded-full bg-[#E8743B] mt-1.5 shrink-0" />}
+                {!n.read && <span className="w-2 h-2 rounded-full bg-accent mt-1.5 shrink-0" />}
                 <div>
-                  <p className="text-sm font-semibold text-[#1B2A4A]">{n.title}</p>
-                  <p className="text-xs text-slate-600 mt-0.5">{n.body}</p>
-                  <p className="text-[10px] text-slate-400 mt-1">{ageLabel(minutesSince(n.created_at))} ago</p>
+                  <p className="text-sm font-semibold text-primary">{n.title}</p>
+                  <p className="text-xs text-ink-2 mt-0.5">{n.body}</p>
+                  <p className="text-[10px] text-faint mt-1">{ageLabel(minutesSince(n.created_at))} ago</p>
                 </div>
               </div>
             </div>

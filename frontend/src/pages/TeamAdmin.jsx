@@ -10,14 +10,14 @@ export default function TeamAdmin() {
   return (
     <div data-testid="team-admin-page" className="space-y-4">
       <div>
-        <h1 className="font-display text-3xl sm:text-4xl font-extrabold tracking-tight text-[#1B2A4A]">Team HQ</h1>
-        <p className="text-sm text-slate-500 mt-1">Job credits, badges, challenges, and who's earning what. Only you can see this.</p>
+        <h1 className="font-display text-[22px] sm:text-[26px] font-extrabold text-primary">Team HQ</h1>
+        <p className="text-sm text-faint mt-1">Job credits, badges, challenges, and who's earning what. Only you can see this.</p>
       </div>
       <InstructionBanner testId="team-admin-banner">
         Everything starts at zero from launch day — approve tallies as jobs finish and badges unlock on their own. Every action here is logged.
       </InstructionBanner>
       <Tabs defaultValue="credits">
-        <TabsList className="flex-wrap h-auto">
+        <TabsList>
           <TabsTrigger data-testid="admin-tab-credits" value="credits">Credits</TabsTrigger>
           <TabsTrigger data-testid="admin-tab-badges" value="badges">Badges</TabsTrigger>
           <TabsTrigger data-testid="admin-tab-challenges" value="challenges">Challenges</TabsTrigger>

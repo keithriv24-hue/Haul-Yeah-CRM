@@ -10,9 +10,9 @@ const OWNERS = [
 export const CrewContactsBubble = () => {
   const [open, setOpen] = useState(false);
   return (
-    <div className="fixed bottom-20 md:bottom-6 right-3 z-[60] print:hidden">
+    <div className="fixed bottom-[calc(76px+env(safe-area-inset-bottom))] md:bottom-6 right-3 z-[45] print:hidden">
       {open && (
-        <div data-testid="owner-contacts-panel" className="mb-2 w-72 bg-[#1B2A4A] text-white rounded-xl shadow-2xl border border-white/15 p-4">
+        <div data-testid="owner-contacts-panel" className="mb-2 w-[17rem] animate-pop-in rounded-xl border border-white/15 bg-primary p-4 text-white shadow-pop">
           <p className="text-xs font-bold uppercase tracking-wide text-white/60 mb-2">Call the bosses</p>
           {OWNERS.map((o) => (
             <div key={o.phone} data-testid="owner-contact-row" className="flex items-center justify-between py-2 border-b border-white/10 last:border-0">
@@ -21,25 +21,26 @@ export const CrewContactsBubble = () => {
                 <p className="text-xs text-white/60">Owner — {o.phone}</p>
               </div>
               <div className="flex gap-1.5">
-                <a data-testid={`owner-call-${o.phone}`} href={telUrl(o.phone)} className="p-2 rounded-full bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30">
+                <a data-testid={`owner-call-${o.phone}`} href={telUrl(o.phone)} className="press grid h-10 w-10 place-items-center rounded-full bg-success text-white transition-colors hover:brightness-110">
                   <Phone className="w-4 h-4" />
                 </a>
-                <a data-testid={`owner-text-${o.phone}`} href={smsUrl(o.phone)} className="p-2 rounded-full bg-sky-500/20 text-sky-300 hover:bg-sky-500/30">
+                <a data-testid={`owner-text-${o.phone}`} href={smsUrl(o.phone)} className="press grid h-10 w-10 place-items-center rounded-full bg-info text-white transition-colors hover:brightness-110">
                   <MessageSquare className="w-4 h-4" />
                 </a>
               </div>
             </div>
           ))}
-          <p className="text-[11px] text-[#E8743B] font-medium mt-2">If you text, start with your name and why you're reaching out.</p>
+          <p className="text-[11px] text-accent font-medium mt-2">If you text, start with your name and why you're reaching out.</p>
         </div>
       )}
       <button
         data-testid="owner-contacts-bubble"
         onClick={() => setOpen((v) => !v)}
-        className="ml-auto flex items-center gap-2 rounded-full bg-[#E8743B] hover:bg-[#d4632e] text-white font-bold text-sm px-4 py-3 shadow-xl transition-colors"
+        aria-label={open ? "Close boss contacts" : "Call the bosses"}
+        aria-expanded={open}
+        className="press ml-auto grid h-12 w-12 place-items-center rounded-full bg-accent text-white shadow-pop transition-colors hover:bg-accent-press"
       >
-        {open ? <X className="w-4 h-4" /> : <Headset className="w-4 h-4" />}
-        {open ? "Close" : "Bosses"}
+        {open ? <X className="w-5 h-5" /> : <Headset className="w-5 h-5" />}
       </button>
     </div>
   );

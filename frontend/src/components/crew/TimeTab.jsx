@@ -61,7 +61,7 @@ const EditEntryDialog = ({ entry, onOpenChange, onSaved }) => {
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(null)}>Cancel</Button>
-          <Button data-testid="edit-time-entry-save" disabled={busy} onClick={save} className="bg-[#E8743B] hover:bg-[#d4632e]">Save fix</Button>
+          <Button data-testid="edit-time-entry-save" disabled={busy} onClick={save} className="bg-accent hover:bg-accent-press">Save fix</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -110,12 +110,12 @@ export const TimeTab = () => {
             <Download className="w-4 h-4" /> Payroll CSV
           </a>
         </Button>
-        <div className="ml-auto text-sm text-slate-600">
-          <span className="font-bold text-[#1B2A4A]">{totalHours.toFixed(2)} hrs</span> · <span className="font-bold text-[#1B2A4A]">${totalPay.toFixed(2)}</span> in this range
+        <div className="ml-auto text-sm text-ink-2">
+          <span className="font-bold text-primary">{totalHours.toFixed(2)} hrs</span> · <span className="font-bold text-primary">${totalPay.toFixed(2)}</span> in this range
         </div>
       </div>
 
-      <div className="bg-white rounded-lg border border-slate-200 overflow-x-auto">
+      <div className="surface overflow-x-auto">
         <Table>
           <TableHeader>
             <TableRow>
@@ -135,17 +135,17 @@ export const TimeTab = () => {
           <TableBody>
             {list.map((e) => (
               <TableRow key={e.id} data-testid="timeclock-row">
-                <TableCell className="font-medium">{e.user_name}{e.edited && <span className="text-[10px] text-amber-600 ml-1">(edited)</span>}</TableCell>
+                <TableCell className="font-medium">{e.user_name}{e.edited && <span className="text-[10px] text-warning ml-1">(edited)</span>}</TableCell>
                 <TableCell>{fmtDate(e.clock_in.at.slice(0, 10))}</TableCell>
                 <TableCell>{fmtTime(e.clock_in.at)}</TableCell>
-                <TableCell>{e.clock_out ? fmtTime(e.clock_out.at) : <span className="text-emerald-600 font-semibold">on clock</span>}</TableCell>
+                <TableCell>{e.clock_out ? fmtTime(e.clock_out.at) : <span className="text-success font-semibold">on clock</span>}</TableCell>
                 <TableCell className="font-bold">{e.hours != null ? e.hours : "—"}</TableCell>
                 <TableCell>{e.position || "—"}</TableCell>
                 <TableCell>{e.pay != null ? `$${e.pay.toFixed(2)}` : "—"}</TableCell>
                 <TableCell className="max-w-[140px] truncate">{e.job_name || "—"}</TableCell>
                 <TableCell>
                   {(e.flags || []).length > 0 && (
-                    <Badge data-testid="entry-flags-badge" variant="outline" className="text-[10px] bg-amber-50 text-amber-700 border-amber-200 gap-1" title={e.flags.join("; ")}>
+                    <Badge data-testid="entry-flags-badge" variant="outline" className="text-[10px] bg-warning/10 text-warning border-warning/25 gap-1" title={e.flags.join("; ")}>
                       <AlertTriangle className="w-3 h-3" /> {e.flags.length}
                     </Badge>
                   )}
@@ -161,12 +161,12 @@ export const TimeTab = () => {
               </TableRow>
             ))}
             {entries !== null && list.length === 0 && (
-              <TableRow><TableCell colSpan={11} className="text-center text-slate-400 py-8">No punches in this date range.</TableCell></TableRow>
+              <TableRow><TableCell colSpan={11} className="text-center text-faint py-8">No punches in this date range.</TableCell></TableRow>
             )}
           </TableBody>
         </Table>
       </div>
-      <p className="text-xs text-slate-400">Flip "OK?" on once you've checked an entry. Flags call out punches with no GPS, far from the job site, or extra-long shifts.</p>
+      <p className="text-xs text-faint">Flip "OK?" on once you've checked an entry. Flags call out punches with no GPS, far from the job site, or extra-long shifts.</p>
 
       <EditEntryDialog entry={editEntry} onOpenChange={setEditEntry} onSaved={load} />
     </div>

@@ -28,7 +28,7 @@ export default function Challenges() {
       ) : (
         <div className="space-y-8">
           <section>
-            <h2 className="font-display font-bold text-lg text-[#1B2A4A] mb-3">Live now</h2>
+            <h2 className="label-eyebrow mb-3">Live now</h2>
             {active.length === 0 ? (
               <EmptyState>Nothing running right now.</EmptyState>
             ) : (
@@ -41,7 +41,7 @@ export default function Challenges() {
           </section>
           {waiting.length > 0 && (
             <section>
-              <h2 className="font-display font-bold text-lg text-[#1B2A4A] mb-3">Waiting on the owner</h2>
+              <h2 className="label-eyebrow mb-3">Waiting on the owner</h2>
               <div className="grid lg:grid-cols-2 gap-4" data-testid="waiting-challenges">
                 {waiting.map((ch) => (
                   <ChallengeCard key={ch.id} ch={ch} me={data.me} />
@@ -51,7 +51,7 @@ export default function Challenges() {
           )}
           {done.length > 0 && (
             <section>
-              <h2 className="font-display font-bold text-lg text-[#1B2A4A] mb-3">Finished</h2>
+              <h2 className="label-eyebrow mb-3">Finished</h2>
               <div className="grid lg:grid-cols-2 gap-4" data-testid="finished-challenges">
                 {done.map((ch) => (
                   <ChallengeCard key={ch.id} ch={ch} me={data.me} />

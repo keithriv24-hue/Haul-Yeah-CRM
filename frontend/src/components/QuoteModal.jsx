@@ -10,7 +10,7 @@ export default function QuoteModal({ lead, open, onOpenChange }) {
       <DialogContent data-testid="quote-modal" className="max-w-md max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="font-display flex items-center gap-2">
-            <Calculator className="w-5 h-5 text-[#E8743B]" /> Quote for {f(lead, LF.name) || "lead"}
+            <Calculator className="w-5 h-5 text-accent-ink" /> Quote for {f(lead, LF.name) || "lead"}
           </DialogTitle>
           <DialogDescription>Fill in the job — the price updates as you type.</DialogDescription>
         </DialogHeader>

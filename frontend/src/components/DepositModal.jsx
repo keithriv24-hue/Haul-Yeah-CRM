@@ -48,16 +48,16 @@ export default function DepositModal({ lead, open, onOpenChange }) {
       <DialogContent data-testid="deposit-modal" className="max-w-md">
         <DialogHeader>
           <DialogTitle className="font-display flex items-center gap-2">
-            <CreditCard className="w-5 h-5 text-[#E8743B]" /> Deposit for {name || "lead"}
+            <CreditCard className="w-5 h-5 text-accent-ink" /> Deposit for {name || "lead"}
           </DialogTitle>
           <DialogDescription>
             Make the payment link in your Square dashboard, then paste it here. We save it to the lead and write the email for you.
           </DialogDescription>
         </DialogHeader>
-        <div className="border border-[#1B2A4A]/15 bg-[#1B2A4A]/[0.04] rounded-lg p-4">
-          <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Deposit to collect ({rates.depositPercent}% of quote)</div>
-          <div data-testid="deposit-amount" className="font-display text-3xl font-extrabold text-[#1B2A4A]"><Money value={deposit} /></div>
-          {!quote && <p className="text-xs text-red-500 mt-1">No quote saved yet. Use the Quote button first.</p>}
+        <div className="border border-primary/15 bg-primary/[0.04] rounded-lg p-4">
+          <div className="text-xs font-semibold uppercase tracking-wide text-faint">Deposit to collect ({rates.depositPercent}% of quote)</div>
+          <div data-testid="deposit-amount" className="font-display text-3xl font-extrabold text-primary tnum"><Money value={deposit} /></div>
+          {!quote && <p className="text-xs text-destructive mt-1">No quote saved yet. Use the Quote button first.</p>}
         </div>
         <div>
           <Label>Square payment link</Label>
@@ -67,7 +67,7 @@ export default function DepositModal({ lead, open, onOpenChange }) {
           <Button data-testid="deposit-save-btn" onClick={saveLink} disabled={saving} variant="outline" className="flex-1 gap-2">
             <Save className="w-4 h-4" /> {saving ? "Saving…" : "Save link to notes"}
           </Button>
-          <Button data-testid="deposit-email-btn" asChild className="flex-1 gap-2 bg-[#E8743B] hover:bg-[#d4632e]">
+          <Button data-testid="deposit-email-btn" asChild className="flex-1 gap-2 bg-accent hover:bg-accent-press">
             <a href={mailto}><Mail className="w-4 h-4" /> Open email</a>
           </Button>
         </div>

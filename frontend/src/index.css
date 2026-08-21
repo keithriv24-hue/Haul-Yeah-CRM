@@ -7,43 +7,83 @@ body {
     font-family: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
 }
 
 .font-display {
     font-family: "Cabinet Grotesk", "IBM Plex Sans", sans-serif;
+    letter-spacing: -0.028em;
 }
 
 h1, h2, h3, h4, h5, h6 {
     font-family: "Cabinet Grotesk", "IBM Plex Sans", sans-serif;
+    letter-spacing: -0.028em;
+}
+
+/* Every number in the app lines up in a column. */
+.tnum,
+.font-display {
+    font-variant-numeric: tabular-nums;
 }
 
 @layer base {
     :root {
-        --background: 220 27% 96%;
-        --foreground: 219 46% 16%;
+        /* ---- ground & surface ---------------------------------------- */
+        --background: 40 14% 96%;      /* warm off-white app ground        */
+        --surface: 0 0% 100%;          /* cards, sheets                    */
+        --surface-sunk: 40 12% 93%;    /* wells, inactive segments         */
         --card: 0 0% 100%;
-        --card-foreground: 219 46% 16%;
+        --card-foreground: 218 25% 12%;
         --popover: 0 0% 100%;
-        --popover-foreground: 219 46% 16%;
-        --primary: 219 46% 20%;
+        --popover-foreground: 218 25% 12%;
+
+        /* ---- ink ------------------------------------------------------ */
+        --foreground: 218 25% 12%;
+        --ink-2: 218 14% 33%;          /* secondary copy                   */
+        --muted: 40 12% 93%;
+        --muted-foreground: 218 13% 39%;
+        --faint: 218 13% 43%;          /* labels, metadata — 4.5:1 on white */
+
+        /* ---- brand ---------------------------------------------------- */
+        --primary: 219 48% 19%;        /* #1B2A4A navy                     */
         --primary-foreground: 40 20% 98%;
-        --secondary: 218 25% 92%;
-        --secondary-foreground: 219 46% 20%;
-        --muted: 218 25% 92%;
-        --muted-foreground: 219 15% 42%;
-        --accent: 20 79% 57%;
-        --accent-foreground: 0 0% 100%;
-        --destructive: 0 72% 45%;
-        --destructive-foreground: 0 0% 98%;
-        --border: 219 20% 87%;
-        --input: 219 20% 82%;
+        --navy-deep: 219 52% 14%;      /* nav bars                         */
+        --secondary: 40 12% 93%;
+        --secondary-foreground: 219 48% 19%;
+        --accent: 20 79% 57%;          /* #E8743B — ACTION ONLY            */
+        --accent-foreground: 218 30% 10%;
+        --accent-press: 20 74% 44%;
+        --accent-ink: 20 84% 31%;      /* accent as TEXT, so it clears 4.5:1  */
+        --accent-wash: 22 85% 96%;
+
+        /* ---- status (never used for actions) -------------------------- */
+        --destructive: 5 68% 42%;
+        --destructive-foreground: 0 0% 100%;
+        --success: 158 80% 22%;
+        --warning: 32 82% 31%;
+        --info: 213 55% 38%;
+
+        /* ---- lines & focus -------------------------------------------- */
+        --border: 40 10% 88%;
+        --border-strong: 40 8% 80%;
+        --input: 40 10% 85%;
         --ring: 20 79% 57%;
+
+        /* ---- charts ---------------------------------------------------- */
         --chart-1: 20 79% 57%;
-        --chart-2: 219 46% 20%;
-        --chart-3: 152 55% 40%;
-        --chart-4: 207 44% 55%;
-        --chart-5: 0 63% 55%;
-        --radius: 0.5rem;
+        --chart-2: 219 48% 19%;
+        --chart-3: 158 55% 34%;
+        --chart-4: 213 47% 55%;
+        --chart-5: 6 63% 52%;
+
+        --radius: 0.75rem;
+
+        /* ---- motion ---------------------------------------------------- */
+        --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+        --ease-spring: cubic-bezier(0.34, 1.32, 0.64, 1);
+        --dur-fast: 120ms;
+        --dur: 190ms;
+        --dur-slow: 300ms;
     }
 }
 
@@ -53,6 +93,68 @@ h1, h2, h3, h4, h5, h6 {
     }
     body {
         @apply bg-background text-foreground;
+    }
+    /* One focus treatment for the whole app. */
+    :where(a, button, input, select, textarea, [tabindex]):focus-visible {
+        outline: 2px solid hsl(var(--ring));
+        outline-offset: 2px;
+        border-radius: 6px;
+    }
+}
+
+@layer components {
+    /* Section label — the only uppercase text in the app. */
+    .label-eyebrow {
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        color: hsl(var(--faint));
+    }
+    /* Card surface used everywhere. Hover lift is desktop-only on purpose:
+       a phone has no hover and the shadow just costs paint time. */
+    .surface {
+        background: hsl(var(--surface));
+        border: 1px solid hsl(var(--border));
+        border-radius: 0.75rem;
+    }
+    .surface-interactive {
+        background: hsl(var(--surface));
+        border: 1px solid hsl(var(--border));
+        border-radius: 0.75rem;
+        transition: transform var(--dur) var(--ease-out),
+                    box-shadow var(--dur) var(--ease-out),
+                    border-color var(--dur) var(--ease-out);
+    }
+    @media (hover: hover) and (pointer: fine) {
+        .surface-interactive:hover {
+            transform: translateY(-1px);
+            border-color: hsl(var(--border-strong));
+            box-shadow: 0 6px 20px -8px rgba(19, 24, 32, 0.18);
+        }
+    }
+    /* Thumb-zone action band: full width on a phone, inline on a desktop. */
+    .action-band {
+        width: 100%;
+        border-radius: 0.625rem;
+        padding: 0.875rem 1rem;
+        font-size: 15px;
+        font-weight: 600;
+    }
+}
+
+@layer utilities {
+    .ease-out-soft {
+        transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    .press {
+        transition: transform var(--dur-fast) var(--ease-out);
+    }
+    .press:active {
+        transform: scale(0.975);
+    }
+    .safe-bottom {
+        padding-bottom: env(safe-area-inset-bottom);
     }
 }
 
@@ -71,8 +173,23 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 ::selection {
-    background: #e8743b;
+    background: hsl(var(--accent));
     color: #fff;
+}
+
+/* Anyone who has asked their OS to calm down gets a calm app. */
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+    }
+    .press:active {
+        transform: none;
+    }
 }
 
 @layer base {

@@ -86,35 +86,35 @@ export default function TimeClock() {
   return (
     <div data-testid="time-clock-page" className="space-y-6 max-w-xl">
       <div>
-        <h1 className="text-2xl font-bold text-[#1B2A4A]">Time Clock</h1>
-        <p className="text-sm text-slate-500">Punch in when you start, punch out when you're done.</p>
+        <h1 className="text-2xl font-bold text-primary">Time Clock</h1>
+        <p className="text-sm text-faint">Punch in when you start, punch out when you're done.</p>
       </div>
       <InstructionBanner testId="time-clock-banner">
         Clock in when your shift starts and out when it ends. Your location is only checked while you're on the clock.
       </InstructionBanner>
 
-      <div className="bg-white rounded-lg border border-slate-200 p-6 text-center">
+      <div className="surface p-6 text-center">
         {data === null ? (
-          <p className="text-sm text-slate-400">Loading…</p>
+          <p className="text-sm text-faint">Loading…</p>
         ) : data.clocked_in ? (
           <>
-            <p className="text-xs uppercase tracking-wide text-emerald-600 font-bold">On the clock</p>
-            <p data-testid="clock-elapsed" className="text-4xl font-bold text-[#1B2A4A] tabular-nums mt-1">
+            <p className="text-xs uppercase tracking-wide text-success font-bold">On the clock</p>
+            <p data-testid="clock-elapsed" className="text-4xl font-bold text-primary tabular-nums mt-1">
               {elapsedLabel(data.open_entry.clocked_in_at, now)}
             </p>
-            <p className="text-xs text-slate-500 mt-1">
+            <p className="text-xs text-faint mt-1">
               Since {fmtTime(data.open_entry.clocked_in_at)}
               {data.open_entry.job_name ? ` · ${data.open_entry.job_name}` : ""}
             </p>
-            <Button data-testid="clock-out-btn" disabled={busy} onClick={() => punch("out")} className="w-full mt-4 h-14 text-lg gap-2 bg-red-600 hover:bg-red-700">
+            <Button data-testid="clock-out-btn" disabled={busy} onClick={() => punch("out")} className="w-full mt-4 h-14 text-lg gap-2">
               {busy ? <Loader2 className="w-5 h-5 animate-spin" /> : <LogOut className="w-5 h-5" />} Clock out
             </Button>
           </>
         ) : (
           <>
-            <AlarmClock className="w-10 h-10 text-slate-300 mx-auto" />
-            <p className="text-sm text-slate-500 mt-2">You're off the clock.</p>
-            <Button data-testid="clock-in-btn" disabled={busy} onClick={startClockIn} className="w-full mt-4 h-14 text-lg gap-2 bg-emerald-600 hover:bg-emerald-700">
+            <AlarmClock className="w-10 h-10 text-faint/70 mx-auto" />
+            <p className="text-sm text-faint mt-2">You're off the clock.</p>
+            <Button data-testid="clock-in-btn" disabled={busy} onClick={startClockIn} className="w-full mt-4 h-14 text-lg gap-2 bg-success hover:bg-success">
               {busy ? <Loader2 className="w-5 h-5 animate-spin" /> : <LogIn className="w-5 h-5" />} Clock in
             </Button>
           </>
@@ -124,30 +124,30 @@ export default function TimeClock() {
       {weeks.length > 0 && (
         <div data-testid="weekly-totals" className="grid grid-cols-2 gap-3">
           {weeks.map(([wk, hrs]) => (
-            <div key={wk} className="bg-white rounded-lg border border-slate-200 p-4">
-              <p className="text-[11px] uppercase tracking-wide text-slate-400">Week {wk.split("-W")[1]}</p>
-              <p className="text-xl font-bold text-[#1B2A4A]">{hrs} hrs</p>
+            <div key={wk} className="surface p-4">
+              <p className="text-[11px] uppercase tracking-wide text-faint">Week {wk.split("-W")[1]}</p>
+              <p className="text-xl font-bold text-primary">{hrs} hrs</p>
             </div>
           ))}
         </div>
       )}
 
       <div>
-        <h2 className="text-sm font-bold uppercase tracking-wide text-slate-500 mb-2">Recent punches</h2>
-        <div className="bg-white rounded-lg border border-slate-200 divide-y divide-slate-100">
+        <h2 className="text-sm font-bold uppercase tracking-wide text-faint mb-2">Recent punches</h2>
+        <div className="surface divide-y divide-border">
           {(data?.entries || []).slice(0, 14).map((e) => (
             <div key={e.id} data-testid="time-entry-row" className="flex items-center justify-between px-4 py-2.5 text-sm">
               <div>
-                <p className="font-medium text-[#1B2A4A]">{fmtDate(e.clock_in.at.slice(0, 10))}</p>
-                <p className="text-xs text-slate-500">
+                <p className="font-medium text-primary">{fmtDate(e.clock_in.at.slice(0, 10))}</p>
+                <p className="text-xs text-faint">
                   {fmtTime(e.clock_in.at)} → {e.clock_out ? fmtTime(e.clock_out.at) : "still on"}
                   {e.job_name ? ` · ${e.job_name}` : ""}
                 </p>
               </div>
-              <span className="font-bold text-[#1B2A4A]">{e.hours != null ? `${e.hours}h` : "—"}</span>
+              <span className="font-bold text-primary">{e.hours != null ? `${e.hours}h` : "—"}</span>
             </div>
           ))}
-          {data && data.entries.length === 0 && <p className="text-sm text-slate-400 px-4 py-6 text-center">No punches yet.</p>}
+          {data && data.entries.length === 0 && <p className="text-sm text-faint px-4 py-6 text-center">No punches yet.</p>}
         </div>
       </div>
 
@@ -155,7 +155,7 @@ export default function TimeClock() {
         <AlertDialogContent data-testid="gps-consent-dialog">
           <AlertDialogHeader>
             <AlertDialogTitle className="font-display flex items-center gap-2">
-              <MapPin className="w-5 h-5 text-[#E8743B]" /> Location while you work
+              <MapPin className="w-5 h-5 text-accent-ink" /> Location while you work
             </AlertDialogTitle>
             <AlertDialogDescription>
               When you're clocked in, the app records your location so the boss can see the crew is on site. It stops the second you clock out. One-time OK needed.
@@ -163,7 +163,7 @@ export default function TimeClock() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel data-testid="gps-consent-cancel">Not now</AlertDialogCancel>
-            <AlertDialogAction data-testid="gps-consent-agree-btn" onClick={agreeConsent} className="bg-[#E8743B] hover:bg-[#d4632e]">
+            <AlertDialogAction data-testid="gps-consent-agree-btn" onClick={agreeConsent} className="bg-accent hover:bg-accent-press">
               OK, clock me in
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -174,7 +174,7 @@ export default function TimeClock() {
         <AlertDialogContent data-testid="review-prompt-dialog">
           <AlertDialogHeader>
             <AlertDialogTitle className="font-display flex items-center gap-2">
-              <Star className="w-5 h-5 text-[#E8743B]" /> Job done!
+              <Star className="w-5 h-5 text-accent-ink" /> Job done!
             </AlertDialogTitle>
             <AlertDialogDescription>
               Nice work. Remember to ask the customer to leave a review. You can send it right from the Today page.
@@ -182,7 +182,7 @@ export default function TimeClock() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel data-testid="review-prompt-close">Not now</AlertDialogCancel>
-            <AlertDialogAction data-testid="review-prompt-open-btn" onClick={() => navigate("/today#review")} className="bg-[#E8743B] hover:bg-[#d4632e]">
+            <AlertDialogAction data-testid="review-prompt-open-btn" onClick={() => navigate("/today#review")} className="bg-accent hover:bg-accent-press">
               Ask for a review
             </AlertDialogAction>
           </AlertDialogFooter>

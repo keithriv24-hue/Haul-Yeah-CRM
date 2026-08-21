@@ -98,7 +98,7 @@ const PostForm = ({ open, onOpenChange, post }) => {
             <Textarea data-testid="blog-body-input" value={form.body} onChange={set("body")} rows={8} />
           </div>
         </div>
-        <Button data-testid="blog-save-btn" onClick={save} disabled={saving} className="w-full gap-2 bg-[#E8743B] hover:bg-[#d4632e]">
+        <Button data-testid="blog-save-btn" onClick={save} disabled={saving} className="w-full gap-2 bg-accent hover:bg-accent-press">
           <PenLine className="w-4 h-4" /> {saving ? "Saving…" : "Save post"}
         </Button>
       </DialogContent>
@@ -116,7 +116,7 @@ const ReadPostDialog = ({ post, onClose }) => (
           {post && (f(post, BF.publishDate) ? fmtDate(f(post, BF.publishDate)) : "Published")}
         </DialogDescription>
       </DialogHeader>
-      <p className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">{post ? f(post, BF.body) || "No body written yet." : ""}</p>
+      <p className="text-sm text-ink-2 whitespace-pre-wrap leading-relaxed">{post ? f(post, BF.body) || "No body written yet." : ""}</p>
     </DialogContent>
   </Dialog>
 );
@@ -145,7 +145,7 @@ export default function Blog() {
         subtitle={isOwner ? "Your content pipeline." : "Published posts from the team."}
         action={
           isOwner ? (
-            <Button data-testid="new-post-btn" onClick={() => { setEditing(null); setModalOpen(true); }} className="gap-1.5 bg-[#E8743B] hover:bg-[#d4632e]">
+            <Button data-testid="new-post-btn" onClick={() => { setEditing(null); setModalOpen(true); }} className="gap-1.5 bg-accent hover:bg-accent-press">
               <Plus className="w-4 h-4" /> New post
             </Button>
           ) : null
@@ -175,14 +175,14 @@ export default function Blog() {
                 key={p.id}
                 data-testid="published-post-card"
                 onClick={() => setReading(p)}
-                className="text-left bg-white border border-slate-200 rounded-lg p-4 hover:border-[#E8743B] transition-colors"
+                className="text-left surface p-4 hover:border-accent transition-colors"
               >
-                <div className="text-sm font-semibold text-[#1B2A4A] leading-snug">{f(p, BF.title) || "Untitled"}</div>
-                <div className="text-xs text-slate-500 mt-1">
+                <div className="text-sm font-semibold text-primary leading-snug">{f(p, BF.title) || "Untitled"}</div>
+                <div className="text-xs text-faint mt-1">
                   {f(p, BF.category) && <span>{f(p, BF.category)} · </span>}
                   {f(p, BF.publishDate) ? fmtDate(f(p, BF.publishDate)) : "Published"}
                 </div>
-                {f(p, BF.body) && <p className="text-xs text-slate-500 mt-2 line-clamp-3">{f(p, BF.body)}</p>}
+                {f(p, BF.body) && <p className="text-xs text-faint mt-2 line-clamp-3">{f(p, BF.body)}</p>}
               </button>
             ))}
           </div>
@@ -192,10 +192,10 @@ export default function Blog() {
           {BLOG_STATUSES.map((status) => {
             const col = posts.filter((p) => (f(p, BF.status) || "Idea") === status);
             return (
-              <div key={status} data-testid={`blog-col-${status.toLowerCase().replace(/\s+/g, "-")}`} className="rounded-lg border border-slate-200 bg-slate-100/60 p-3">
+              <div key={status} data-testid={`blog-col-${status.toLowerCase().replace(/\s+/g, "-")}`} className="rounded-lg border border-border bg-surface-sunk/60 p-3">
                 <div className="flex items-center justify-between mb-3">
-                  <h2 className="font-display font-bold text-sm text-[#1B2A4A]">{status}</h2>
-                  <span className="text-xs font-bold text-slate-400">{col.length}</span>
+                  <h2 className="font-display font-bold text-sm text-primary">{status}</h2>
+                  <span className="text-xs font-bold text-faint">{col.length}</span>
                 </div>
                 <div className="space-y-2">
                   {col.map((p) => (
@@ -203,17 +203,17 @@ export default function Blog() {
                       key={p.id}
                       data-testid="blog-card"
                       onClick={() => { setEditing(p); setModalOpen(true); }}
-                      className="w-full text-left bg-white border border-slate-200 rounded-lg p-3 hover:border-[#E8743B] transition-colors"
+                      className="w-full text-left surface p-3 hover:border-accent transition-colors"
                     >
-                      <div className="text-sm font-semibold text-[#1B2A4A] leading-snug">{f(p, BF.title) || "Untitled"}</div>
-                      <div className="text-xs text-slate-500 mt-1">
+                      <div className="text-sm font-semibold text-primary leading-snug">{f(p, BF.title) || "Untitled"}</div>
+                      <div className="text-xs text-faint mt-1">
                         {f(p, BF.category) && <span>{f(p, BF.category)} · </span>}
                         {f(p, BF.publishDate) ? fmtDate(f(p, BF.publishDate)) : "No date"}
                       </div>
-                      {f(p, BF.slug) && <div className="text-[10px] text-slate-400 mt-0.5 truncate">/{f(p, BF.slug)}</div>}
+                      {f(p, BF.slug) && <div className="text-[10px] text-faint mt-0.5 truncate">/{f(p, BF.slug)}</div>}
                     </button>
                   ))}
-                  {col.length === 0 && <div className="text-xs text-slate-400 text-center py-4">Nothing here</div>}
+                  {col.length === 0 && <div className="text-xs text-faint text-center py-4">Nothing here</div>}
                 </div>
               </div>
             );

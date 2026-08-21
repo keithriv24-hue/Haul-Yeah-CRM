@@ -134,7 +134,7 @@ const ChallengeFormDialog = ({ open, onOpenChange, editing, badges, onSaved }) =
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button data-testid="challenge-save-btn" disabled={busy || !form.name.trim() || !form.start || !form.end} onClick={save} className="bg-[#E8743B] hover:bg-[#d4632e]">
+          <Button data-testid="challenge-save-btn" disabled={busy || !form.name.trim() || !form.start || !form.end} onClick={save} className="bg-accent hover:bg-accent-press">
             {editing ? "Save challenge" : "Launch it"}
           </Button>
         </DialogFooter>
@@ -176,14 +176,14 @@ const VerifyDialog = ({ ch, onOpenChange, onSaved }) => {
         <div className="space-y-2">
           {(ch?.progress || []).map((r) => (
             <div key={r.user_id} className="flex items-center gap-3">
-              <span className="flex-1 text-sm font-semibold text-[#1B2A4A]">{r.name}</span>
+              <span className="flex-1 text-sm font-semibold text-primary">{r.name}</span>
               <Input data-testid={`verify-input-${r.user_id}`} type="number" min="0" className="w-24 h-8" value={values[r.user_id] ?? 0} onChange={(e) => setValues((v) => ({ ...v, [r.user_id]: e.target.value }))} />
             </div>
           ))}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(null)}>Cancel</Button>
-          <Button data-testid="verify-save-btn" disabled={busy} onClick={save} className="bg-[#E8743B] hover:bg-[#d4632e]">Save progress</Button>
+          <Button data-testid="verify-save-btn" disabled={busy} onClick={save} className="bg-accent hover:bg-accent-press">Save progress</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -225,20 +225,20 @@ const AwardDialog = ({ ch, onOpenChange, onSaved }) => {
         </DialogHeader>
         <div className="space-y-1.5">
           {(ch?.progress || []).map((r) => (
-            <label key={r.user_id} className="flex items-center gap-2.5 text-sm cursor-pointer rounded-md border border-slate-100 px-3 py-2">
+            <label key={r.user_id} className="flex items-center gap-2.5 text-sm cursor-pointer rounded-md border border-border px-3 py-2">
               <Checkbox
                 data-testid={`winner-check-${r.user_id}`}
                 checked={picked.includes(r.user_id)}
                 onCheckedChange={() => setPicked((p) => (p.includes(r.user_id) ? p.filter((x) => x !== r.user_id) : [...p, r.user_id]))}
               />
-              <span className="flex-1 font-semibold text-[#1B2A4A]">{r.name}</span>
-              <span className="font-mono text-slate-500">{r.value}</span>
+              <span className="flex-1 font-semibold text-primary">{r.name}</span>
+              <span className="font-mono text-faint">{r.value}</span>
             </label>
           ))}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(null)}>Cancel</Button>
-          <Button data-testid="award-challenge-confirm-btn" disabled={busy} onClick={award} className="bg-emerald-600 hover:bg-emerald-700 gap-1.5">
+          <Button data-testid="award-challenge-confirm-btn" disabled={busy} onClick={award} className="bg-success hover:bg-success gap-1.5">
             <Trophy className="w-4 h-4" /> Send rewards ({picked.length})
           </Button>
         </DialogFooter>
@@ -278,21 +278,21 @@ export const AdminChallengesTab = () => {
   return (
     <div className="space-y-4 mt-4">
       <div className="flex justify-end">
-        <Button data-testid="new-challenge-btn" size="sm" className="gap-1.5 bg-[#E8743B] hover:bg-[#d4632e]" onClick={() => { setEditing(null); setFormOpen(true); }}>
+        <Button data-testid="new-challenge-btn" size="sm" className="gap-1.5 bg-accent hover:bg-accent-press" onClick={() => { setEditing(null); setFormOpen(true); }}>
           <Plus className="w-4 h-4" /> New challenge
         </Button>
       </div>
       <div className="grid lg:grid-cols-2 gap-4" data-testid="admin-challenges-list">
         {sorted.map((ch) => (
           <ChallengeCard key={ch.id} ch={ch} me={null}>
-            <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t border-slate-100">
+            <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t border-border">
               {ch.metric === "owner_verified" && ["active", "needs_verify"].includes(ch.status) && (
                 <Button data-testid="challenge-verify-btn" variant="outline" size="sm" className="gap-1 text-xs" onClick={() => setVerifying(ch)}>
                   <ClipboardCheck className="w-3.5 h-3.5" /> Update progress
                 </Button>
               )}
               {ch.status === "needs_verify" && (
-                <Button data-testid="challenge-award-btn" size="sm" className="gap-1 text-xs bg-emerald-600 hover:bg-emerald-700" onClick={() => setAwarding(ch)}>
+                <Button data-testid="challenge-award-btn" size="sm" className="gap-1 text-xs bg-success hover:bg-success" onClick={() => setAwarding(ch)}>
                   <Trophy className="w-3.5 h-3.5" /> Confirm winners
                 </Button>
               )}
@@ -303,7 +303,7 @@ export const AdminChallengesTab = () => {
               )}
               <AlertDialog>
                 <AlertDialogTrigger asChild>
-                  <Button data-testid="challenge-delete-btn" variant="outline" size="sm" className="gap-1 text-xs text-red-600 border-red-200 hover:bg-red-50">
+                  <Button data-testid="challenge-delete-btn" variant="outline" size="sm" className="gap-1 text-xs text-destructive border-destructive/25 hover:bg-destructive/10">
                     <Trash2 className="w-3.5 h-3.5" /> Delete
                   </Button>
                 </AlertDialogTrigger>
@@ -314,7 +314,7 @@ export const AdminChallengesTab = () => {
                   </AlertDialogHeader>
                   <AlertDialogFooter>
                     <AlertDialogCancel>Keep it</AlertDialogCancel>
-                    <AlertDialogAction data-testid="challenge-delete-confirm" onClick={() => remove(ch)} className="bg-red-600 hover:bg-red-700">Yes, delete</AlertDialogAction>
+                    <AlertDialogAction data-testid="challenge-delete-confirm" onClick={() => remove(ch)} className="bg-destructive hover:bg-destructive/90">Yes, delete</AlertDialogAction>
                   </AlertDialogFooter>
                 </AlertDialogContent>
               </AlertDialog>

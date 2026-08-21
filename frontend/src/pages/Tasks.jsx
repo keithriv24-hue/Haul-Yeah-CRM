@@ -32,15 +32,15 @@ const ProfileTaskCard = () => {
     }
   };
   return (
-    <div data-testid="profile-task-card" className="border border-[#E8743B]/40 bg-orange-50/70 rounded-lg p-4 mb-4 flex flex-wrap items-center gap-3">
-      <div className="w-9 h-9 rounded-lg bg-[#E8743B]/15 border border-[#E8743B]/30 flex items-center justify-center shrink-0">
-        <UserRound className="w-4 h-4 text-[#E8743B]" />
+    <div data-testid="profile-task-card" className="border border-accent/40 bg-accent/10 rounded-lg p-4 mb-4 flex flex-wrap items-center gap-3">
+      <div className="w-9 h-9 rounded-lg bg-accent/15 border border-accent/30 flex items-center justify-center shrink-0">
+        <UserRound className="w-4 h-4 text-accent-ink" />
       </div>
       <div className="flex-1 min-w-[220px]">
-        <p className="font-display font-bold text-[#1B2A4A]">Your first task: set up your profile</p>
-        <p className="text-xs text-slate-500">Add a photo, a nickname, and a fun fact so the team knows who you are. It checks itself off when you save.</p>
+        <p className="font-display font-bold text-primary">Your first task: set up your profile</p>
+        <p className="text-xs text-faint">Add a photo, a nickname, and a fun fact so the team knows who you are. It checks itself off when you save.</p>
       </div>
-      <Button asChild size="sm" className="gap-1.5 bg-[#E8743B] hover:bg-[#d4632e]" data-testid="profile-task-open-btn">
+      <Button asChild size="sm" className="gap-1.5 bg-accent hover:bg-accent-press" data-testid="profile-task-open-btn">
         <Link to={`/team/${task.user_id}`}><UserRound className="w-3.5 h-3.5" /> Open my profile</Link>
       </Button>
       <Button data-testid="profile-task-done-btn" variant="outline" size="sm" className="gap-1.5" onClick={markDone}>
@@ -68,7 +68,7 @@ const AudienceChips = ({ value, onToggle, testPrefix }) => (
           data-testid={`${testPrefix}-${g.key}`}
           onClick={() => onToggle(g.key)}
           className={`text-[10px] font-semibold rounded-full border px-2 py-0.5 transition-colors ${
-            on ? "bg-[#1B2A4A] text-white border-[#1B2A4A]" : "bg-white text-slate-400 border-slate-200 hover:border-slate-400"
+            on ? "bg-primary text-white border-primary" : "bg-surface text-faint border-border hover:border-border-strong"
           }`}
         >
           {g.label}
@@ -86,21 +86,21 @@ const TaskCard = ({ task, isOwner, onToggleAudience }) => {
       data-testid="task-card"
       draggable
       onDragStart={(e) => e.dataTransfer.setData("text/plain", task.id)}
-      className="kanban-card bg-white border border-slate-200 rounded-lg p-3 space-y-2"
+      className="kanban-card surface p-3 space-y-2"
     >
       <div className="flex items-start gap-1.5">
-        <GripVertical className="w-4 h-4 text-slate-300 mt-0.5 shrink-0" />
+        <GripVertical className="w-4 h-4 text-faint/70 mt-0.5 shrink-0" />
         <span className="text-sm font-medium leading-snug">{f(task, TF.task) || "Task"}</span>
       </div>
       <div className="flex flex-wrap items-center gap-1.5">
         {f(task, TF.priority) && <Pill value={f(task, TF.priority)} />}
         {f(task, TF.category) && (
-          <span className="inline-flex items-center border border-[#1B2A4A]/20 bg-[#1B2A4A]/5 text-[#1B2A4A] rounded-full px-2.5 py-0.5 text-xs font-semibold">
+          <span className="inline-flex items-center border border-primary/20 bg-primary/5 text-primary rounded-full px-2.5 py-0.5 text-xs font-semibold">
             {f(task, TF.category)}
           </span>
         )}
         {f(task, TF.dueDate) && (
-          <span className={`text-xs font-semibold ${overdue ? "text-red-600" : "text-slate-500"}`}>
+          <span className={`text-xs font-semibold ${overdue ? "text-destructive" : "text-faint"}`}>
             {overdue ? "Late: " : "Due "}{fmtDate(f(task, TF.dueDate))}
           </span>
         )}
@@ -205,10 +205,10 @@ export default function Tasks() {
         action={
           isOwner ? (
             <div className="flex gap-2">
-              <Button data-testid="mass-message-btn" variant="outline" onClick={() => openNew(ALL_GROUPS)} className="gap-1.5 border-[#1B2A4A]/30 text-[#1B2A4A]">
+              <Button data-testid="mass-message-btn" variant="outline" onClick={() => openNew(ALL_GROUPS)} className="gap-1.5 border-primary/30 text-primary">
                 <Megaphone className="w-4 h-4" /> Mass message
               </Button>
-              <Button data-testid="new-task-btn" onClick={() => openNew([])} className="gap-1.5 bg-[#E8743B] hover:bg-[#d4632e]">
+              <Button data-testid="new-task-btn" onClick={() => openNew([])} className="gap-1.5 bg-accent hover:bg-accent-press">
                 <Plus className="w-4 h-4" /> Add task
               </Button>
             </div>
@@ -241,18 +241,18 @@ export default function Tasks() {
               <div
                 key={status}
                 data-testid={`kanban-col-${status.toLowerCase().replace(/\s+/g, "-")}`}
-                className={`kanban-col rounded-lg border border-slate-200 bg-slate-100/60 p-3 ${dragOver === status ? "drag-over" : ""}`}
+                className={`kanban-col rounded-lg border border-border bg-surface-sunk/60 p-3 ${dragOver === status ? "drag-over" : ""}`}
                 onDragOver={(e) => { e.preventDefault(); setDragOver(status); }}
                 onDragLeave={() => setDragOver(null)}
                 onDrop={(e) => onDrop(e, status)}
               >
                 <div className="flex items-center justify-between mb-3">
-                  <h2 className="font-display font-bold text-sm text-[#1B2A4A]">{status}</h2>
-                  <span className="text-xs font-bold text-slate-400">{col.length}</span>
+                  <h2 className="font-display font-bold text-sm text-primary">{status}</h2>
+                  <span className="text-xs font-bold text-faint">{col.length}</span>
                 </div>
                 <div className="space-y-2">
                   {col.map((t) => <TaskCard key={t.id} task={t} isOwner={isOwner} onToggleAudience={toggleCardAudience} />)}
-                  {col.length === 0 && <div className="text-xs text-slate-400 text-center py-4">Drop tasks here</div>}
+                  {col.length === 0 && <div className="text-xs text-faint text-center py-4">Drop tasks here</div>}
                 </div>
               </div>
             );
@@ -306,16 +306,16 @@ export default function Tasks() {
                   data-testid="new-task-share-everyone"
                   onClick={() => setAudience(audience.length === 3 ? [] : ALL_GROUPS)}
                   className={`text-[10px] font-semibold rounded-full border px-2 py-0.5 transition-colors ${
-                    audience.length === 3 ? "bg-[#E8743B] text-white border-[#E8743B]" : "bg-white text-[#E8743B] border-[#E8743B]/40 hover:border-[#E8743B]"
+                    audience.length === 3 ? "bg-accent text-white border-accent" : "bg-surface text-accent-ink border-accent/40 hover:border-accent"
                   }`}
                 >
                   Everyone
                 </button>
               </div>
-              <p className="text-[11px] text-slate-400 mt-1">Leave them all off to keep it owner-only.</p>
+              <p className="text-[11px] text-faint mt-1">Leave them all off to keep it owner-only.</p>
             </div>
           </div>
-          <Button data-testid="task-save-btn" onClick={save} disabled={saving} className="w-full gap-2 bg-[#E8743B] hover:bg-[#d4632e]">
+          <Button data-testid="task-save-btn" onClick={save} disabled={saving} className="w-full gap-2 bg-accent hover:bg-accent-press">
             <Plus className="w-4 h-4" /> {saving ? "Saving…" : audience.length === 3 ? "Send to everyone" : "Save task"}
           </Button>
         </DialogContent>

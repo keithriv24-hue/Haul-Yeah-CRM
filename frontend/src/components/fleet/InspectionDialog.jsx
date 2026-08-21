@@ -69,14 +69,14 @@ export const InspectionDialog = ({ open, onOpenChange, truckId, truckName, assig
       <DialogContent data-testid="inspection-dialog" className="sm:max-w-md max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="font-display flex items-center gap-2">
-            <ClipboardCheck className="w-4 h-4 text-[#E8743B]" /> Daily inspection — {truckName}
+            <ClipboardCheck className="w-4 h-4 text-accent-ink" /> Daily inspection — {truckName}
           </DialogTitle>
           <DialogDescription>Flip anything that's NOT right to red. Issues ping the owner automatically.</DialogDescription>
         </DialogHeader>
         <div className="space-y-2">
           {ITEMS.map((it) => (
-            <div key={it.key} data-testid={`inspection-item-${it.key}`} className={`flex items-center justify-between gap-2 rounded-md border px-3 py-2 ${items[it.key] ? "border-slate-200" : "border-red-300 bg-red-50"}`}>
-              <span className={`text-sm ${items[it.key] ? "text-slate-700" : "text-red-700 font-semibold"}`}>{it.label}</span>
+            <div key={it.key} data-testid={`inspection-item-${it.key}`} className={`flex items-center justify-between gap-2 rounded-md border px-3 py-2 ${items[it.key] ? "border-border" : "border-destructive/30 bg-destructive/10"}`}>
+              <span className={`text-sm ${items[it.key] ? "text-ink-2" : "text-destructive font-semibold"}`}>{it.label}</span>
               <Switch data-testid={`inspection-switch-${it.key}`} checked={items[it.key]}
                 onCheckedChange={(v) => setItems((s) => ({ ...s, [it.key]: !!v }))} />
             </div>
@@ -89,7 +89,7 @@ export const InspectionDialog = ({ open, onOpenChange, truckId, truckName, assig
           <label className="inline-flex">
             <input data-testid="inspection-photo-input" type="file" accept="image/*" multiple className="hidden"
               onChange={(e) => setFiles(Array.from(e.target.files || []))} />
-            <span className="inline-flex items-center gap-1.5 cursor-pointer rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">
+            <span className="inline-flex items-center gap-1.5 cursor-pointer rounded-md border border-border bg-surface px-3 py-1.5 text-xs font-medium text-ink-2 hover:bg-surface-sunk">
               <Camera className="w-3.5 h-3.5" /> {files.length ? `${files.length} photo${files.length > 1 ? "s" : ""} attached` : "Attach photos"}
             </span>
           </label>
@@ -97,7 +97,7 @@ export const InspectionDialog = ({ open, onOpenChange, truckId, truckName, assig
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
           <Button data-testid="inspection-submit" disabled={busy} onClick={submit}
-            className={failCount ? "bg-amber-600 hover:bg-amber-700 gap-1.5" : "bg-emerald-600 hover:bg-emerald-700 gap-1.5"}>
+            className={failCount ? "bg-warning hover:bg-warning gap-1.5" : "bg-success hover:bg-success gap-1.5"}>
             {busy && <Loader2 className="w-4 h-4 animate-spin" />}
             {failCount ? `File with ${failCount} issue${failCount > 1 ? "s" : ""}` : "All good — file it"}
           </Button>

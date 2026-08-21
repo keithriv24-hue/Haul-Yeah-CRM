@@ -51,17 +51,17 @@ export default function Team() {
               key={m.id}
               to={`/team/${m.id}`}
               data-testid="team-member-card"
-              className="bg-white border border-slate-200 rounded-lg p-4 hover:border-[#E8743B]/50 hover:shadow-sm transition-all block"
+              className="surface p-4 hover:border-accent/50 hover:shadow-sm transition-all block"
             >
               <div className="flex items-start gap-3">
                 <MemberAvatar id={m.id} name={m.display_name || m.name} hasPhoto={m.has_photo} />
                 <div className="min-w-0 flex-1">
-                  <p className="font-display font-bold text-[#1B2A4A] truncate">
+                  <p className="font-display font-bold text-primary truncate">
                     {m.display_name || m.name}
-                    {data.me === m.id && <span className="ml-1.5 text-[10px] font-bold text-[#E8743B]">(you)</span>}
+                    {data.me === m.id && <span className="ml-1.5 text-[10px] font-bold text-accent-ink">(you)</span>}
                   </p>
-                  {m.nickname && <p className="text-xs text-slate-500 truncate">“{m.nickname}”</p>}
-                  {m.role_title && <p className="text-xs text-slate-400 truncate">{m.role_title}</p>}
+                  {m.nickname && <p className="text-xs text-faint truncate">“{m.nickname}”</p>}
+                  {m.role_title && <p className="text-xs text-faint truncate">{m.role_title}</p>}
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-1.5 mt-2.5">
@@ -69,10 +69,10 @@ export default function Team() {
                   <Badge key={t} variant="outline" className={`text-[10px] capitalize ${TEAM_CHIP[t]}`}>{t}</Badge>
                 ))}
                 {(m.roles || []).filter((r) => !["crew", "sales", "employee"].includes(r)).map((r) => (
-                  <Badge key={r} variant="outline" className="text-[10px] capitalize bg-slate-50 text-slate-600 border-slate-300">{r}</Badge>
+                  <Badge key={r} variant="outline" className="text-[10px] capitalize bg-surface-sunk text-ink-2 border-border-strong">{r}</Badge>
                 ))}
                 {(m.titles || []).map((t) => (
-                  <Badge key={t} variant="outline" className="text-[10px] gap-1 bg-yellow-50 text-yellow-800 border-yellow-300">
+                  <Badge key={t} variant="outline" className="text-[10px] gap-1 bg-warning/10 text-warning border-warning/30">
                     <Trophy className="w-3 h-3" /> {t}
                   </Badge>
                 ))}

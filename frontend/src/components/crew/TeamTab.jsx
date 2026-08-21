@@ -5,7 +5,6 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import {
@@ -19,11 +18,14 @@ import {
   getCrewRatesApi, saveCrewRatesApi, apiErrorMessage,
 } from "@/lib/api";
 
+const ROW_LINK =
+  "inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-[12.5px] font-semibold text-ink-2 transition-colors hover:bg-surface-sunk hover:text-primary";
+
 const ROLE_BADGE = {
-  owner: "bg-[#1B2A4A] text-white border-transparent",
-  sales: "bg-sky-100 text-sky-800 border-sky-300",
-  crew: "bg-orange-100 text-orange-800 border-orange-300",
-  marketing: "bg-teal-100 text-teal-800 border-teal-300",
+  owner: "bg-primary text-white border-transparent",
+  sales: "bg-info/12 text-info border-info/30",
+  crew: "bg-accent/12 text-accent-ink border-accent/30",
+  marketing: "bg-success/12 text-success border-success/30",
 };
 
 const RoleChecks = ({ roles, onToggle, idPrefix }) => (
@@ -33,11 +35,11 @@ const RoleChecks = ({ roles, onToggle, idPrefix }) => (
       {["crew", "sales", "marketing", "owner"].map((r) => (
         <label key={r} className="flex items-center gap-2 text-sm cursor-pointer">
           <Checkbox data-testid={`${idPrefix}-role-${r}`} checked={roles.includes(r)} onCheckedChange={() => onToggle(r)} />
-          <span className="capitalize text-[#1B2A4A]">{r}</span>
+          <span className="capitalize text-primary">{r}</span>
         </label>
       ))}
     </div>
-    <p className="text-[11px] text-slate-400 mt-1.5">Pick their main role first — it decides which view they land in. Someone with Crew + Sales can flip between both views from the sidebar.</p>
+    <p className="text-[11px] text-faint mt-1.5">Pick their main role first — it decides which view they land in. Someone with Crew + Sales can flip between both views from the sidebar.</p>
   </div>
 );
 
@@ -74,17 +76,17 @@ const AddUserDialog = ({ open, onOpenChange, onSaved }) => {
           <div>
             <Label>Login — username or email</Label>
             <Input data-testid="add-user-email" value={form.email} onChange={(e) => set("email")(e.target.value)} placeholder="keith2 or name@haulyeahmoves.com" />
-            <p className="text-[11px] text-slate-400 mt-1">Either works — a plain username (3+ characters, no spaces) or a full email address.</p>
+            <p className="text-[11px] text-faint mt-1">Either works — a plain username (3+ characters, no spaces) or a full email address.</p>
           </div>
           <RoleChecks roles={form.roles} onToggle={toggleRole} idPrefix="add-user" />
-          <div data-testid="add-user-default-password-note" className="flex items-start gap-2 rounded-md bg-amber-50 border border-amber-200 px-3 py-2.5 text-sm text-amber-800">
+          <div data-testid="add-user-default-password-note" className="flex items-start gap-2 rounded-md bg-warning/10 border border-warning/25 px-3 py-2.5 text-sm text-warning">
             <KeyRound className="w-4 h-4 mt-0.5 shrink-0" />
             <span>Their starting password is <strong className="font-mono">haulyeah123</strong>. Tell them to use it once — the app makes them pick their own right away.</span>
           </div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button data-testid="add-user-save" disabled={busy || !form.name || !form.email || form.roles.length === 0} onClick={save} className="bg-[#E8743B] hover:bg-[#d4632e]">
+          <Button data-testid="add-user-save" disabled={busy || !form.name || !form.email || form.roles.length === 0} onClick={save} className="bg-accent hover:bg-accent-press">
             Add them
           </Button>
         </DialogFooter>
@@ -122,7 +124,7 @@ const EditRolesDialog = ({ user, onOpenChange, onSaved }) => {
         <RoleChecks roles={roles} onToggle={toggleRole} idPrefix="edit-user" />
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(null)}>Cancel</Button>
-          <Button data-testid="edit-roles-save" disabled={busy || roles.length === 0} onClick={save} className="bg-[#E8743B] hover:bg-[#d4632e]">Save roles</Button>
+          <Button data-testid="edit-roles-save" disabled={busy || roles.length === 0} onClick={save} className="bg-accent hover:bg-accent-press">Save roles</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -154,7 +156,7 @@ const ResetPasswordDialog = ({ user, onOpenChange, onSaved }) => {
         <Input data-testid="reset-password-input" value={pw} onChange={(e) => setPw(e.target.value)} placeholder="Temporary password (8+ characters)" />
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(null)}>Cancel</Button>
-          <Button data-testid="reset-password-save" disabled={busy || pw.length < 8} onClick={save} className="bg-[#E8743B] hover:bg-[#d4632e]">Reset it</Button>
+          <Button data-testid="reset-password-save" disabled={busy || pw.length < 8} onClick={save} className="bg-accent hover:bg-accent-press">Reset it</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -196,7 +198,7 @@ const EditTruckDialog = ({ truck, onOpenChange, onSaved }) => {
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(null)}>Cancel</Button>
-          <Button data-testid="edit-truck-save" disabled={busy || !name.trim()} onClick={save} className="bg-[#E8743B] hover:bg-[#d4632e]">Save truck</Button>
+          <Button data-testid="edit-truck-save" disabled={busy || !name.trim()} onClick={save} className="bg-accent hover:bg-accent-press">Save truck</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -298,50 +300,58 @@ export const TeamTab = () => {
 
   return (
     <div className="grid lg:grid-cols-3 gap-4 mt-4">
-      <div className="lg:col-span-2 bg-white rounded-lg border border-slate-200">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100">
-          <h2 className="font-bold text-[#1B2A4A]">Team members</h2>
-          <Button data-testid="add-user-btn" size="sm" className="gap-1.5 bg-[#E8743B] hover:bg-[#d4632e]" onClick={() => setAddOpen(true)}>
+      <div className="lg:col-span-2 surface">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+          <h2 className="font-bold text-primary">Team members</h2>
+          <Button data-testid="add-user-btn" size="sm" className="gap-1.5 bg-accent hover:bg-accent-press" onClick={() => setAddOpen(true)}>
             <UserPlus className="w-4 h-4" /> Add person
           </Button>
         </div>
-        <div className="px-4 py-2.5 border-b border-slate-100">
+        <div className="px-4 py-2.5 border-b border-border">
           <SearchBar value={query} onChange={setQuery} placeholder="Search name, email, or role…" testId="team-search-input" />
         </div>
-        <div className="divide-y divide-slate-100">
+        <div className="divide-y divide-border">
           {shownUsers.map((u) => (
-            <div key={u.id} data-testid="user-row" className={`flex flex-wrap items-center gap-2 px-4 py-3 ${u.active ? "" : "opacity-50"}`}>
-              <div className="flex-1 min-w-[160px]">
-                <p className="font-semibold text-[#1B2A4A] text-sm">{u.name}</p>
-                <p className="text-xs text-slate-500">{u.email}</p>
+            <div key={u.id} data-testid="user-row" className={`flex flex-wrap items-center gap-x-2 gap-y-2 px-4 py-3 transition-colors hover:bg-surface-sunk/60 ${u.active ? "" : "opacity-55"}`}>
+              <div className="min-w-[160px] flex-1">
+                <p className="text-[14px] font-semibold text-primary">{u.name}</p>
+                <p className="truncate text-[12.5px] text-faint">{u.email}</p>
               </div>
               {(u.roles?.length ? u.roles : [u.role]).map((r) => (
                 <Badge key={r} variant="outline" className={`text-[10px] ${ROLE_BADGE[r] || ""}`}>{r}</Badge>
               ))}
-              {!u.active && <Badge variant="outline" className="text-[10px] bg-red-50 text-red-600 border-red-200">off</Badge>}
-              {u.must_change_password && u.active && <Badge variant="outline" className="text-[10px] bg-amber-50 text-amber-700 border-amber-200">temp password</Badge>}
-              <Button data-testid="edit-roles-btn" variant="outline" size="sm" className="gap-1 text-xs" onClick={() => setRolesUser(u)}>
-                <Pencil className="w-3.5 h-3.5" /> Roles
-              </Button>
-              {u.active && (
-                <Button data-testid="copy-invite-btn" variant="outline" size="sm" className="gap-1 text-xs" onClick={() => copyInvite(u)}>
-                  <Copy className="w-3.5 h-3.5" /> Invite
+              {!u.active && <Badge variant="outline" className="text-[10px] bg-destructive/10 text-destructive border-destructive/25">off</Badge>}
+              {u.must_change_password && u.active && <Badge variant="outline" className="text-[10px] bg-warning/10 text-warning border-warning/25">temp password</Badge>}
+              <div className="flex w-full items-center gap-2 sm:w-auto">
+                <Button data-testid="employee-file-btn" variant="outline" size="sm" className="gap-1.5" onClick={() => setFileUser(u)}>
+                  <IdCard className="w-3.5 h-3.5" /> File
                 </Button>
-              )}
-              <Button data-testid="employee-file-btn" variant="outline" size="sm" className="gap-1 text-xs" onClick={() => setFileUser(u)}>
-                <IdCard className="w-3.5 h-3.5" /> File
-              </Button>
-              <Button data-testid="reset-password-btn" variant="outline" size="sm" className="gap-1 text-xs" onClick={() => setResetUser(u)}>
-                <KeyRound className="w-3.5 h-3.5" /> Reset password
-              </Button>
-              <Button data-testid="toggle-active-btn" variant="outline" size="sm" className={`gap-1 text-xs ${u.active ? "text-red-600 border-red-200 hover:bg-red-50" : "text-emerald-700 border-emerald-200 hover:bg-emerald-50"}`} onClick={() => toggleActive(u)}>
-                {u.active ? <UserX className="w-3.5 h-3.5" /> : <UserCheck className="w-3.5 h-3.5" />}
-                {u.active ? "Deactivate" : "Reactivate"}
-              </Button>
+                <Button data-testid="edit-roles-btn" variant="outline" size="sm" className="gap-1.5" onClick={() => setRolesUser(u)}>
+                  <Pencil className="w-3.5 h-3.5" /> Roles
+                </Button>
+                <div className="ml-auto flex flex-wrap items-center gap-x-0.5 sm:ml-1">
+                  {u.active && (
+                    <button data-testid="copy-invite-btn" onClick={() => copyInvite(u)} className={ROW_LINK}>
+                      <Copy className="w-3.5 h-3.5" aria-hidden="true" /> Invite
+                    </button>
+                  )}
+                  <button data-testid="reset-password-btn" onClick={() => setResetUser(u)} className={ROW_LINK}>
+                    <KeyRound className="w-3.5 h-3.5" aria-hidden="true" /> Reset password
+                  </button>
+                  <button
+                    data-testid="toggle-active-btn"
+                    onClick={() => toggleActive(u)}
+                    className={`${ROW_LINK} ${u.active ? "text-destructive hover:text-destructive" : "text-success hover:text-success"}`}
+                  >
+                    {u.active ? <UserX className="w-3.5 h-3.5" aria-hidden="true" /> : <UserCheck className="w-3.5 h-3.5" aria-hidden="true" />}
+                    {u.active ? "Deactivate" : "Reactivate"}
+                  </button>
+                </div>
+              </div>
               {!u.active && (
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
-                    <Button data-testid="delete-user-btn" variant="outline" size="sm" className="gap-1 text-xs text-red-600 border-red-200 hover:bg-red-50">
+                    <Button data-testid="delete-user-btn" variant="outline" size="sm" className="gap-1 text-xs text-destructive border-destructive/25 hover:bg-destructive/10">
                       <Trash2 className="w-3.5 h-3.5" /> Delete
                     </Button>
                   </AlertDialogTrigger>
@@ -352,51 +362,51 @@ export const TeamTab = () => {
                     </AlertDialogHeader>
                     <AlertDialogFooter>
                       <AlertDialogCancel>Keep them</AlertDialogCancel>
-                      <AlertDialogAction data-testid="confirm-delete-user" onClick={() => removeUser(u)} className="bg-red-600 hover:bg-red-700">Yes, delete</AlertDialogAction>
+                      <AlertDialogAction data-testid="confirm-delete-user" onClick={() => removeUser(u)} className="bg-destructive hover:bg-destructive/90">Yes, delete</AlertDialogAction>
                     </AlertDialogFooter>
                   </AlertDialogContent>
                 </AlertDialog>
               )}
             </div>
           ))}
-          {users.length === 0 && <p className="text-sm text-slate-400 px-4 py-6 text-center">Loading team…</p>}
-          {users.length > 0 && shownUsers.length === 0 && <p className="text-sm text-slate-400 px-4 py-6 text-center">No one matches that search.</p>}
+          {users.length === 0 && <p className="text-sm text-faint px-4 py-6 text-center">Loading team…</p>}
+          {users.length > 0 && shownUsers.length === 0 && <p className="text-sm text-faint px-4 py-6 text-center">No one matches that search.</p>}
         </div>
       </div>
 
       <div className="space-y-4">
-        <div className="bg-white rounded-lg border border-slate-200 p-4">
-          <h2 className="font-bold text-[#1B2A4A] flex items-center gap-2 mb-3"><DollarSign className="w-4 h-4 text-[#E8743B]" /> Pay rates</h2>
+        <div className="surface p-4">
+          <h2 className="font-bold text-primary flex items-center gap-2 mb-3"><DollarSign className="w-4 h-4 text-accent-ink" /> Pay rates</h2>
           <div className="space-y-2">
             <div className="flex items-center gap-2">
               <Label className="w-16 text-xs">Driver</Label>
               <Input data-testid="rate-driver-input" type="number" className="h-8" value={rates.driver} onChange={(e) => setRates((r) => ({ ...r, driver: e.target.value }))} />
-              <span className="text-xs text-slate-400">/hr</span>
+              <span className="text-xs text-faint">/hr</span>
             </div>
             <div className="flex items-center gap-2">
               <Label className="w-16 text-xs">Helper</Label>
               <Input data-testid="rate-helper-input" type="number" className="h-8" value={rates.helper} onChange={(e) => setRates((r) => ({ ...r, helper: e.target.value }))} />
-              <span className="text-xs text-slate-400">/hr</span>
+              <span className="text-xs text-faint">/hr</span>
             </div>
-            <Button data-testid="save-rates-btn" size="sm" className="w-full mt-1 bg-[#1B2A4A] hover:bg-[#152238]" onClick={saveRates}>Save rates</Button>
+            <Button data-testid="save-rates-btn" size="sm" className="w-full mt-1 bg-primary hover:bg-[#152238]" onClick={saveRates}>Save rates</Button>
           </div>
         </div>
 
-        <div className="bg-white rounded-lg border border-slate-200 p-4">
-          <h2 className="font-bold text-[#1B2A4A] flex items-center gap-2 mb-3"><Truck className="w-4 h-4 text-[#E8743B]" /> Trucks</h2>
+        <div className="surface p-4">
+          <h2 className="font-bold text-primary flex items-center gap-2 mb-3"><Truck className="w-4 h-4 text-accent-ink" /> Trucks</h2>
           <div className="space-y-2">
             {trucks.map((t) => (
               <div key={t.id} data-testid="truck-row" className="flex items-center gap-1 text-sm">
                 <div className="flex-1 min-w-0">
-                  <span className={t.active ? "text-[#1B2A4A] font-medium" : "text-slate-400 line-through"}>{t.name}</span>
-                  <span data-testid="truck-plate-label" className="text-xs text-slate-400 ml-2">{t.plate || "no plate"}</span>
+                  <span className={t.active ? "text-primary font-medium" : "text-faint line-through"}>{t.name}</span>
+                  <span data-testid="truck-plate-label" className="text-xs text-faint ml-2">{t.plate || "no plate"}</span>
                 </div>
                 <Button data-testid="edit-truck-btn" variant="ghost" size="sm" className="h-7 px-2" onClick={() => setEditTruck(t)}>
                   <Pencil className="w-3.5 h-3.5" />
                 </Button>
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
-                    <Button data-testid="remove-truck-btn" variant="ghost" size="sm" className="h-7 px-2 text-red-600 hover:text-red-700">
+                    <Button data-testid="remove-truck-btn" variant="ghost" size="sm" className="h-7 px-2 text-destructive hover:text-destructive">
                       <Trash2 className="w-3.5 h-3.5" />
                     </Button>
                   </AlertDialogTrigger>
@@ -407,7 +417,7 @@ export const TeamTab = () => {
                     </AlertDialogHeader>
                     <AlertDialogFooter>
                       <AlertDialogCancel>Keep it</AlertDialogCancel>
-                      <AlertDialogAction data-testid="confirm-remove-truck" onClick={() => removeTruck(t)} className="bg-red-600 hover:bg-red-700">Yes, remove</AlertDialogAction>
+                      <AlertDialogAction data-testid="confirm-remove-truck" onClick={() => removeTruck(t)} className="bg-destructive hover:bg-destructive/90">Yes, remove</AlertDialogAction>
                     </AlertDialogFooter>
                   </AlertDialogContent>
                 </AlertDialog>

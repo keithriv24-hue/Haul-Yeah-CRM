@@ -6,7 +6,7 @@ import { PageTitle, InstructionBanner, EmptyState, LoadingRows } from "@/compone
 import { TEAM_CHIP } from "@/components/team/BadgeMedallion";
 import { leaderboardApi, hallOfFameApi } from "@/lib/api";
 
-const RANK_COLOR = ["text-amber-500", "text-slate-400", "text-amber-700"];
+const RANK_COLOR = ["text-warning", "text-faint", "text-warning"];
 
 const monthLabel = (m) => {
   if (!m) return "";
@@ -15,20 +15,20 @@ const monthLabel = (m) => {
 };
 
 const Board = ({ rows, unit, testId }) => (
-  <div data-testid={testId} className="bg-white border border-slate-200 rounded-lg divide-y divide-slate-100 mt-3">
+  <div data-testid={testId} className="surface divide-y divide-border mt-3">
     {rows.length === 0 ? (
-      <p className="text-sm text-slate-400 text-center py-8">No {unit} logged yet this month. First one on the board wins bragging rights.</p>
+      <p className="text-sm text-faint text-center py-8">No {unit} logged yet this month. First one on the board wins bragging rights.</p>
     ) : (
       rows.map((r, i) => (
         <div key={r.user_id} data-testid="leaderboard-row" className="flex items-center gap-3 px-4 py-3">
           {i < 3 && r.count > 0 ? (
             <Trophy className={`w-5 h-5 shrink-0 ${RANK_COLOR[i]}`} />
           ) : (
-            <span className="w-5 text-center font-bold text-slate-400">{i + 1}</span>
+            <span className="w-5 text-center font-bold text-faint">{i + 1}</span>
           )}
-          <span className="flex-1 font-semibold text-[#1B2A4A] truncate">{r.name}</span>
-          <span className="font-display font-extrabold text-lg text-[#1B2A4A]">{r.count}</span>
-          <span className="text-xs text-slate-400 w-12">{unit}</span>
+          <span className="flex-1 font-semibold text-primary truncate">{r.name}</span>
+          <span className="font-display font-extrabold text-lg text-primary">{r.count}</span>
+          <span className="text-xs text-faint w-12">{unit}</span>
         </div>
       ))
     )}
@@ -68,19 +68,19 @@ export default function Leaderboard() {
       )}
 
       <div className="mt-8">
-        <h2 className="font-display font-bold text-xl text-[#1B2A4A] flex items-center gap-2 mb-3">
-          <Medal className="w-5 h-5 text-[#E8743B]" /> Hall of Fame
+        <h2 className="font-display font-bold text-xl text-primary flex items-center gap-2 mb-3">
+          <Medal className="w-5 h-5 text-accent-ink" /> Hall of Fame
         </h2>
         {fame.length === 0 ? (
           <EmptyState>No months in the books yet. Finish a month on top and your name lives here forever.</EmptyState>
         ) : (
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3" data-testid="hall-of-fame-grid">
             {fame.map((e) => (
-              <div key={`${e.month}:${e.team}`} data-testid="hall-of-fame-entry" className="bg-white border border-slate-200 rounded-lg p-4 flex items-center gap-3">
-                <Trophy className="w-6 h-6 text-amber-500 shrink-0" />
+              <div key={`${e.month}:${e.team}`} data-testid="hall-of-fame-entry" className="surface p-4 flex items-center gap-3">
+                <Trophy className="w-6 h-6 text-warning shrink-0" />
                 <div className="min-w-0">
-                  <p className="font-semibold text-[#1B2A4A] truncate">{e.winner_name}</p>
-                  <p className="text-xs text-slate-500">
+                  <p className="font-semibold text-primary truncate">{e.winner_name}</p>
+                  <p className="text-xs text-faint">
                     {monthLabel(e.month)} · {e.count} {e.team === "crew" ? "jobs" : "closes"}
                   </p>
                 </div>

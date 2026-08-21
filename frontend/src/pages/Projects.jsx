@@ -27,7 +27,7 @@ const NumField = ({ record, fieldId, label, testId }) => {
     updateRecord("projects", record.id, { [fieldId]: n }).catch(() => setVal(f(record, fieldId) ?? ""));
   };
   return (
-    <label className="text-xs text-slate-500 flex flex-col gap-1">
+    <label className="text-xs text-faint flex flex-col gap-1">
       {label}
       <Input data-testid={testId} type="number" className="h-8 w-24" value={val} onChange={(e) => setVal(e.target.value)} onBlur={save} />
     </label>
@@ -60,19 +60,19 @@ const ProjectCard = ({ project }) => {
   };
 
   return (
-    <div data-testid="project-card" className="bg-white border border-slate-200 rounded-lg p-4">
+    <div data-testid="project-card" className="surface p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
-          <Private className="font-display font-bold text-lg text-[#1B2A4A] truncate block">{f(project, PF.jobName) || "Job"}</Private>
-          <div className="text-xs text-slate-500 mt-0.5">
+          <Private className="font-display font-bold text-lg text-primary truncate block">{f(project, PF.jobName) || "Job"}</Private>
+          <div className="text-xs text-faint mt-0.5">
             {fmtDate(f(project, PF.jobDate))} · {crew || "?"} crew × {hours || "?"} hrs · {f(project, PF.truck) || "No truck set"}
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           {isOwner && (
             <div className="text-right">
-              <div className="text-sm font-bold text-[#1B2A4A]">Quote: <Money value={quote || null} /></div>
-              <div className={`text-xs font-semibold ${f(project, PF.depositCollected) ? "text-emerald-600" : "text-amber-600"}`}>
+              <div className="text-sm font-bold text-primary">Quote: <Money value={quote || null} /></div>
+              <div className={`text-xs font-semibold ${f(project, PF.depositCollected) ? "text-success" : "text-warning"}`}>
                 {f(project, PF.depositCollected) ? "Deposit in" : "Deposit not in"}
               </div>
             </div>
@@ -90,8 +90,8 @@ const ProjectCard = ({ project }) => {
               variant="outline"
               size="sm"
               className={`gap-1 text-xs ${reviewAsked
-                ? "border-emerald-300 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-800"
-                : "border-amber-300 text-amber-700 hover:bg-amber-50 hover:text-amber-800"}`}
+                ? "border-success/30 text-success hover:bg-success/10 hover:text-success"
+                : "border-warning/30 text-warning hover:bg-warning/10 hover:text-warning"}`}
               disabled={!custPhone}
               title={reviewAsked ? "You already asked — tapping texts them again" : custPhone ? "Text them a review ask" : "No phone on the linked lead"}
             >
@@ -115,7 +115,7 @@ const ProjectCard = ({ project }) => {
       </div>
 
       {open && (
-        <div className="mt-4 pt-4 border-t border-slate-100 grid md:grid-cols-2 gap-4">
+        <div className="mt-4 pt-4 border-t border-border grid md:grid-cols-2 gap-4">
           <div className="space-y-3">
             <div className="flex flex-wrap gap-3">
               <NumField record={project} fieldId={PF.crewSize} label="Crew size" testId="project-crew-input" />
@@ -123,7 +123,7 @@ const ProjectCard = ({ project }) => {
               {isOwner && <NumField record={project} fieldId={PF.quote} label="Quote ($)" testId="project-quote-input" />}
               {isOwner && <NumField record={project} fieldId={PF.finalRevenue} label="Final revenue ($)" testId="project-revenue-input" />}
             </div>
-            <label className="text-xs text-slate-500 flex flex-col gap-1 w-40">
+            <label className="text-xs text-faint flex flex-col gap-1 w-40">
               Truck
               <Select value={f(project, PF.truck) || ""} onValueChange={(v) => updateRecord("projects", project.id, { [PF.truck]: v }).catch(() => {})}>
                 <SelectTrigger data-testid="project-truck-select" className="h-8 text-xs"><SelectValue placeholder="Pick truck" /></SelectTrigger>
@@ -140,7 +140,7 @@ const ProjectCard = ({ project }) => {
                 Deposit collected
               </label>
             )}
-            <div className="text-xs text-slate-600 space-y-1">
+            <div className="text-xs text-ink-2 space-y-1">
               <div>
                 From:{" "}
                 {f(project, PF.fromAddr) ? (
@@ -149,7 +149,7 @@ const ProjectCard = ({ project }) => {
                     href={mapsLink(f(project, PF.fromAddr))}
                     target="_blank"
                     rel="noreferrer"
-                    className="text-[#1B2A4A] font-semibold underline decoration-dotted underline-offset-2 hover:text-[#E8743B]"
+                    className="text-primary font-semibold underline decoration-dotted underline-offset-2 hover:text-accent-ink"
                   >
                     <Private>{f(project, PF.fromAddr)}</Private>
                   </a>
@@ -163,7 +163,7 @@ const ProjectCard = ({ project }) => {
                     href={mapsLink(f(project, PF.toAddr))}
                     target="_blank"
                     rel="noreferrer"
-                    className="text-[#1B2A4A] font-semibold underline decoration-dotted underline-offset-2 hover:text-[#E8743B]"
+                    className="text-primary font-semibold underline decoration-dotted underline-offset-2 hover:text-accent-ink"
                   >
                     <Private>{f(project, PF.toAddr)}</Private>
                   </a>
@@ -182,15 +182,15 @@ const ProjectCard = ({ project }) => {
             </Button>
           </div>
           {isOwner && internal && (
-            <div className="border border-slate-200 bg-slate-50 rounded-lg p-4 h-fit">
-              <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">
-                <ShieldAlert className="w-3.5 h-3.5 text-red-500" /> Internal margin math — never show customers
+            <div className="border border-border bg-surface-sunk rounded-lg p-4 h-fit">
+              <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-faint mb-2">
+                <ShieldAlert className="w-3.5 h-3.5 text-destructive" /> Internal margin math — never show customers
               </div>
               <Private block>
-                <div className="text-sm space-y-1 text-slate-700">
+                <div className="text-sm space-y-1 text-ink-2">
                   <div className="flex justify-between"><span>Crew cost ({crew} crew × {hours} hrs)</span><span>{fmtMoney(internal.crew_cost)}</span></div>
                   <div className="flex justify-between"><span>Revenue ({finalRev ? "final" : "quoted"})</span><span>{fmtMoney(finalRev || quote)}</span></div>
-                  <div className={`flex justify-between font-bold pt-1 border-t border-slate-200 ${internal.margin >= 0 ? "text-emerald-700" : "text-red-600"}`}>
+                  <div className={`flex justify-between font-bold pt-1 border-t border-border ${internal.margin >= 0 ? "text-success" : "text-destructive"}`}>
                     <span>Est. margin</span><span data-testid="project-margin">{fmtMoney(internal.margin)}</span>
                   </div>
                 </div>
@@ -354,7 +354,7 @@ const NewProjectDialog = ({ open, onOpenChange }) => {
           <div className="col-span-2">
             <Label>Put it on the crew's schedule (optional)</Label>
             <div className="space-y-2 mt-1.5">
-              {crewUsers.length === 0 && <p className="text-xs text-slate-400">No active crew accounts yet — add them on the Crew page's Team tab.</p>}
+              {crewUsers.length === 0 && <p className="text-xs text-faint">No active crew accounts yet — add them on the Crew page's Team tab.</p>}
               {crewUsers.map((u) => (
                 <div key={u.id} data-testid="project-crew-row" className="flex items-center gap-3">
                   <Checkbox data-testid="project-crew-checkbox" id={`proj-crew-${u.id}`} checked={!!crewSel[u.id]} onCheckedChange={() => toggleCrew(u.id)} />
@@ -371,25 +371,25 @@ const NewProjectDialog = ({ open, onOpenChange }) => {
                 </div>
               ))}
               {Object.keys(crewSel).length > 0 && (
-                <p className="text-[11px] text-slate-400">They'll get notified and see it under My Jobs and their schedule.</p>
+                <p className="text-[11px] text-faint">They'll get notified and see it under My Jobs and their schedule.</p>
               )}
             </div>
           </div>
           {warnings.length > 0 && (
-            <div data-testid="project-schedule-warnings" className="col-span-2 bg-amber-50 border border-amber-200 rounded-md p-3 space-y-1">
-              <p className="text-xs font-bold text-amber-800 flex items-center gap-1"><AlertTriangle className="w-3.5 h-3.5" /> Hold on:</p>
+            <div data-testid="project-schedule-warnings" className="col-span-2 bg-warning/10 border border-warning/25 rounded-md p-3 space-y-1">
+              <p className="text-xs font-bold text-warning flex items-center gap-1"><AlertTriangle className="w-3.5 h-3.5" /> Hold on:</p>
               {warnings.map((w, i) => (
-                <p key={i} className="text-xs text-amber-800">• {w}</p>
+                <p key={i} className="text-xs text-warning">• {w}</p>
               ))}
             </div>
           )}
         </div>
         {warnings.length > 0 ? (
-          <Button data-testid="project-force-schedule-btn" onClick={() => save(true)} disabled={saving} className="w-full gap-2 bg-amber-600 hover:bg-amber-700">
+          <Button data-testid="project-force-schedule-btn" onClick={() => save(true)} disabled={saving} className="w-full gap-2 bg-warning hover:bg-warning">
             Schedule anyway
           </Button>
         ) : (
-          <Button data-testid="project-save-btn" onClick={() => save(false)} disabled={saving} className="w-full gap-2 bg-[#E8743B] hover:bg-[#d4632e]">
+          <Button data-testid="project-save-btn" onClick={() => save(false)} disabled={saving} className="w-full gap-2 bg-accent hover:bg-accent-press">
             <Plus className="w-4 h-4" /> {saving ? "Saving…" : "Add project"}
           </Button>
         )}
@@ -425,7 +425,7 @@ export default function Projects() {
               <Link to="/day-sheet"><ClipboardList className="w-4 h-4" /> Day sheet</Link>
             </Button>
             {isOwner && (
-              <Button data-testid="new-project-btn" onClick={() => setNewOpen(true)} className="gap-1.5 bg-[#E8743B] hover:bg-[#d4632e]">
+              <Button data-testid="new-project-btn" onClick={() => setNewOpen(true)} className="gap-1.5 bg-accent hover:bg-accent-press">
                 <Plus className="w-4 h-4" /> New project
               </Button>
             )}
@@ -439,7 +439,7 @@ export default function Projects() {
       </InstructionBanner>
       <JobsCalendar projects={records("projects")} />
       <div className="flex flex-wrap items-center gap-3 mb-3">
-        <h2 className="font-display font-bold text-lg text-[#1B2A4A]">All jobs</h2>
+        <h2 className="label-eyebrow">All jobs</h2>
         <SearchBar value={query} onChange={setQuery} placeholder="Search job, address, or truck…" testId="projects-search-input" className="sm:ml-auto sm:max-w-xs" />
       </div>
       {loading && !projects.length ? (
@@ -448,7 +448,7 @@ export default function Projects() {
         <EmptyState>{error}</EmptyState>
       ) : projects.length === 0 ? (
         <EmptyState>
-          <Truck className="w-6 h-6 mx-auto mb-2 text-slate-400" />
+          <Truck className="w-6 h-6 mx-auto mb-2 text-faint" />
           {query ? "No jobs match that search." : "No jobs yet. Book a lead from the Leads page to create one."}
         </EmptyState>
       ) : (

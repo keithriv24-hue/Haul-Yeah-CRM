@@ -23,16 +23,16 @@ const ContactActions = ({ phone, email, idBase }) => (
   <div className="flex gap-1.5 shrink-0">
     {phone && (
       <>
-        <a data-testid={`${idBase}-call`} href={telUrl(phone)} className="p-2 rounded-full bg-emerald-50 text-emerald-600 border border-emerald-200 hover:bg-emerald-100">
+        <a data-testid={`${idBase}-call`} href={telUrl(phone)} className="p-2 rounded-full bg-success/10 text-success border border-success/25 hover:bg-success/12">
           <Phone className="w-4 h-4" />
         </a>
-        <a data-testid={`${idBase}-text`} href={smsUrl(phone)} className="p-2 rounded-full bg-sky-50 text-sky-600 border border-sky-200 hover:bg-sky-100">
+        <a data-testid={`${idBase}-text`} href={smsUrl(phone)} className="p-2 rounded-full bg-info/10 text-info border border-info/25 hover:bg-info/12">
           <MessageSquare className="w-4 h-4" />
         </a>
       </>
     )}
     {email && (
-      <a data-testid={`${idBase}-email`} href={`mailto:${email}`} className="p-2 rounded-full bg-orange-50 text-[#E8743B] border border-orange-200 hover:bg-orange-100">
+      <a data-testid={`${idBase}-email`} href={`mailto:${email}`} className="p-2 rounded-full bg-accent/10 text-accent-ink border border-accent/25 hover:bg-accent/15">
         <Mail className="w-4 h-4" />
       </a>
     )}
@@ -41,9 +41,9 @@ const ContactActions = ({ phone, email, idBase }) => (
 
 const DetailRow = ({ icon: Icon, label, children }) => (
   <div className="flex items-start gap-2 text-sm py-1.5">
-    <Icon className="w-4 h-4 text-slate-400 mt-0.5 shrink-0" />
-    <span className="text-slate-500 w-24 shrink-0">{label}</span>
-    <span className="text-[#1B2A4A] font-medium">{children}</span>
+    <Icon className="w-4 h-4 text-faint mt-0.5 shrink-0" />
+    <span className="text-faint w-24 shrink-0">{label}</span>
+    <span className="text-primary font-medium">{children}</span>
   </div>
 );
 
@@ -106,62 +106,64 @@ export default function CrewToday() {
   return (
     <div data-testid="crew-today-page" className="space-y-5 max-w-xl">
       <div>
-        <h1 className="text-2xl font-bold text-[#1B2A4A]">Today</h1>
-        <p className="text-sm text-slate-500">Your job, your crew, and who to call.</p>
+        <h1 className="text-2xl font-bold text-primary">Today</h1>
+        <p className="text-sm text-faint">Your job, your crew, and who to call.</p>
       </div>
 
       {data === null ? (
-        <p className="text-sm text-slate-400">Loading…</p>
+        <p className="text-sm text-faint">Loading…</p>
       ) : !job ? (
-        <div data-testid="no-active-job" className="bg-white border border-slate-200 rounded-lg p-8 text-center">
-          <Sun className="w-10 h-10 text-slate-300 mx-auto" />
-          <p className="text-sm text-slate-500 mt-2">No job on your list yet. The boss will assign you soon.</p>
+        <div data-testid="no-active-job" className="surface p-8 text-center">
+          <Sun className="w-10 h-10 text-faint/70 mx-auto" />
+          <p className="text-sm text-faint mt-2">No job on your list yet. The boss will assign you soon.</p>
         </div>
       ) : (
         <>
-          <div data-testid="active-job-card" className="bg-[#1B2A4A] text-white rounded-xl p-5">
+          <div data-testid="active-job-card" className="bg-primary text-white rounded-xl p-5">
             <p className="text-xs uppercase tracking-wide text-white/50 font-bold">
               {job.is_today ? "Your Job Today" : `Your Next Job — ${fmtDay(job.job_date)}`}
             </p>
-            <p data-testid="active-job-invoice" className="text-2xl font-bold mt-0.5">#{job.invoice_number}</p>
+            <p data-testid="active-job-invoice" className="font-display text-[26px] font-extrabold leading-tight mt-1 tnum">
+              {job.invoice_number ? `#${job.invoice_number}` : job.job_name || "Job details coming"}
+            </p>
             <div className="flex flex-wrap gap-2 mt-3">
-              <span data-testid="my-position-chip" className="text-xs font-bold bg-[#E8743B] rounded-full px-3 py-1">Your role: {job.my_position}</span>
+              <span data-testid="my-position-chip" className="rounded-md bg-accent px-2.5 py-1 text-[12px] font-bold text-accent-foreground">Your role: {job.my_position}</span>
               {job.start_time && <span className="text-xs font-bold bg-white/10 rounded-full px-3 py-1">Start: {fmtTime12(job.start_time)}</span>}
               {job.truck_name && <span className="text-xs font-bold bg-white/10 rounded-full px-3 py-1">Truck: {job.truck_name}</span>}
             </div>
           </div>
 
-          <div className="bg-white border border-slate-200 rounded-lg p-4">
-            <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-1">My Crew</p>
+          <div className="surface p-4">
+            <p className="text-xs font-bold uppercase tracking-wide text-faint mb-1">My Crew</p>
             {job.crew.filter((c) => !c.me).map((c) => (
-              <div key={c.user_id} data-testid={`teammate-row-${c.user_id}`} className="flex items-center justify-between gap-2 py-2 border-b border-slate-100 last:border-0">
+              <div key={c.user_id} data-testid={`teammate-row-${c.user_id}`} className="flex items-center justify-between gap-2 py-2 border-b border-border last:border-0">
                 <div>
-                  <p className="text-sm font-semibold text-[#1B2A4A]">{c.name}</p>
-                  <p className="text-xs text-slate-500">{c.position}{c.phone ? ` — ${c.phone}` : ""}</p>
+                  <p className="text-sm font-semibold text-primary">{c.name}</p>
+                  <p className="text-xs text-faint">{c.position}{c.phone ? ` — ${c.phone}` : ""}</p>
                 </div>
                 <ContactActions phone={c.phone} idBase={`teammate-${c.user_id}`} />
               </div>
             ))}
-            {job.crew.filter((c) => !c.me).length === 0 && <p className="text-sm text-slate-400 py-1">Just you on this one so far.</p>}
-            <p className="text-[11px] text-[#E8743B] font-medium mt-2">{REMINDER}</p>
+            {job.crew.filter((c) => !c.me).length === 0 && <p className="text-sm text-faint py-1">Just you on this one so far.</p>}
+            <p className="text-[11px] text-accent-ink font-medium mt-2">{REMINDER}</p>
           </div>
 
-          <div className="bg-white border border-slate-200 rounded-lg p-4">
-            <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-1">Customer</p>
+          <div className="surface p-4">
+            <p className="text-xs font-bold uppercase tracking-wide text-faint mb-1">Customer</p>
             <div className="flex items-center justify-between gap-2 py-1">
               <div>
-                <p data-testid="customer-name" className="text-sm font-semibold text-[#1B2A4A]">{job.customer?.name || "Customer"}</p>
-                <p className="text-xs text-slate-500">
+                <p data-testid="customer-name" className="text-sm font-semibold text-primary">{job.customer?.name || "Customer"}</p>
+                <p className="text-xs text-faint">
                   {job.customer?.phone || "no phone"}{job.customer?.email ? ` · ${job.customer.email}` : ""}
                 </p>
               </div>
               <ContactActions phone={job.customer?.phone} email={job.customer?.email} idBase="customer" />
             </div>
-            <p className="text-[11px] text-[#E8743B] font-medium mt-2">{REMINDER}</p>
+            <p className="text-[11px] text-accent-ink font-medium mt-2">{REMINDER}</p>
           </div>
 
-          <div className="bg-white border border-slate-200 rounded-lg p-4">
-            <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-1">Job details</p>
+          <div className="surface p-4">
+            <p className="text-xs font-bold uppercase tracking-wide text-faint mb-1">Job details</p>
             <DetailRow icon={Truck} label="Truck">{job.truck_name || "Boss will pick"}</DetailRow>
             <DetailRow icon={MapPin} label="Get truck">
               {job.truck_pickup_location ? (
@@ -181,9 +183,9 @@ export default function CrewToday() {
             <DetailRow icon={Clock3} label="Start">{job.start_time ? fmtTime12(job.start_time) : "TBD"}</DetailRow>
           </div>
 
-          <div className="bg-white border border-slate-200 rounded-lg p-4">
-            <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-1">Customer tracking link</p>
-            <p className="text-sm text-slate-500">
+          <div className="surface p-4">
+            <p className="text-xs font-bold uppercase tracking-wide text-faint mb-1">Customer tracking link</p>
+            <p className="text-sm text-faint">
               {job.tracking_sms_sent
                 ? "The customer already got a tracking text. Only send a new one if their link broke."
                 : "The customer gets one tracking text automatically when the first person clocks in."}
@@ -200,17 +202,17 @@ export default function CrewToday() {
             </Button>
           </div>
 
-          <div id="review" data-testid="review-section" className="bg-white border border-slate-200 rounded-lg p-4">
-            <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-1 flex items-center gap-1">
-              <Star className="w-3.5 h-3.5 text-[#E8743B]" /> Ask for a review
+          <div id="review" data-testid="review-section" className="surface p-4">
+            <p className="text-xs font-bold uppercase tracking-wide text-faint mb-1 flex items-center gap-1">
+              <Star className="w-3.5 h-3.5 text-accent-ink" /> Ask for a review
             </p>
-            <p className="text-sm text-slate-500 mb-2">Edit the message if you want, then send it.</p>
+            <p className="text-sm text-faint mb-2">Edit the message if you want, then send it.</p>
             <Textarea data-testid="review-message-input" rows={4} value={reviewMsg} onChange={(e) => setReviewMsg(e.target.value)} />
             {!job.review_link && (
-              <p className="text-[11px] text-amber-600 mt-1">Heads up: no review link is saved yet. Ask the boss to add it in Settings.</p>
+              <p className="text-[11px] text-warning mt-1">Heads up: no review link is saved yet. Ask the boss to add it in Settings.</p>
             )}
             <div className="grid grid-cols-2 gap-2 mt-3">
-              <Button data-testid="review-send-sms-btn" className="gap-1.5 bg-[#E8743B] hover:bg-[#d4632e]" disabled={reviewBusy || !job.customer?.phone} onClick={() => sendReview("sms")}>
+              <Button data-testid="review-send-sms-btn" className="gap-1.5 bg-accent hover:bg-accent-press" disabled={reviewBusy || !job.customer?.phone} onClick={() => sendReview("sms")}>
                 <Send className="w-4 h-4" /> Text it
               </Button>
               <Button data-testid="review-send-email-btn" variant="outline" className="gap-1.5" disabled={reviewBusy || !job.customer?.email} onClick={() => sendReview("email")}>
@@ -231,7 +233,7 @@ export default function CrewToday() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel data-testid="confirm-tracking-cancel">No, go back</AlertDialogCancel>
-            <AlertDialogAction data-testid="confirm-tracking-send" onClick={sendTrack} className="bg-[#E8743B] hover:bg-[#d4632e]">
+            <AlertDialogAction data-testid="confirm-tracking-send" onClick={sendTrack} className="bg-accent hover:bg-accent-press">
               Yes, send it
             </AlertDialogAction>
           </AlertDialogFooter>

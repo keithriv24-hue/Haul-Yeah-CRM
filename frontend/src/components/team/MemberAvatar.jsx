@@ -28,7 +28,7 @@ export const MemberAvatar = ({ id, name, hasPhoto, size = "md", version }) => {
   return (
     <div
       data-testid="member-avatar-initials"
-      className={`${SIZES[size]} rounded-full bg-[#1B2A4A] text-white font-display font-bold flex items-center justify-center shrink-0`}
+      className={`${SIZES[size]} rounded-full bg-primary text-white font-display font-bold flex items-center justify-center shrink-0`}
     >
       {initials}
     </div>

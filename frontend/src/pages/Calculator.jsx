@@ -10,13 +10,13 @@ import { ScriptPanel } from "@/components/ScriptPanel";
 import { fmtDate } from "@/lib/format";
 
 export const CrewGuideCard = () => (
-  <div data-testid="crew-guide-card" className="bg-white border border-slate-200 rounded-lg p-4">
-    <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">Crew guide (quick reference)</p>
+  <div data-testid="crew-guide-card" className="surface p-4">
+    <p className="text-xs font-bold uppercase tracking-wide text-faint mb-2">Crew guide (quick reference)</p>
     <div className="space-y-1">
       {CREW_GUIDE.map((g) => (
         <div key={g.size} className="flex justify-between text-sm">
-          <span className="text-slate-600">{g.size}</span>
-          <span className="font-semibold text-[#1B2A4A]">{g.plan}</span>
+          <span className="text-ink-2">{g.size}</span>
+          <span className="font-semibold text-primary">{g.plan}</span>
         </div>
       ))}
     </div>
@@ -40,7 +40,7 @@ export default function Calculator() {
         <PageTitle title="Quote Calculator" subtitle="Price a move in seconds." />
         <InstructionBanner>Fill in the job. The price updates as you type. The call script is right beside you.</InstructionBanner>
 
-        <div className="bg-white border border-slate-200 rounded-lg p-4 space-y-3">
+        <div className="surface p-4 space-y-3">
           <div>
             <Label>Save quote to lead (optional)</Label>
             <Select value={leadId} onValueChange={setLeadId}>

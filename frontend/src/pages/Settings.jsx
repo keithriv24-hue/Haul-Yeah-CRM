@@ -172,7 +172,7 @@ export default function Settings() {
   const addItem = () =>
     setDraftItems((list) => [...list, { id: null, tempId: `new-${Date.now()}`, name: "", price: "", active: true, deleted: false }]);
 
-  const changedInput = "ring-2 ring-[#E8743B]/70 bg-orange-50";
+  const changedInput = "ring-2 ring-accent/70 bg-accent/10";
 
   return (
     <div data-testid="settings-page" className="max-w-2xl pb-28">
@@ -181,8 +181,8 @@ export default function Settings() {
         Edits stay in a draft (highlighted orange) until you press "Save Changes" and confirm. Reps keep quoting with the old numbers until then.
       </InstructionBanner>
 
-      <div className="bg-white border border-slate-200 rounded-lg p-4 mb-4">
-        <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-3">Pricing rules</p>
+      <div className="surface p-4 mb-4">
+        <p className="text-xs font-bold uppercase tracking-wide text-faint mb-3">Pricing rules</p>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {FIELDS.map(({ key, label, min = 0, max }) => (
             <div key={key}>
@@ -197,15 +197,15 @@ export default function Settings() {
                 onChange={(e) => setForm((s) => ({ ...s, [key]: e.target.value }))}
                 className={rateChanged(key) ? changedInput : ""}
               />
-              <p data-testid={`rate-${key}-stamp`} className="text-[10px] text-slate-400 mt-0.5">{fmtStamp(stamps[key])}</p>
+              <p data-testid={`rate-${key}-stamp`} className="text-[10px] text-faint mt-0.5">{fmtStamp(stamps[key])}</p>
             </div>
           ))}
         </div>
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-lg p-4 mb-4">
+      <div className="surface p-4 mb-4">
         <div className="flex items-center justify-between mb-3">
-          <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Specialty items (reps see active ones with a quantity stepper)</p>
+          <p className="text-xs font-bold uppercase tracking-wide text-faint">Specialty items (reps see active ones with a quantity stepper)</p>
           <Button data-testid="add-item-btn" size="sm" variant="outline" className="gap-1 text-xs" onClick={addItem}>
             <Plus className="w-3.5 h-3.5" /> Add item
           </Button>
@@ -225,7 +225,7 @@ export default function Settings() {
                   onChange={(e) => setDraftItem(idx, { name: e.target.value })}
                 />
                 <div className="relative">
-                  <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 text-sm">$</span>
+                  <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-faint text-sm">$</span>
                   <Input
                     data-testid="item-price-input"
                     className={`w-24 h-9 pl-6 ${!d.deleted && edited ? changedInput : ""}`}
@@ -248,7 +248,7 @@ export default function Settings() {
                     data-testid="item-delete-btn"
                     variant="ghost"
                     size="sm"
-                    className="h-8 px-2 text-red-600 hover:text-red-700"
+                    className="h-8 px-2 text-destructive hover:text-destructive"
                     onClick={() => (d.id ? setDraftItem(idx, { deleted: true }) : setDraftItems((list) => list.filter((_, i) => i !== idx)))}
                   >
                     <Trash2 className="w-3.5 h-3.5" />
@@ -257,12 +257,12 @@ export default function Settings() {
               </div>
             );
           })}
-          {draftItems.length === 0 && <p className="text-sm text-slate-400">No items yet — add your first one.</p>}
+          {draftItems.length === 0 && <p className="text-sm text-faint">No items yet — add your first one.</p>}
         </div>
-        <p className="text-[11px] text-slate-400 mt-2">Flip the switch off to hide an item from reps but keep its history. Trash removes it for good.</p>
+        <p className="text-[11px] text-faint mt-2">Flip the switch off to hide an item from reps but keep its history. Trash removes it for good.</p>
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-lg p-4 mb-4">
+      <div className="surface p-4 mb-4">
         <Label>Google review link</Label>
         <Input
           data-testid="review-link-input"
@@ -272,7 +272,7 @@ export default function Settings() {
           onChange={(e) => setReviewLink(e.target.value)}
           className={linkChanged ? changedInput : ""}
         />
-        <p className="text-xs text-slate-500 mt-2">The "Ask for review" text on completed jobs uses this link.</p>
+        <p className="text-xs text-faint mt-2">The "Ask for review" text on completed jobs uses this link.</p>
       </div>
 
       <IntegrationsCard />
@@ -280,9 +280,9 @@ export default function Settings() {
       <MetaCard />
 
       <div className="fixed bottom-16 md:bottom-4 left-0 md:left-60 right-0 px-4 z-40">
-        <div className="max-w-2xl mx-auto md:mx-0 bg-white border border-slate-200 rounded-lg shadow-lg p-3 flex items-center gap-3">
-          <p data-testid="pending-changes-count" className="text-sm text-slate-600 flex-1">
-            {hasChanges ? <><strong className="text-[#E8743B]">{allChanges.length}</strong> unsaved change{allChanges.length > 1 ? "s" : ""}</> : "No unsaved changes"}
+        <div className="max-w-2xl mx-auto md:mx-0 surface shadow-lg p-3 flex items-center gap-3">
+          <p data-testid="pending-changes-count" className="text-sm text-ink-2 flex-1">
+            {hasChanges ? <><strong className="text-accent-ink">{allChanges.length}</strong> unsaved change{allChanges.length > 1 ? "s" : ""}</> : "No unsaved changes"}
           </p>
           <Button data-testid="discard-changes-btn" variant="outline" size="sm" className="gap-1.5" disabled={!hasChanges || saving} onClick={discard}>
             <RotateCcw className="w-3.5 h-3.5" /> Discard changes
@@ -290,7 +290,7 @@ export default function Settings() {
           <Button
             data-testid="save-changes-btn"
             size="sm"
-            className="gap-1.5 bg-[#E8743B] hover:bg-[#d4632e]"
+            className="gap-1.5 bg-accent hover:bg-accent-press"
             disabled={!hasChanges || saving}
             onClick={() => validate() && setConfirmOpen(true)}
           >
@@ -307,14 +307,14 @@ export default function Settings() {
           </AlertDialogHeader>
           <div className="max-h-60 overflow-y-auto space-y-1.5">
             {allChanges.map((c, i) => (
-              <p key={i} data-testid="confirm-change-line" className="text-sm text-[#1B2A4A] bg-orange-50 border border-orange-200 rounded px-3 py-1.5">
+              <p key={i} data-testid="confirm-change-line" className="text-sm text-primary bg-accent/10 border border-accent/25 rounded px-3 py-1.5">
                 {c}
               </p>
             ))}
           </div>
           <AlertDialogFooter>
             <AlertDialogCancel data-testid="confirm-cancel-btn">Keep editing</AlertDialogCancel>
-            <AlertDialogAction data-testid="confirm-apply-btn" disabled={saving} onClick={(e) => { e.preventDefault(); applyChanges(); }} className="bg-[#E8743B] hover:bg-[#d4632e]">
+            <AlertDialogAction data-testid="confirm-apply-btn" disabled={saving} onClick={(e) => { e.preventDefault(); applyChanges(); }} className="bg-accent hover:bg-accent-press">
               {saving ? "Applying…" : "Yes, make it live"}
             </AlertDialogAction>
           </AlertDialogFooter>

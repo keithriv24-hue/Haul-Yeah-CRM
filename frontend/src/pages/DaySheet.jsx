@@ -10,20 +10,20 @@ import { fmtDate, todayISO, mapsLink } from "@/lib/format";
 
 const Row = ({ icon: Icon, label, value, href, testId }) => (
   <div className="flex items-start gap-2 text-sm">
-    <Icon className="w-4 h-4 text-slate-400 mt-0.5 shrink-0 print:text-black" />
-    <span className="text-slate-500 shrink-0 print:text-black">{label}:</span>
+    <Icon className="w-4 h-4 text-faint mt-0.5 shrink-0 print:text-black" />
+    <span className="text-faint shrink-0 print:text-black">{label}:</span>
     {href ? (
       <a
         data-testid={testId}
         href={href}
         target="_blank"
         rel="noreferrer"
-        className="font-semibold text-[#1B2A4A] min-w-0 break-words underline decoration-dotted underline-offset-2 hover:text-[#E8743B] print:text-black print:no-underline"
+        className="font-semibold text-primary min-w-0 break-words underline decoration-dotted underline-offset-2 hover:text-accent-ink print:text-black print:no-underline"
       >
         {value}
       </a>
     ) : (
-      <span className="font-semibold text-[#1B2A4A] min-w-0 break-words print:text-black">{value}</span>
+      <span className="font-semibold text-primary min-w-0 break-words print:text-black">{value}</span>
     )}
   </div>
 );
@@ -55,17 +55,17 @@ export default function DaySheet() {
             onChange={(e) => setDate(e.target.value)}
             className="w-[160px]"
           />
-          <Button data-testid="day-sheet-print-btn" onClick={() => window.print()} className="gap-1.5 bg-[#E8743B] hover:bg-[#d4632e]">
+          <Button data-testid="day-sheet-print-btn" onClick={() => window.print()} className="gap-1.5 bg-accent hover:bg-accent-press">
             <Printer className="w-4 h-4" /> Print
           </Button>
         </div>
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-lg p-6 print:border-0 print:p-0" data-testid="day-sheet">
-        <div className="flex items-center justify-between border-b border-slate-200 pb-4 mb-5">
+      <div className="surface p-6 print:border-0 print:p-0" data-testid="day-sheet">
+        <div className="flex items-center justify-between border-b border-border pb-4 mb-5">
           <div>
-            <div className="font-display text-2xl font-extrabold text-[#1B2A4A] print:text-black">Haul Yeah Moving — Crew Day Sheet</div>
-            <div className="text-sm text-slate-500 print:text-black" data-testid="day-sheet-date-label">{fmtDate(date)}</div>
+            <div className="font-display text-2xl font-extrabold text-primary tnum print:text-black">Haul Yeah Moving — Crew Day Sheet</div>
+            <div className="text-sm text-faint print:text-black" data-testid="day-sheet-date-label">{fmtDate(date)}</div>
           </div>
           <img src="/logo.png" alt="Haul Yeah Moving" className="h-12 rounded" />
         </div>
@@ -79,9 +79,9 @@ export default function DaySheet() {
         ) : (
           <div className="space-y-5">
             {jobs.map((p, idx) => (
-              <div key={p.id} data-testid="day-sheet-job" className="border border-slate-200 rounded-lg p-4 print:break-inside-avoid">
+              <div key={p.id} data-testid="day-sheet-job" className="border border-border rounded-lg p-4 print:break-inside-avoid">
                 <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-                  <div className="font-display font-bold text-lg text-[#1B2A4A] print:text-black">
+                  <div className="font-display font-bold text-lg text-primary print:text-black">
                     Job {idx + 1}: {f(p, PF.jobName) || "Unnamed job"}
                   </div>
                   <Pill value={f(p, PF.status) || "—"} />
@@ -95,14 +95,14 @@ export default function DaySheet() {
                   <Row icon={Clock} label="Start time" value="____________" />
                 </div>
                 {f(p, PF.notes) && (
-                  <div className="flex items-start gap-2 text-sm mt-3 border-t border-slate-100 pt-3">
-                    <StickyNote className="w-4 h-4 text-slate-400 mt-0.5 shrink-0 print:text-black" />
+                  <div className="flex items-start gap-2 text-sm mt-3 border-t border-border pt-3">
+                    <StickyNote className="w-4 h-4 text-faint mt-0.5 shrink-0 print:text-black" />
                     <span className="whitespace-pre-wrap break-words print:text-black">{f(p, PF.notes)}</span>
                   </div>
                 )}
               </div>
             ))}
-            <div className="text-xs text-slate-400 print:text-black pt-2">
+            <div className="text-xs text-faint print:text-black pt-2">
               Drive safe, lift smart, and text the office when each job wraps. — Haul Yeah Moving
             </div>
           </div>

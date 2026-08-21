@@ -4,7 +4,7 @@ import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, 
 import { Truck, AlertTriangle, Mail, PartyPopper, X } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { Button } from "@/components/ui/button";
-import { InstructionBanner, KpiCard, PageTitle, Private, Money, Pill, EmptyState, Pill as StatusPill } from "@/components/Bits";
+import { InstructionBanner, KpiCard, PageTitle, Private, Pill, EmptyState, Figure, SectionTitle, Pill as StatusPill } from "@/components/Bits";
 import { WorkCalendar } from "@/components/WorkCalendar";
 import { CrewStatusCard } from "@/components/CrewStatusCard";
 import { CreditPromptsCard } from "@/components/team/CreditPromptsCard";
@@ -118,17 +118,17 @@ export default function Dashboard() {
       />
 
       {recentPaid.length > 0 && (
-        <div data-testid="money-landed-banner" className="flex items-start gap-3 border border-emerald-300 bg-emerald-50 rounded-lg px-4 py-3 mb-4">
-          <PartyPopper className="w-5 h-5 text-emerald-600 mt-0.5 shrink-0" />
-          <div className="flex-1 text-sm text-emerald-800">
-            <div className="font-display font-bold text-emerald-700">Money landed!</div>
+        <div data-testid="money-landed-banner" className="flex items-start gap-3 border border-success/30 bg-success/10 rounded-lg px-4 py-3 mb-4">
+          <PartyPopper className="w-5 h-5 text-success mt-0.5 shrink-0" />
+          <div className="flex-1 text-sm text-success">
+            <div className="font-display font-bold text-success">Money landed!</div>
             {recentPaid.map((i) => (
               <div key={i.invoice_id} data-testid="money-landed-item">
                 Invoice {i.invoice_number ? `#${i.invoice_number}` : ""} — <strong>{fmtMoney(i.amount)}</strong> just got paid.
               </div>
             ))}
           </div>
-          <button data-testid="money-landed-dismiss" onClick={dismissRecentPaid} aria-label="Dismiss" className="text-emerald-600 hover:text-emerald-800 transition-colors">
+          <button data-testid="money-landed-dismiss" onClick={dismissRecentPaid} aria-label="Dismiss" className="text-success hover:text-success transition-colors">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -139,7 +139,8 @@ export default function Dashboard() {
 
       <CreditPromptsCard />
 
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 mb-8">
+      <SectionTitle>Needs you now</SectionTitle>
+      <div className="grid grid-cols-2 gap-3 mb-7">
         <KpiCard
           testId="kpi-new-leads"
           label="New leads to call"
@@ -151,7 +152,7 @@ export default function Dashboard() {
         <Link
           to={"/leads?filter=" + encodeURIComponent("Call back")}
           data-testid="kpi-callbacks-link"
-          className="block transition-transform hover:-translate-y-0.5"
+          className="block press"
         >
           <KpiCard
             testId="kpi-callbacks"
@@ -162,12 +163,32 @@ export default function Dashboard() {
             sub={callbacks.length ? "Tap to see who's waiting" : "No one waiting on you"}
           />
         </Link>
-        <KpiCard testId="kpi-open-leads" label="Open leads" value={String(openLeads.length)} isPrivate={false} sub="Still in play" />
-        <KpiCard testId="kpi-pipeline" label="Pipeline value" value={fmtMoney(pipeline)} sub="Quotes still open" />
-        <KpiCard testId="kpi-booked" label="Booked revenue" value={fmtMoney(booked)} sub="Jobs on the books" />
-        <KpiCard testId="kpi-collected" label="Collected" value={fmtMoney(collected)} sub="Paid invoices" />
-        <KpiCard testId="kpi-outstanding" label="Owed to us" value={fmtMoney(outstanding)} sub="Sent + overdue invoices" />
-        <KpiCard testId="kpi-burn" label="Monthly burn" value={fmtMoney(burn)} sub="Active subscriptions" />
+      </div>
+
+      <SectionTitle action={<Link to="/invoices" className="text-[12.5px] font-semibold text-primary transition-colors hover:text-accent-ink">Invoices</Link>}>
+        The money
+      </SectionTitle>
+      <div className="surface mb-7 grid grid-cols-2 gap-y-6 gap-x-4 p-4 sm:p-5 lg:grid-cols-4">
+        <Figure testId="kpi-booked" size="lg" label="Booked revenue" value={fmtMoney(booked)} sub="Jobs on the books" isPrivate />
+        <Figure testId="kpi-collected" size="lg" label="Collected" value={fmtMoney(collected)} sub="Paid invoices" isPrivate />
+        <Figure
+          testId="kpi-outstanding"
+          size="lg"
+          label="Owed to us"
+          value={fmtMoney(outstanding)}
+          sub="Sent + overdue invoices"
+          tone={outstanding > 0 ? "alert" : "default"}
+          isPrivate
+        />
+        <Figure testId="kpi-burn" size="lg" label="Monthly burn" value={fmtMoney(burn)} sub="Active subscriptions" isPrivate />
+      </div>
+
+      <SectionTitle action={<Link to="/leads" className="text-[12.5px] font-semibold text-primary transition-colors hover:text-accent-ink">All leads</Link>}>
+        Pipeline
+      </SectionTitle>
+      <div className="surface mb-8 grid grid-cols-2 gap-4 p-4 sm:p-5">
+        <Figure testId="kpi-open-leads" label="Open leads" value={String(openLeads.length)} sub="Still in play" />
+        <Figure testId="kpi-pipeline" label="Pipeline value" value={fmtMoney(pipeline)} sub="Quotes still open" isPrivate />
       </div>
 
       <CrewStatusCard />
@@ -175,8 +196,8 @@ export default function Dashboard() {
       <WorkCalendar />
 
       <div className="grid lg:grid-cols-2 gap-6 mb-8">
-        <div className="bg-white border border-slate-200 rounded-lg p-5">
-          <h2 className="font-display font-bold text-lg text-[#1B2A4A] mb-3">Leads by status</h2>
+        <div className="surface p-4 sm:p-5">
+          <SectionTitle>Leads by status</SectionTitle>
           {statusData.length === 0 ? (
             <EmptyState>No leads yet. Add one from the Leads page.</EmptyState>
           ) : (
@@ -195,7 +216,7 @@ export default function Dashboard() {
           )}
           <div className="flex flex-wrap gap-2 mt-2">
             {statusData.map((d) => (
-              <span key={d.name} className="inline-flex items-center gap-1.5 text-xs text-slate-600">
+              <span key={d.name} className="inline-flex items-center gap-1.5 text-xs text-ink-2">
                 <span className="w-2.5 h-2.5 rounded-full" style={{ background: LEAD_STATUS_COLORS[d.name] }} />
                 {d.name} ({d.value})
               </span>
@@ -203,8 +224,8 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <div className="bg-white border border-slate-200 rounded-lg p-5">
-          <h2 className="font-display font-bold text-lg text-[#1B2A4A] mb-3">Money overview</h2>
+        <div className="surface p-4 sm:p-5">
+          <SectionTitle>Money overview</SectionTitle>
           <Private block>
             <div className="h-64">
               <ResponsiveContainer width="100%" height="100%">
@@ -225,23 +246,22 @@ export default function Dashboard() {
       </div>
 
       <div className="grid lg:grid-cols-2 gap-6">
-        <div className="bg-white border border-slate-200 rounded-lg p-5">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="font-display font-bold text-lg text-[#1B2A4A]">Upcoming jobs</h2>
-            <Link to="/projects" className="text-xs font-semibold text-[#E8743B] hover:underline">See all</Link>
-          </div>
+        <div className="surface p-4 sm:p-5">
+          <SectionTitle action={<Link to="/projects" className="text-[12.5px] font-semibold text-primary transition-colors hover:text-accent-ink">See all</Link>}>
+            Upcoming jobs
+          </SectionTitle>
           {upcoming.length === 0 ? (
             <EmptyState>No jobs coming up. Book a lead to see it here.</EmptyState>
           ) : (
-            <ul className="divide-y divide-slate-100">
+            <ul className="divide-y divide-border">
               {upcoming.map((p) => (
                 <li key={p.id} className="py-2.5 flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2 min-w-0">
-                    <Truck className="w-4 h-4 text-[#E8743B] shrink-0" />
+                    <Truck className="w-4 h-4 text-accent-ink shrink-0" />
                     <Private className="text-sm font-medium truncate">{f(p, PF.jobName) || "Job"}</Private>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
-                    <span className="text-xs text-slate-500">{fmtDate(f(p, PF.jobDate))}</span>
+                    <span className="text-xs text-faint">{fmtDate(f(p, PF.jobDate))}</span>
                     <Pill value={f(p, PF.status)} />
                   </div>
                 </li>
@@ -250,24 +270,23 @@ export default function Dashboard() {
           )}
         </div>
 
-        <div className="bg-white border border-slate-200 rounded-lg p-5">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="font-display font-bold text-lg text-[#1B2A4A]">High-priority tasks</h2>
-            <Link to="/tasks" className="text-xs font-semibold text-[#E8743B] hover:underline">See board</Link>
-          </div>
+        <div className="surface p-4 sm:p-5">
+          <SectionTitle action={<Link to="/tasks" className="text-[12.5px] font-semibold text-primary transition-colors hover:text-accent-ink">See board</Link>}>
+            High-priority tasks
+          </SectionTitle>
           {hotTasks.length === 0 ? (
             <EmptyState>No urgent tasks. Nice.</EmptyState>
           ) : (
-            <ul className="divide-y divide-slate-100">
+            <ul className="divide-y divide-border">
               {hotTasks.map((t) => (
                 <li key={t.id} className="py-2.5 flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2 min-w-0">
-                    <AlertTriangle className="w-4 h-4 text-red-500 shrink-0" />
+                    <AlertTriangle className="w-4 h-4 text-destructive shrink-0" />
                     <span className="text-sm font-medium truncate">{f(t, TF.task)}</span>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     {f(t, TF.dueDate) && (
-                      <span className={`text-xs ${isOverdue(f(t, TF.dueDate)) ? "text-red-600 font-bold" : "text-slate-500"}`}>
+                      <span className={`text-xs ${isOverdue(f(t, TF.dueDate)) ? "text-destructive font-bold" : "text-faint"}`}>
                         {fmtDate(f(t, TF.dueDate))}
                       </span>
                     )}

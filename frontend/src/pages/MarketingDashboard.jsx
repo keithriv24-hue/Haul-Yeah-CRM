@@ -29,10 +29,10 @@ const speedLabel = (mins) =>
 const pct = (num, den) => (den ? Math.round((num / den) * 100) : null);
 
 const CHIP = {
-  green: "bg-emerald-100 text-emerald-800 border-emerald-300",
-  amber: "bg-amber-100 text-amber-800 border-amber-300",
-  red: "bg-red-100 text-red-700 border-red-300",
-  slate: "bg-slate-100 text-slate-500 border-slate-200",
+  green: "bg-success/12 text-success border-success/30",
+  amber: "bg-warning/12 text-warning border-warning/30",
+  red: "bg-destructive/12 text-destructive border-destructive/30",
+  slate: "bg-surface-sunk text-faint border-border",
 };
 const Chip = ({ tone, children, testid }) => (
   <span data-testid={testid} className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold ${CHIP[tone] || CHIP.slate}`}>
@@ -45,12 +45,12 @@ const bookTone = (v, t) => (v == null ? "slate" : v >= t.bookingGreen ? "green" 
 const roasTone = (v) => (v == null ? "slate" : v >= 3 ? "green" : v >= 1.5 ? "amber" : "red");
 
 const KpiCard = ({ icon: Icon, label, value, sub, testid, blur }) => (
-  <div data-testid={testid} className="bg-white rounded-lg border border-slate-200 p-4">
-    <div className="flex items-center gap-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">
-      <Icon className="w-4 h-4 text-[#E8743B]" /> {label}
+  <div data-testid={testid} className="surface p-4">
+    <div className="flex items-center gap-2 text-xs font-semibold text-faint uppercase tracking-wide">
+      <Icon className="w-4 h-4 text-accent-ink" /> {label}
     </div>
-    <p className={`text-2xl font-bold text-[#1B2A4A] mt-1.5 ${blur ? "blur-sm select-none" : ""}`}>{value}</p>
-    {sub && <p className="text-xs text-slate-400 mt-0.5">{sub}</p>}
+    <p className={`text-2xl font-bold text-primary mt-1.5 ${blur ? "blur-sm select-none" : ""}`}>{value}</p>
+    {sub && <p className="text-xs text-faint mt-0.5">{sub}</p>}
   </div>
 );
 
@@ -62,19 +62,19 @@ const Funnel = ({ funnel }) => {
         const conv = i === 0 ? null : pct(f.count, funnel[i - 1].count || 0);
         return (
           <div key={f.stage} data-testid={`funnel-row-${f.stage.toLowerCase()}`} className="flex items-center gap-3">
-            <span className="w-24 text-sm font-semibold text-[#1B2A4A]">{f.stage}</span>
-            <div className="flex-1 h-7 bg-slate-100 rounded overflow-hidden">
+            <span className="w-24 text-sm font-semibold text-primary">{f.stage}</span>
+            <div className="flex-1 h-7 bg-surface-sunk rounded overflow-hidden">
               <div
-                className="h-full rounded bg-[#E8743B] transition-all"
+                className="h-full rounded bg-accent transition-all"
                 style={{ width: `${Math.max(4, (f.count / max) * 100)}%`, opacity: 1 - i * 0.13 }}
               />
             </div>
-            <span className="w-10 text-right text-sm font-bold text-[#1B2A4A]">{f.count}</span>
-            <span className="w-14 text-right text-xs text-slate-500">{conv == null ? "" : `${conv}%`}</span>
+            <span className="w-10 text-right text-sm font-bold text-primary">{f.count}</span>
+            <span className="w-14 text-right text-xs text-faint">{conv == null ? "" : `${conv}%`}</span>
           </div>
         );
       })}
-      <p className="text-[11px] text-slate-400 pt-1">The % next to each step = how many made it from the step above.</p>
+      <p className="text-[11px] text-faint pt-1">The % next to each step = how many made it from the step above.</p>
     </div>
   );
 };
@@ -83,7 +83,7 @@ const SourcesTable = ({ sources, blur }) => (
   <div className="overflow-x-auto">
     <table data-testid="sources-table" className="w-full text-sm">
       <thead>
-        <tr className="text-left text-xs text-slate-500 uppercase tracking-wide border-b border-slate-100">
+        <tr className="text-left text-xs text-faint uppercase tracking-wide border-b border-border">
           <th className="py-2 pr-3">Source</th>
           <th className="py-2 px-2 text-right">Leads</th>
           <th className="py-2 px-2 text-right">Contacted</th>
@@ -96,19 +96,19 @@ const SourcesTable = ({ sources, blur }) => (
       </thead>
       <tbody>
         {sources.map((s) => (
-          <tr key={s.key} data-testid="source-row" className="border-b border-slate-50">
-            <td className="py-2.5 pr-3 font-semibold text-[#1B2A4A]">{s.key}</td>
+          <tr key={s.key} data-testid="source-row" className="border-b border-border">
+            <td className="py-2.5 pr-3 font-semibold text-primary">{s.key}</td>
             <td className="py-2.5 px-2 text-right">{s.leads}</td>
             <td className="py-2.5 px-2 text-right">{s.contacted}</td>
             <td className="py-2.5 px-2 text-right">{s.quoted}</td>
             <td className="py-2.5 px-2 text-right font-semibold">{s.booked}</td>
             <td className="py-2.5 px-2 text-right">{pct(s.booked, s.leads) == null ? "—" : `${pct(s.booked, s.leads)}%`}</td>
-            <td className={`py-2.5 px-2 text-right font-semibold text-emerald-700 ${blur ? "blur-sm select-none" : ""}`}>{fmtMoney(s.revenue)}</td>
-            <td className="py-2.5 pl-2 text-right text-slate-600">{speedLabel(s.avg_speed_minutes)}</td>
+            <td className={`py-2.5 px-2 text-right font-semibold text-success ${blur ? "blur-sm select-none" : ""}`}>{fmtMoney(s.revenue)}</td>
+            <td className="py-2.5 pl-2 text-right text-ink-2">{speedLabel(s.avg_speed_minutes)}</td>
           </tr>
         ))}
         {sources.length === 0 && (
-          <tr><td colSpan={8} className="py-6 text-center text-slate-400 text-sm">No leads in this date range yet.</td></tr>
+          <tr><td colSpan={8} className="py-6 text-center text-faint text-sm">No leads in this date range yet.</td></tr>
         )}
       </tbody>
     </table>
@@ -116,7 +116,7 @@ const SourcesTable = ({ sources, blur }) => (
 );
 
 const OverviewTab = ({ overview, blur, query }) => {
-  if (!overview) return <div className="py-10 text-center text-slate-400"><Loader2 className="w-5 h-5 animate-spin inline" /></div>;
+  if (!overview) return <div className="py-10 text-center text-faint"><Loader2 className="w-5 h-5 animate-spin inline" /></div>;
   const t = overview.totals;
   const sources = overview.sources.filter((s) => searchMatch(query, s.key));
   const campaigns = overview.campaigns.filter((c) => searchMatch(query, c.key));
@@ -130,15 +130,15 @@ const OverviewTab = ({ overview, blur, query }) => {
         <KpiCard icon={Timer} label="Speed to lead" value={speedLabel(t.avg_speed_minutes)} sub={t.speed_tracked ? `Tracked on ${t.speed_tracked} lead${t.speed_tracked === 1 ? "" : "s"}` : "No status changes tracked yet"} testid="kpi-mkt-speed" />
       </div>
       <div className="grid lg:grid-cols-2 gap-4">
-        <div className="bg-white rounded-lg border border-slate-200 p-4">
-          <h2 className="font-bold text-[#1B2A4A] mb-3">Funnel</h2>
+        <div className="surface p-4">
+          <h2 className="font-bold text-primary mb-3">Funnel</h2>
           <Funnel funnel={overview.funnel} />
         </div>
-        <div className="bg-white rounded-lg border border-slate-200 p-4">
-          <h2 className="font-bold text-[#1B2A4A] mb-3">Campaigns &amp; ads</h2>
+        <div className="surface p-4">
+          <h2 className="font-bold text-primary mb-3">Campaigns &amp; ads</h2>
           <table data-testid="campaigns-table" className="w-full text-sm">
             <thead>
-              <tr className="text-left text-xs text-slate-500 uppercase tracking-wide border-b border-slate-100">
+              <tr className="text-left text-xs text-faint uppercase tracking-wide border-b border-border">
                 <th className="py-2 pr-3">Campaign / Ad</th>
                 <th className="py-2 px-2 text-right">Leads</th>
                 <th className="py-2 px-2 text-right">Booked</th>
@@ -147,22 +147,22 @@ const OverviewTab = ({ overview, blur, query }) => {
             </thead>
             <tbody>
               {campaigns.map((c) => (
-                <tr key={c.key} data-testid="campaign-row" className="border-b border-slate-50">
-                  <td className="py-2 pr-3 font-medium text-[#1B2A4A]">{c.key}</td>
+                <tr key={c.key} data-testid="campaign-row" className="border-b border-border">
+                  <td className="py-2 pr-3 font-medium text-primary">{c.key}</td>
                   <td className="py-2 px-2 text-right">{c.leads}</td>
                   <td className="py-2 px-2 text-right">{c.booked}</td>
-                  <td className={`py-2 pl-2 text-right text-emerald-700 font-semibold ${blur ? "blur-sm select-none" : ""}`}>{fmtMoney(c.revenue)}</td>
+                  <td className={`py-2 pl-2 text-right text-success font-semibold ${blur ? "blur-sm select-none" : ""}`}>{fmtMoney(c.revenue)}</td>
                 </tr>
               ))}
               {campaigns.length === 0 && (
-                <tr><td colSpan={4} className="py-6 text-center text-slate-400 text-sm">No UTM campaigns captured yet. They show up automatically from your Tally form.</td></tr>
+                <tr><td colSpan={4} className="py-6 text-center text-faint text-sm">No UTM campaigns captured yet. They show up automatically from your Tally form.</td></tr>
               )}
             </tbody>
           </table>
         </div>
       </div>
-      <div className="bg-white rounded-lg border border-slate-200 p-4">
-        <h2 className="font-bold text-[#1B2A4A] mb-3">By source</h2>
+      <div className="surface p-4">
+        <h2 className="font-bold text-primary mb-3">By source</h2>
         <SourcesTable sources={sources} blur={blur} />
       </div>
     </div>
@@ -261,8 +261,8 @@ const AdSpendTab = ({ overview, range, isOwner, blur, query }) => {
 
   return (
     <div className="space-y-4">
-      <div className="bg-white rounded-lg border border-slate-200 p-4">
-        <h2 className="font-bold text-[#1B2A4A] mb-3 flex items-center gap-2"><Plus className="w-4 h-4 text-[#E8743B]" /> Log ad spend</h2>
+      <div className="surface p-4">
+        <h2 className="font-bold text-primary mb-3 flex items-center gap-2"><Plus className="w-4 h-4 text-accent-ink" /> Log ad spend</h2>
         <div className="grid grid-cols-2 lg:grid-cols-6 gap-2 items-end">
           <div>
             <Label className="text-xs">Platform</Label>
@@ -291,19 +291,19 @@ const AdSpendTab = ({ overview, range, isOwner, blur, query }) => {
             <Label className="text-xs">Amount ($)</Label>
             <Input data-testid="adspend-amount-input" className="h-9" type="number" min="0" value={form.amount} onChange={(e) => setForm((f) => ({ ...f, amount: e.target.value }))} placeholder="250" />
           </div>
-          <Button data-testid="adspend-add-btn" onClick={add} disabled={busy || !form.campaign.trim() || !Number(form.amount)} className="h-9 gap-1.5 bg-[#E8743B] hover:bg-[#d4632e]">
+          <Button data-testid="adspend-add-btn" onClick={add} disabled={busy || !form.campaign.trim() || !Number(form.amount)} className="h-9 gap-1.5 bg-accent hover:bg-accent-press">
             <Plus className="w-4 h-4" /> Add
           </Button>
         </div>
       </div>
 
-      <div className="bg-white rounded-lg border border-slate-200 p-4">
-        <h2 className="font-bold text-[#1B2A4A] mb-1">How the ads are doing</h2>
-        <p className="text-xs text-slate-400 mb-3">Spend entries that touch the picked date range, matched to leads by campaign name. Revenue = paid Square invoices only.</p>
+      <div className="surface p-4">
+        <h2 className="font-bold text-primary mb-1">How the ads are doing</h2>
+        <p className="text-xs text-faint mb-3">Spend entries that touch the picked date range, matched to leads by campaign name. Revenue = paid Square invoices only.</p>
         <div className="overflow-x-auto">
           <table data-testid="perf-table" className="w-full text-sm">
             <thead>
-              <tr className="text-left text-xs text-slate-500 uppercase tracking-wide border-b border-slate-100">
+              <tr className="text-left text-xs text-faint uppercase tracking-wide border-b border-border">
                 <th className="py-2 pr-3">Campaign</th>
                 <th className="py-2 px-2 text-right">Spend</th>
                 <th className="py-2 px-2 text-right">Leads</th>
@@ -317,33 +317,33 @@ const AdSpendTab = ({ overview, range, isOwner, blur, query }) => {
             </thead>
             <tbody>
               {perf.map((r) => (
-                <tr key={r.campaign} data-testid="perf-row" className="border-b border-slate-50">
-                  <td className="py-2.5 pr-3 font-semibold text-[#1B2A4A]">{r.campaign}</td>
+                <tr key={r.campaign} data-testid="perf-row" className="border-b border-border">
+                  <td className="py-2.5 pr-3 font-semibold text-primary">{r.campaign}</td>
                   <td className={`py-2.5 px-2 text-right ${blur ? "blur-sm select-none" : ""}`}>{fmtMoney(r.spend)}</td>
                   <td className="py-2.5 px-2 text-right">{r.leads}</td>
                   <td className="py-2.5 px-2 text-right"><Chip tone={cplTone(r.cpl, th)} testid="perf-cpl-chip">{r.cpl == null ? "—" : fmtMoney(r.cpl)}</Chip></td>
                   <td className="py-2.5 px-2 text-right">{r.booked}</td>
                   <td className="py-2.5 px-2 text-right">{r.costPerBooked == null ? "—" : fmtMoney(r.costPerBooked)}</td>
                   <td className="py-2.5 px-2 text-right"><Chip tone={bookTone(r.bookingRate, th)} testid="perf-booking-chip">{r.bookingRate == null ? "—" : `${Math.round(r.bookingRate)}%`}</Chip></td>
-                  <td className={`py-2.5 px-2 text-right text-emerald-700 font-semibold ${blur ? "blur-sm select-none" : ""}`}>{fmtMoney(r.revenue)}</td>
+                  <td className={`py-2.5 px-2 text-right text-success font-semibold ${blur ? "blur-sm select-none" : ""}`}>{fmtMoney(r.revenue)}</td>
                   <td className="py-2.5 pl-2 text-right"><Chip tone={roasTone(r.roas)} testid="perf-roas-chip">{r.roas == null ? "—" : `${r.roas.toFixed(1)}x`}</Chip></td>
                 </tr>
               ))}
               {perf.length > 0 && (
-                <tr data-testid="perf-total-row" className="border-t-2 border-slate-200 font-bold">
-                  <td className="py-2.5 pr-3 text-[#1B2A4A]">All ads</td>
+                <tr data-testid="perf-total-row" className="border-t-2 border-border font-bold">
+                  <td className="py-2.5 pr-3 text-primary">All ads</td>
                   <td className={`py-2.5 px-2 text-right ${blur ? "blur-sm select-none" : ""}`}>{fmtMoney(totals.spend)}</td>
                   <td className="py-2.5 px-2 text-right">{totals.leads}</td>
                   <td className="py-2.5 px-2 text-right"><Chip tone={cplTone(totals.cpl, th)}>{totals.cpl == null ? "—" : fmtMoney(totals.cpl)}</Chip></td>
                   <td className="py-2.5 px-2 text-right">{totals.booked}</td>
                   <td className="py-2.5 px-2 text-right">{totals.costPerBooked == null ? "—" : fmtMoney(totals.costPerBooked)}</td>
                   <td className="py-2.5 px-2 text-right"><Chip tone={bookTone(totals.bookingRate, th)}>{totals.bookingRate == null ? "—" : `${Math.round(totals.bookingRate)}%`}</Chip></td>
-                  <td className={`py-2.5 px-2 text-right text-emerald-700 ${blur ? "blur-sm select-none" : ""}`}>{fmtMoney(totals.revenue)}</td>
+                  <td className={`py-2.5 px-2 text-right text-success ${blur ? "blur-sm select-none" : ""}`}>{fmtMoney(totals.revenue)}</td>
                   <td className="py-2.5 pl-2 text-right"><Chip tone={roasTone(totals.roas)}>{totals.roas == null ? "—" : `${totals.roas.toFixed(1)}x`}</Chip></td>
                 </tr>
               )}
               {perf.length === 0 && (
-                <tr><td colSpan={9} className="py-6 text-center text-slate-400 text-sm">Log your first spend entry above to see CPL, booking rate, and ROAS.</td></tr>
+                <tr><td colSpan={9} className="py-6 text-center text-faint text-sm">Log your first spend entry above to see CPL, booking rate, and ROAS.</td></tr>
               )}
             </tbody>
           </table>
@@ -351,27 +351,27 @@ const AdSpendTab = ({ overview, range, isOwner, blur, query }) => {
       </div>
 
       <div className="grid lg:grid-cols-2 gap-4">
-        <div className="bg-white rounded-lg border border-slate-200 p-4">
-          <h2 className="font-bold text-[#1B2A4A] mb-3">Spend log</h2>
+        <div className="surface p-4">
+          <h2 className="font-bold text-primary mb-3">Spend log</h2>
           <div className="space-y-1.5">
             {entriesShown.map((e) => (
-              <div key={e.id} data-testid="adspend-entry-row" className="flex items-center gap-2 text-sm border-b border-slate-50 pb-1.5">
+              <div key={e.id} data-testid="adspend-entry-row" className="flex items-center gap-2 text-sm border-b border-border pb-1.5">
                 <Badge variant="outline" className="text-[10px]">{e.platform}</Badge>
-                <span className="flex-1 font-medium text-[#1B2A4A] truncate">{e.campaign}</span>
-                <span className="text-xs text-slate-400">{fmtDate(e.date_start)} → {fmtDate(e.date_end)}</span>
+                <span className="flex-1 font-medium text-primary truncate">{e.campaign}</span>
+                <span className="text-xs text-faint">{fmtDate(e.date_start)} → {fmtDate(e.date_end)}</span>
                 <span className={`font-semibold ${blur ? "blur-sm select-none" : ""}`}>{fmtMoney(e.amount)}</span>
-                <Button data-testid="adspend-delete-btn" variant="ghost" size="sm" className="h-7 px-1.5 text-red-500 hover:text-red-700" onClick={() => remove(e.id)}>
+                <Button data-testid="adspend-delete-btn" variant="ghost" size="sm" className="h-7 px-1.5 text-destructive hover:text-destructive" onClick={() => remove(e.id)}>
                   <Trash2 className="w-3.5 h-3.5" />
                 </Button>
               </div>
             ))}
-            {entries && entriesShown.length === 0 && <p className="text-sm text-slate-400 py-4 text-center">{query ? "No spend entries match that search." : "Nothing logged yet."}</p>}
+            {entries && entriesShown.length === 0 && <p className="text-sm text-faint py-4 text-center">{query ? "No spend entries match that search." : "Nothing logged yet."}</p>}
           </div>
         </div>
 
-        <div className="bg-white rounded-lg border border-slate-200 p-4">
-          <h2 className="font-bold text-[#1B2A4A] mb-1">Color thresholds</h2>
-          <p className="text-xs text-slate-400 mb-3">Green means healthy, red means look at it. {!isOwner && "Only the owner can change these."}</p>
+        <div className="surface p-4">
+          <h2 className="font-bold text-primary mb-1">Color thresholds</h2>
+          <p className="text-xs text-faint mb-3">Green means healthy, red means look at it. {!isOwner && "Only the owner can change these."}</p>
           {tDraft && (
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -391,7 +391,7 @@ const AdSpendTab = ({ overview, range, isOwner, blur, query }) => {
                 <Input data-testid="threshold-booking-red" className="h-9" type="number" disabled={!isOwner} value={tDraft.bookingRed} onChange={(e) => setTDraft((t) => ({ ...t, bookingRed: e.target.value }))} />
               </div>
               {isOwner && (
-                <Button data-testid="threshold-save-btn" onClick={saveThresholds} className="col-span-2 bg-[#1B2A4A] hover:bg-[#152238]">Save thresholds</Button>
+                <Button data-testid="threshold-save-btn" onClick={saveThresholds} className="col-span-2 bg-primary hover:bg-[#152238]">Save thresholds</Button>
               )}
             </div>
           )}
@@ -423,9 +423,9 @@ const ReviewsTab = ({ query }) => {
   const avgStars = starred.length ? (starred.reduce((s, r) => s + r.review.stars, 0) / starred.length).toFixed(1) : null;
 
   return (
-    <div className="bg-white rounded-lg border border-slate-200 p-4">
+    <div className="surface p-4">
       <div className="flex flex-wrap items-center gap-2 mb-3">
-        <h2 className="font-bold text-[#1B2A4A] flex-1">Review requests</h2>
+        <h2 className="font-bold text-primary flex-1">Review requests</h2>
         <Chip tone="slate" testid="reviews-asked-chip">{(requests || []).length} asked</Chip>
         <Chip tone="green" testid="reviews-received-chip">{received.length} came in</Chip>
         {avgStars && <Chip tone="amber" testid="reviews-avg-chip">★ {avgStars} average</Chip>}
@@ -433,7 +433,7 @@ const ReviewsTab = ({ query }) => {
       <div className="overflow-x-auto">
         <table data-testid="reviews-table" className="w-full text-sm">
           <thead>
-            <tr className="text-left text-xs text-slate-500 uppercase tracking-wide border-b border-slate-100">
+            <tr className="text-left text-xs text-faint uppercase tracking-wide border-b border-border">
               <th className="py-2 pr-3">Sent</th>
               <th className="py-2 px-2">Crew</th>
               <th className="py-2 px-2">How</th>
@@ -445,12 +445,12 @@ const ReviewsTab = ({ query }) => {
           </thead>
           <tbody>
             {shown.map((r) => (
-              <tr key={r.id} data-testid="review-row" className="border-b border-slate-50">
-                <td className="py-2.5 pr-3 text-slate-600 whitespace-nowrap">{fmtDate(r.sent_at)}</td>
-                <td className="py-2.5 px-2 font-medium text-[#1B2A4A]">{r.crew_name}</td>
+              <tr key={r.id} data-testid="review-row" className="border-b border-border">
+                <td className="py-2.5 pr-3 text-ink-2 whitespace-nowrap">{fmtDate(r.sent_at)}</td>
+                <td className="py-2.5 px-2 font-medium text-primary">{r.crew_name}</td>
                 <td className="py-2.5 px-2"><Badge variant="outline" className="text-[10px] uppercase">{r.channel}</Badge></td>
                 <td className="py-2.5 px-2">{r.customer?.name || "—"}</td>
-                <td className="py-2.5 px-2 text-slate-500">{r.invoice_number ? `#${r.invoice_number}` : "—"}</td>
+                <td className="py-2.5 px-2 text-faint">{r.invoice_number ? `#${r.invoice_number}` : "—"}</td>
                 <td className="py-2.5 px-2 text-center">
                   <Checkbox data-testid="review-received-checkbox" checked={!!r.review?.received} onCheckedChange={(v) => patch(r.id, { review_received: !!v })} />
                 </td>
@@ -458,7 +458,7 @@ const ReviewsTab = ({ query }) => {
                   <div className="flex gap-0.5">
                     {[1, 2, 3, 4, 5].map((n) => (
                       <button key={n} data-testid={`review-star-${n}`} onClick={() => patch(r.id, { stars: n })} className="p-0.5">
-                        <Star className={`w-4 h-4 ${r.review?.stars >= n ? "fill-amber-400 text-amber-400" : "text-slate-300"}`} />
+                        <Star className={`w-4 h-4 ${r.review?.stars >= n ? "fill-amber-400 text-warning" : "text-faint/70"}`} />
                       </button>
                     ))}
                   </div>
@@ -466,7 +466,7 @@ const ReviewsTab = ({ query }) => {
               </tr>
             ))}
             {requests && shown.length === 0 && (
-              <tr><td colSpan={7} className="py-6 text-center text-slate-400 text-sm">{query ? "No review requests match that search." : "No review requests yet. Crew send them right after they finish a job."}</td></tr>
+              <tr><td colSpan={7} className="py-6 text-center text-faint text-sm">{query ? "No review requests match that search." : "No review requests yet. Crew send them right after they finish a job."}</td></tr>
             )}
           </tbody>
         </table>
@@ -482,21 +482,21 @@ const MarginTab = ({ range, blur, query }) => {
     marketingMarginApi(range.start, range.end).then(setData).catch((e) => toast.error(apiErrorMessage(e)));
   }, [range]);
 
-  if (!data) return <div className="py-10 text-center text-slate-400"><Loader2 className="w-5 h-5 animate-spin inline" /></div>;
+  if (!data) return <div className="py-10 text-center text-faint"><Loader2 className="w-5 h-5 animate-spin inline" /></div>;
   const shown = data.sources.filter((s) => searchMatch(query, s.source));
   const totals = shown.reduce((a, s) => ({ revenue: a.revenue + s.revenue, labor_cost: a.labor_cost + s.labor_cost, margin: a.margin + s.margin }), { revenue: 0, labor_cost: 0, margin: 0 });
 
   return (
-    <div className="bg-white rounded-lg border border-slate-200 p-4">
+    <div className="surface p-4">
       <div className="flex items-center gap-2 mb-1">
-        <Lock className="w-4 h-4 text-[#E8743B]" />
-        <h2 className="font-bold text-[#1B2A4A]">True margin — owner's eyes only</h2>
+        <Lock className="w-4 h-4 text-accent-ink" />
+        <h2 className="font-bold text-primary">True margin — owner's eyes only</h2>
       </div>
-      <p className="text-xs text-slate-400 mb-3">Paid Square revenue minus what the crew's clocked hours cost you, grouped by where the lead came from.</p>
+      <p className="text-xs text-faint mb-3">Paid Square revenue minus what the crew's clocked hours cost you, grouped by where the lead came from.</p>
       <div className="overflow-x-auto">
         <table data-testid="margin-table" className="w-full text-sm">
           <thead>
-            <tr className="text-left text-xs text-slate-500 uppercase tracking-wide border-b border-slate-100">
+            <tr className="text-left text-xs text-faint uppercase tracking-wide border-b border-border">
               <th className="py-2 pr-3">Source</th>
               <th className="py-2 px-2 text-right">Revenue (paid)</th>
               <th className="py-2 px-2 text-right">Crew labor</th>
@@ -506,25 +506,25 @@ const MarginTab = ({ range, blur, query }) => {
           </thead>
           <tbody>
             {shown.map((s) => (
-              <tr key={s.source} data-testid="margin-row" className="border-b border-slate-50">
-                <td className="py-2.5 pr-3 font-semibold text-[#1B2A4A]">{s.source}</td>
+              <tr key={s.source} data-testid="margin-row" className="border-b border-border">
+                <td className="py-2.5 pr-3 font-semibold text-primary">{s.source}</td>
                 <td className={`py-2.5 px-2 text-right ${blur ? "blur-sm select-none" : ""}`}>{fmtMoney(s.revenue)}</td>
-                <td className={`py-2.5 px-2 text-right text-red-600 ${blur ? "blur-sm select-none" : ""}`}>−{fmtMoney(s.labor_cost)}</td>
-                <td className={`py-2.5 px-2 text-right font-bold ${s.margin >= 0 ? "text-emerald-700" : "text-red-600"} ${blur ? "blur-sm select-none" : ""}`}>{fmtMoney(s.margin)}</td>
+                <td className={`py-2.5 px-2 text-right text-destructive ${blur ? "blur-sm select-none" : ""}`}>−{fmtMoney(s.labor_cost)}</td>
+                <td className={`py-2.5 px-2 text-right font-bold ${s.margin >= 0 ? "text-success" : "text-destructive"} ${blur ? "blur-sm select-none" : ""}`}>{fmtMoney(s.margin)}</td>
                 <td className="py-2.5 pl-2 text-right">{s.margin_pct == null ? "—" : `${s.margin_pct}%`}</td>
               </tr>
             ))}
             {shown.length > 0 && (
-              <tr data-testid="margin-total-row" className="border-t-2 border-slate-200 font-bold">
-                <td className="py-2.5 pr-3 text-[#1B2A4A]">Everything</td>
+              <tr data-testid="margin-total-row" className="border-t-2 border-border font-bold">
+                <td className="py-2.5 pr-3 text-primary">Everything</td>
                 <td className={`py-2.5 px-2 text-right ${blur ? "blur-sm select-none" : ""}`}>{fmtMoney(totals.revenue)}</td>
-                <td className={`py-2.5 px-2 text-right text-red-600 ${blur ? "blur-sm select-none" : ""}`}>−{fmtMoney(totals.labor_cost)}</td>
-                <td className={`py-2.5 px-2 text-right ${totals.margin >= 0 ? "text-emerald-700" : "text-red-600"} ${blur ? "blur-sm select-none" : ""}`}>{fmtMoney(totals.margin)}</td>
+                <td className={`py-2.5 px-2 text-right text-destructive ${blur ? "blur-sm select-none" : ""}`}>−{fmtMoney(totals.labor_cost)}</td>
+                <td className={`py-2.5 px-2 text-right ${totals.margin >= 0 ? "text-success" : "text-destructive"} ${blur ? "blur-sm select-none" : ""}`}>{fmtMoney(totals.margin)}</td>
                 <td className="py-2.5 pl-2 text-right">{totals.revenue ? `${Math.round((totals.margin / totals.revenue) * 100)}%` : "—"}</td>
               </tr>
             )}
             {shown.length === 0 && (
-              <tr><td colSpan={5} className="py-6 text-center text-slate-400 text-sm">{query ? "No sources match that search." : "No paid revenue or labor in this range yet."}</td></tr>
+              <tr><td colSpan={5} className="py-6 text-center text-faint text-sm">{query ? "No sources match that search." : "No paid revenue or labor in this range yet."}</td></tr>
             )}
           </tbody>
         </table>
@@ -554,8 +554,8 @@ export default function MarketingDashboard() {
   return (
     <div data-testid="marketing-dashboard" className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
-        <h1 className="font-display text-2xl font-bold text-[#1B2A4A] flex items-center gap-2 flex-1">
-          <Megaphone className="w-6 h-6 text-[#E8743B]" /> Marketing
+        <h1 className="font-display text-[22px] sm:text-[26px] font-extrabold text-primary flex items-center gap-2 flex-1">
+          <Megaphone className="w-6 h-6 text-accent-ink" /> Marketing
         </h1>
         <div className="flex items-center gap-1.5">
           {[7, 30, 90].map((d) => (
@@ -565,9 +565,9 @@ export default function MarketingDashboard() {
           ))}
         </div>
         <div className="flex items-center gap-1.5 text-sm">
-          <CalendarRange className="w-4 h-4 text-slate-400" />
+          <CalendarRange className="w-4 h-4 text-faint" />
           <Input data-testid="mkt-range-start" type="date" className="h-8 w-36" value={range.start} onChange={(e) => setRange((r) => ({ ...r, start: e.target.value }))} />
-          <span className="text-slate-400">→</span>
+          <span className="text-faint">→</span>
           <Input data-testid="mkt-range-end" type="date" className="h-8 w-36" value={range.end} onChange={(e) => setRange((r) => ({ ...r, end: e.target.value }))} />
         </div>
       </div>
@@ -575,7 +575,7 @@ export default function MarketingDashboard() {
       <SearchBar value={query} onChange={setQuery} placeholder="Search source, campaign, crew, or customer…" testId="marketing-search-input" />
 
       {overview && overview.airtable_available === false && role === "marketing" && (
-        <div data-testid="mkt-airtable-banner" className="rounded-md bg-amber-50 border border-amber-200 text-amber-800 text-sm px-4 py-2.5">
+        <div data-testid="mkt-airtable-banner" className="rounded-md bg-warning/10 border border-warning/25 text-warning text-sm px-4 py-2.5">
           Lead numbers need the Airtable connection. Add the AIRTABLE_API_KEY and refresh — spend logging still works meanwhile.
         </div>
       )}

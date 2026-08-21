@@ -92,7 +92,7 @@ const BadgeFormDialog = ({ open, onOpenChange, editing, onSaved }) => {
                     data-testid={`badge-icon-${name}`}
                     onClick={() => set("icon")(name)}
                     className={`h-9 rounded-md border flex items-center justify-center transition-colors ${
-                      form.icon === name ? "border-[#E8743B] bg-orange-50 text-[#E8743B]" : "border-slate-200 text-slate-500 hover:border-slate-300"
+                      form.icon === name ? "border-accent bg-accent/10 text-accent-ink" : "border-border text-faint hover:border-border-strong"
                     }`}
                   >
                     <Icon className="w-4 h-4" />
@@ -126,7 +126,7 @@ const BadgeFormDialog = ({ open, onOpenChange, editing, onSaved }) => {
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button data-testid="badge-save-btn" disabled={busy || !form.name.trim()} onClick={save} className="bg-[#E8743B] hover:bg-[#d4632e]">
+          <Button data-testid="badge-save-btn" disabled={busy || !form.name.trim()} onClick={save} className="bg-accent hover:bg-accent-press">
             {editing ? "Save badge" : "Create badge"}
           </Button>
         </DialogFooter>
@@ -182,8 +182,8 @@ export const AdminBadgesTab = () => {
 
   return (
     <div className="space-y-4 mt-4">
-      <div className="bg-white border border-slate-200 rounded-lg p-4" data-testid="award-badge-card">
-        <h2 className="font-bold text-[#1B2A4A] mb-3">Award or take back a badge</h2>
+      <div className="surface p-4" data-testid="award-badge-card">
+        <h2 className="font-bold text-primary mb-3">Award or take back a badge</h2>
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 items-end">
           <div>
             <Label>Member</Label>
@@ -207,38 +207,38 @@ export const AdminBadgesTab = () => {
               </SelectContent>
             </Select>
           </div>
-          <Button data-testid="award-badge-btn" size="sm" className="gap-1.5 bg-[#E8743B] hover:bg-[#d4632e]" disabled={busy || !award.user_id || !award.badge_id} onClick={doAward}>
+          <Button data-testid="award-badge-btn" size="sm" className="gap-1.5 bg-accent hover:bg-accent-press" disabled={busy || !award.user_id || !award.badge_id} onClick={doAward}>
             <AwardIcon className="w-4 h-4" /> Award it
           </Button>
-          <Button data-testid="revoke-badge-btn" size="sm" variant="outline" className="gap-1.5 text-red-600 border-red-200 hover:bg-red-50" disabled={busy || !award.user_id || !award.badge_id} onClick={doRevoke}>
+          <Button data-testid="revoke-badge-btn" size="sm" variant="outline" className="gap-1.5 text-destructive border-destructive/25 hover:bg-destructive/10" disabled={busy || !award.user_id || !award.badge_id} onClick={doRevoke}>
             <Undo2 className="w-4 h-4" /> Take it back
           </Button>
         </div>
       </div>
 
       <div className="flex items-center justify-between">
-        <h2 className="font-bold text-[#1B2A4A]">All badges</h2>
-        <Button data-testid="new-badge-btn" size="sm" className="gap-1.5 bg-[#1B2A4A] hover:bg-[#152238]" onClick={() => { setEditing(null); setFormOpen(true); }}>
+        <h2 className="font-bold text-primary">All badges</h2>
+        <Button data-testid="new-badge-btn" size="sm" className="gap-1.5 bg-primary hover:bg-[#152238]" onClick={() => { setEditing(null); setFormOpen(true); }}>
           <Plus className="w-4 h-4" /> New badge
         </Button>
       </div>
 
       {["crew", "sales"].map((track) => (
-        <div key={track} className="bg-white border border-slate-200 rounded-lg" data-testid={`badge-list-${track}`}>
-          <h3 className="text-xs font-bold uppercase tracking-wide text-slate-500 px-4 py-2.5 border-b border-slate-100 capitalize">{track} track</h3>
-          <div className="divide-y divide-slate-100">
+        <div key={track} className="surface" data-testid={`badge-list-${track}`}>
+          <h3 className="text-xs font-bold uppercase tracking-wide text-faint px-4 py-2.5 border-b border-border capitalize">{track} track</h3>
+          <div className="divide-y divide-border">
             {badges.filter((b) => b.track === track).map((b) => (
               <div key={b.id} data-testid="badge-admin-row" className={`flex items-center gap-3 px-4 py-2.5 ${b.active ? "" : "opacity-50"}`}>
                 <BadgeMedallion badge={b} size="sm" />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
-                    <span className="text-sm font-semibold text-[#1B2A4A]">{b.name}</span>
+                    <span className="text-sm font-semibold text-primary">{b.name}</span>
                     <Badge variant="outline" className={`text-[9px] font-bold capitalize ${RARITY_CHIP[b.rarity]}`}>{b.rarity}</Badge>
                   </div>
-                  <p className="text-xs text-slate-500 truncate">
+                  <p className="text-xs text-faint truncate">
                     {b.description}
-                    {b.auto && <span className="text-slate-400"> · auto at {b.auto.threshold} {METRIC_LABEL[b.auto.metric]}</span>}
-                    {!b.auto && <span className="text-slate-400"> · owner-awarded</span>}
+                    {b.auto && <span className="text-faint"> · auto at {b.auto.threshold} {METRIC_LABEL[b.auto.metric]}</span>}
+                    {!b.auto && <span className="text-faint"> · owner-awarded</span>}
                   </p>
                 </div>
                 <Button data-testid="edit-badge-btn" variant="ghost" size="sm" className="h-7 px-2" onClick={() => { setEditing(b); setFormOpen(true); }}>

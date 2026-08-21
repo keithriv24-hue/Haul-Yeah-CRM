@@ -7,8 +7,8 @@ import { Label } from "@/components/ui/label";
 import { getIntegrationsApi, saveIntegrationsApi, squareSyncStatusApi, apiErrorMessage } from "@/lib/api";
 
 const Chip = ({ ok, label }) => (
-  <span data-testid={`integr-status-${label.toLowerCase().replace(/\s+/g, "-")}`} className={`inline-flex items-center gap-1.5 text-xs font-semibold rounded-full px-2.5 py-1 ${ok ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-red-50 text-red-700 border border-red-200"}`}>
-    <span className={`w-1.5 h-1.5 rounded-full ${ok ? "bg-emerald-500" : "bg-red-500"}`} />
+  <span data-testid={`integr-status-${label.toLowerCase().replace(/\s+/g, "-")}`} className={`inline-flex items-center gap-1.5 text-xs font-semibold rounded-full px-2.5 py-1 ${ok ? "bg-success/10 text-success border border-success/25" : "bg-destructive/10 text-destructive border border-destructive/25"}`}>
+    <span className={`w-1.5 h-1.5 rounded-full ${ok ? "bg-success" : "bg-destructive"}`} />
     {label} {ok ? "connected" : "not connected"}
   </span>
 );
@@ -24,7 +24,7 @@ const SecretInput = ({ testId, label, hint, isSet, value, onChange }) => (
       value={value}
       onChange={(e) => onChange(e.target.value)}
     />
-    {hint && <p className="text-[11px] text-slate-400 mt-0.5">{hint}</p>}
+    {hint && <p className="text-[11px] text-faint mt-0.5">{hint}</p>}
   </div>
 );
 
@@ -70,9 +70,9 @@ export const IntegrationsCard = () => {
 
   if (!data) return null;
   return (
-    <div data-testid="integrations-card" className="bg-white border border-slate-200 rounded-lg p-4 mb-4">
+    <div data-testid="integrations-card" className="surface p-4 mb-4">
       <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
-        <p className="text-xs font-bold uppercase tracking-wide text-slate-500 flex items-center gap-1.5">
+        <p className="text-xs font-bold uppercase tracking-wide text-faint flex items-center gap-1.5">
           <Plug className="w-3.5 h-3.5" /> Integrations
         </p>
         {sync && (
@@ -84,7 +84,7 @@ export const IntegrationsCard = () => {
         )}
       </div>
       <div className="space-y-3">
-        <p className="text-xs font-bold text-[#1B2A4A]">Square (payments)</p>
+        <p className="text-xs font-bold text-primary">Square (payments)</p>
         <SecretInput testId="integr-square-token-input" label="Square access token" isSet={data.square_access_token_set || data.square_env_token_present}
           hint={data.square_env_token_present && !data.square_access_token_set ? "Using the token from the app's secure secrets. Paste one here to override." : ""}
           value={secrets.square_access_token} onChange={(v) => setSecrets((s) => ({ ...s, square_access_token: v }))} />
@@ -100,12 +100,12 @@ export const IntegrationsCard = () => {
           <Label>Webhook notification URL</Label>
           <Input data-testid="integr-notification-url-input" value={form.square_notification_url} placeholder="https://haulyeahadmin.com/api/webhooks/square"
             onChange={(e) => setForm((s) => ({ ...s, square_notification_url: e.target.value }))} />
-          <p className="text-[11px] text-slate-400 mt-0.5">
+          <p className="text-[11px] text-faint mt-0.5">
             In Square, subscribe to <strong>invoice.payment_made, invoice.updated, payment.updated</strong> and point them at
-            {" "}<code className="bg-slate-100 px-1 rounded">https://haulyeahadmin.com/api/webhooks/square</code> — paste the same URL here.
+            {" "}<code className="bg-surface-sunk px-1 rounded">https://haulyeahadmin.com/api/webhooks/square</code> — paste the same URL here.
           </p>
         </div>
-        <p className="text-xs font-bold text-[#1B2A4A] pt-2">OpenPhone (customer texts)</p>
+        <p className="text-xs font-bold text-primary pt-2">OpenPhone (customer texts)</p>
         <SecretInput testId="integr-openphone-key-input" label="OpenPhone API key" isSet={data.openphone_api_key_set}
           hint="OpenPhone → Settings → API. Tracking links and review texts send through this."
           value={secrets.openphone_api_key} onChange={(v) => setSecrets((s) => ({ ...s, openphone_api_key: v }))} />
@@ -114,20 +114,20 @@ export const IntegrationsCard = () => {
           <Input data-testid="integr-openphone-number-input" placeholder="+1 973 555 0100" value={form.openphone_number}
             onChange={(e) => setForm((s) => ({ ...s, openphone_number: e.target.value }))} />
         </div>
-        <p className="text-xs font-bold text-[#1B2A4A] pt-2">Defaults</p>
+        <p className="text-xs font-bold text-primary pt-2">Defaults</p>
         <div>
           <Label>Default truck pickup location</Label>
           <Input data-testid="integr-truck-pickup-input" value={form.default_truck_pickup}
             onChange={(e) => setForm((s) => ({ ...s, default_truck_pickup: e.target.value }))} />
-          <p className="text-[11px] text-slate-400 mt-0.5">New jobs start with this address. You can change it per job on the Jobs board.</p>
+          <p className="text-[11px] text-faint mt-0.5">New jobs start with this address. You can change it per job on the Jobs board.</p>
         </div>
         <div>
           <Label>Your cell for portal alerts</Label>
           <Input data-testid="integr-owner-phone-input" placeholder="+1 973 555 0123" value={form.owner_alert_phone}
             onChange={(e) => setForm((s) => ({ ...s, owner_alert_phone: e.target.value }))} />
-          <p className="text-[11px] text-slate-400 mt-0.5">When a customer adds gate codes, uploads files, tips, or leaves a review, you get a text here (sent via OpenPhone).</p>
+          <p className="text-[11px] text-faint mt-0.5">When a customer adds gate codes, uploads files, tips, or leaves a review, you get a text here (sent via OpenPhone).</p>
         </div>
-        <Button data-testid="integr-save-btn" onClick={save} disabled={saving} className="gap-1.5 bg-[#1B2A4A] hover:bg-[#16233d]">
+        <Button data-testid="integr-save-btn" onClick={save} disabled={saving} className="gap-1.5 bg-primary hover:bg-[#16233d]">
           {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save integrations
         </Button>
       </div>

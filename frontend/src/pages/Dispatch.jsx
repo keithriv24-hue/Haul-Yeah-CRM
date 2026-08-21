@@ -21,11 +21,11 @@ import { fmtMoney, fmtDate, mapsLink } from "@/lib/format";
 const todayET = () => new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
 
 const EXEC_STYLE = {
-  Assigned: "bg-slate-100 text-slate-600 border-slate-300",
-  "En Route": "bg-sky-100 text-sky-800 border-sky-300",
-  Arrived: "bg-amber-100 text-amber-800 border-amber-300",
-  "In Progress": "bg-indigo-100 text-indigo-800 border-indigo-300",
-  Complete: "bg-emerald-100 text-emerald-800 border-emerald-300",
+  Assigned: "bg-surface-sunk text-ink-2 border-border-strong",
+  "En Route": "bg-info/12 text-info border-info/30",
+  Arrived: "bg-warning/12 text-warning border-warning/30",
+  "In Progress": "bg-primary/10 text-primary border-primary/25",
+  Complete: "bg-success/12 text-success border-success/30",
 };
 
 const payloadFrom = (a, patch = {}) => ({
@@ -59,7 +59,7 @@ const ProgressRing = ({ done, total }) => {
         <circle cx="11" cy="11" r={r} fill="none" stroke={pct === 1 ? "#10b981" : "#E8743B"} strokeWidth="3"
           strokeDasharray={c} strokeDashoffset={c * (1 - pct)} strokeLinecap="round" />
       </svg>
-      <span className="text-[10px] font-bold text-slate-500">{done}/{total}</span>
+      <span className="text-[10px] font-bold text-faint">{done}/{total}</span>
     </span>
   );
 };
@@ -177,7 +177,7 @@ export default function Dispatch() {
         title="Dispatch"
         subtitle="Run the day from one board — drag crew and trucks straight onto jobs."
         action={
-          <Button data-testid="dispatch-assign-btn" className="gap-1.5 bg-[#E8743B] hover:bg-[#d4632e]" onClick={() => { setEditing(null); setModalOpen(true); }}>
+          <Button data-testid="dispatch-assign-btn" className="gap-1.5 bg-accent hover:bg-accent-press" onClick={() => { setEditing(null); setModalOpen(true); }}>
             <CalendarPlus className="w-4 h-4" /> Assign a job
           </Button>
         }
@@ -190,7 +190,7 @@ export default function Dispatch() {
         <Button data-testid="dispatch-date-prev" variant="outline" size="sm" className="h-8 px-2" onClick={() => setDate((d) => shiftDay(d, -1))}>
           <ChevronLeft className="w-4 h-4" />
         </Button>
-        <span data-testid="dispatch-date-label" className="font-display font-bold text-[#1B2A4A] min-w-[150px] text-center">
+        <span data-testid="dispatch-date-label" className="font-display font-bold text-primary min-w-[150px] text-center">
           {fmtDate(date)}{board?.is_today ? " — today" : ""}
         </span>
         <Button data-testid="dispatch-date-next" variant="outline" size="sm" className="h-8 px-2" onClick={() => setDate((d) => shiftDay(d, 1))}>
@@ -213,9 +213,9 @@ export default function Dispatch() {
 
       <div className="grid lg:grid-cols-[minmax(0,1fr)_280px] gap-4 items-start">
         <div className="space-y-3">
-          {board === null && <p className="text-sm text-slate-400">Loading the board…</p>}
+          {board === null && <p className="text-sm text-faint">Loading the board…</p>}
           {board !== null && assignments.length === 0 && (
-            <p data-testid="dispatch-empty" className="text-sm text-slate-400 bg-white border border-dashed border-slate-200 rounded-lg p-8 text-center">
+            <p data-testid="dispatch-empty" className="text-sm text-faint bg-surface border border-dashed border-border rounded-lg p-8 text-center">
               Nothing scheduled for this day. Hit "Assign a job" to put a move on the board.
             </p>
           )}
@@ -226,25 +226,25 @@ export default function Dispatch() {
               onDragOver={(e) => { e.preventDefault(); setDragOver(a.id); }}
               onDragLeave={() => setDragOver((v) => (v === a.id ? null : v))}
               onDrop={onDrop(a)}
-              className={`bg-white rounded-lg border p-4 transition-colors ${dragOver === a.id ? "border-[#E8743B] ring-2 ring-[#E8743B]/40" : "border-slate-200"}`}
+              className={`bg-surface rounded-lg border p-4 transition-colors ${dragOver === a.id ? "border-accent ring-2 ring-accent/40" : "border-border"}`}
             >
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div>
-                  <p className="font-bold text-[#1B2A4A]">{a.job_name}</p>
-                  <p className="text-xs text-slate-500 flex items-center gap-1">
+                  <p className="font-bold text-primary">{a.job_name}</p>
+                  <p className="text-xs text-faint flex items-center gap-1">
                     <Clock className="w-3 h-3" /> {a.arrival_time ? `Arrive ${a.arrival_time}` : "No arrival time"}
-                    {a.job_size && <span className="text-slate-400">· {a.job_size}</span>}
+                    {a.job_size && <span className="text-faint">· {a.job_size}</span>}
                   </p>
                 </div>
                 <div className="flex items-center gap-1.5">
                   {a.behind && (
-                    <Badge data-testid="dispatch-behind-badge" className="text-[10px] bg-red-600 text-white border-red-600 animate-pulse gap-1">
+                    <Badge data-testid="dispatch-behind-badge" className="text-[10px] bg-destructive text-white border-destructive animate-pulse gap-1">
                       <AlertTriangle className="w-3 h-3" /> Behind
                     </Badge>
                   )}
                   {a.clocked_in > 0 && (
-                    <Badge data-testid="dispatch-clocked-badge" variant="outline" className="text-[10px] bg-emerald-50 text-emerald-700 border-emerald-300 gap-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" /> {a.clocked_in} on the clock
+                    <Badge data-testid="dispatch-clocked-badge" variant="outline" className="text-[10px] bg-success/10 text-success border-success/30 gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" /> {a.clocked_in} on the clock
                     </Badge>
                   )}
                   <Badge data-testid="dispatch-status-chip" variant="outline" className={`text-[10px] ${EXEC_STYLE[a.exec_status] || EXEC_STYLE.Assigned}`}>
@@ -253,15 +253,15 @@ export default function Dispatch() {
                 </div>
               </div>
               {(a.start_address || a.end_address) && (
-                <div className="mt-2 text-xs text-slate-500 space-y-0.5">
+                <div className="mt-2 text-xs text-faint space-y-0.5">
                   {a.start_address && (
                     <a href={mapsLink(a.start_address)} target="_blank" rel="noreferrer" className="flex items-center gap-1 underline decoration-dotted underline-offset-2">
-                      <MapPin className="w-3 h-3 text-[#E8743B]" /> {a.start_address}
+                      <MapPin className="w-3 h-3 text-accent-ink" /> {a.start_address}
                     </a>
                   )}
                   {a.end_address && (
                     <a href={mapsLink(a.end_address)} target="_blank" rel="noreferrer" className="flex items-center gap-1 underline decoration-dotted underline-offset-2">
-                      <MapPin className="w-3 h-3 text-slate-400" /> {a.end_address}
+                      <MapPin className="w-3 h-3 text-faint" /> {a.end_address}
                     </a>
                   )}
                 </div>
@@ -273,38 +273,38 @@ export default function Dispatch() {
                     data-testid="job-crew-chip"
                     draggable
                     onDragStart={dragPayload({ kind: "crew", user_id: c.user_id, name: c.name, position: c.position, from: a.id })}
-                    className="inline-flex items-center gap-1 bg-orange-50 border border-orange-200 text-orange-900 rounded-full pl-1.5 pr-1 py-0.5 text-[11px] font-semibold cursor-grab active:cursor-grabbing"
+                    className="inline-flex items-center gap-1 bg-accent/10 border border-accent/25 text-accent-ink rounded-full pl-1.5 pr-1 py-0.5 text-[11px] font-semibold cursor-grab active:cursor-grabbing"
                   >
-                    <GripVertical className="w-3 h-3 text-orange-300" />
+                    <GripVertical className="w-3 h-3 text-accent-ink" />
                     {c.name}
                     <button
                       data-testid="job-position-toggle"
                       title="Flip Driver/Helper"
                       disabled={busy}
                       onClick={() => togglePosition(a, c.user_id)}
-                      className="bg-white border border-orange-200 rounded-full px-1.5 text-[9px] font-bold text-orange-700 hover:bg-orange-100"
+                      className="bg-surface border border-accent/25 rounded-full px-1.5 text-[9px] font-bold text-accent-ink hover:bg-accent/15"
                     >
                       {c.position}
                     </button>
-                    <button data-testid="job-crew-remove" disabled={busy} onClick={() => removeCrew(a, c.user_id)} className="text-orange-400 hover:text-red-600">
+                    <button data-testid="job-crew-remove" disabled={busy} onClick={() => removeCrew(a, c.user_id)} className="text-accent-ink hover:text-destructive">
                       <X className="w-3 h-3" />
                     </button>
                   </span>
                 ))}
                 {(a.crew || []).length === 0 && (
-                  <span data-testid="job-no-crew" className="text-[11px] font-semibold text-amber-600 border border-dashed border-amber-300 rounded-full px-2.5 py-1">
+                  <span data-testid="job-no-crew" className="text-[11px] font-semibold text-warning border border-dashed border-warning/30 rounded-full px-2.5 py-1">
                     Drop crew here
                   </span>
                 )}
                 {a.truck_name ? (
-                  <span data-testid="job-truck-chip" className="inline-flex items-center gap-1 bg-slate-100 border border-slate-300 text-slate-700 rounded-full px-2 py-0.5 text-[11px] font-semibold">
+                  <span data-testid="job-truck-chip" className="inline-flex items-center gap-1 bg-surface-sunk border border-border-strong text-ink-2 rounded-full px-2 py-0.5 text-[11px] font-semibold">
                     <Truck className="w-3 h-3" /> {a.truck_name}
-                    <button data-testid="job-truck-remove" disabled={busy} onClick={() => removeTruck(a)} className="text-slate-400 hover:text-red-600">
+                    <button data-testid="job-truck-remove" disabled={busy} onClick={() => removeTruck(a)} className="text-faint hover:text-destructive">
                       <X className="w-3 h-3" />
                     </button>
                   </span>
                 ) : (
-                  <span data-testid="job-no-truck" className="text-[11px] font-semibold text-slate-400 border border-dashed border-slate-300 rounded-full px-2.5 py-1">
+                  <span data-testid="job-no-truck" className="text-[11px] font-semibold text-faint border border-dashed border-border-strong rounded-full px-2.5 py-1">
                     Drop a truck here
                   </span>
                 )}
@@ -312,14 +312,14 @@ export default function Dispatch() {
                   <ProgressRing done={a.checklist_done || 0} total={a.checklist_total || 25} />
                   <button
                     data-testid="dispatch-open-detail"
-                    className="text-[11px] font-semibold text-[#1B2A4A] hover:underline inline-flex items-center gap-1"
+                    className="text-[11px] font-semibold text-primary hover:underline inline-flex items-center gap-1"
                     onClick={() => setDetail(a)}
                   >
                     <History className="w-3 h-3" /> Timeline
                   </button>
                   <button
                     data-testid="dispatch-edit-job"
-                    className="text-[11px] font-semibold text-[#E8743B] hover:underline"
+                    className="text-[11px] font-semibold text-accent-ink hover:underline"
                     onClick={() => { setEditing(a); setModalOpen(true); }}
                   >
                     Edit details
@@ -331,8 +331,8 @@ export default function Dispatch() {
         </div>
 
         <div className="space-y-4">
-          <div data-testid="dispatch-crew-pool" className="bg-white border border-slate-200 rounded-lg p-4">
-            <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">Crew pool</p>
+          <div data-testid="dispatch-crew-pool" className="surface p-4">
+            <p className="text-xs font-bold uppercase tracking-wide text-faint mb-2">Crew pool</p>
             <div className="space-y-1.5">
               {(board?.crew || []).map((u) => (
                 <div
@@ -340,33 +340,33 @@ export default function Dispatch() {
                   data-testid="dispatch-crew-chip"
                   draggable={!u.off}
                   onDragStart={dragPayload({ kind: "crew", user_id: u.id, name: u.name })}
-                  className={`flex items-center gap-2 border rounded-md px-2 py-1.5 ${u.off ? "opacity-50 border-slate-200" : "cursor-grab active:cursor-grabbing border-slate-200 hover:border-[#E8743B]"}`}
+                  className={`flex items-center gap-2 border rounded-md px-2 py-1.5 ${u.off ? "opacity-50 border-border" : "cursor-grab active:cursor-grabbing border-border hover:border-accent"}`}
                 >
-                  <GripVertical className="w-3.5 h-3.5 text-slate-300 shrink-0" />
-                  <span className={`w-2 h-2 rounded-full shrink-0 ${u.clocked_in ? "bg-emerald-500 animate-pulse" : "bg-slate-200"}`} title={u.clocked_in ? "On the clock" : "Not clocked in"} />
-                  <span className="text-sm font-semibold text-[#1B2A4A] flex-1 truncate">{u.name}</span>
-                  {u.off && <Badge variant="outline" className="text-[9px] bg-red-50 text-red-600 border-red-200">OFF</Badge>}
+                  <GripVertical className="w-3.5 h-3.5 text-faint/70 shrink-0" />
+                  <span className={`w-2 h-2 rounded-full shrink-0 ${u.clocked_in ? "bg-success animate-pulse" : "bg-muted"}`} title={u.clocked_in ? "On the clock" : "Not clocked in"} />
+                  <span className="text-sm font-semibold text-primary flex-1 truncate">{u.name}</span>
+                  {u.off && <Badge variant="outline" className="text-[9px] bg-destructive/10 text-destructive border-destructive/25">OFF</Badge>}
                   {board?.is_today && u.clocked_in && u.jobs_today === 0 && (
-                    <Badge data-testid="crew-unscheduled-badge" variant="outline" className="text-[9px] bg-amber-50 text-amber-700 border-amber-300 gap-0.5">
+                    <Badge data-testid="crew-unscheduled-badge" variant="outline" className="text-[9px] bg-warning/10 text-warning border-warning/30 gap-0.5">
                       <AlertTriangle className="w-2.5 h-2.5" /> On clock, no job
                     </Badge>
                   )}
-                  {u.jobs_today > 0 && <Badge variant="outline" className="text-[9px] bg-orange-50 text-orange-700 border-orange-200">{u.jobs_today} today</Badge>}
+                  {u.jobs_today > 0 && <Badge variant="outline" className="text-[9px] bg-accent/10 text-accent-ink border-accent/25">{u.jobs_today} today</Badge>}
                   <span className="flex gap-0.5" title={`${u.jobs_week} job${u.jobs_week === 1 ? "" : "s"} this week`}>
                     {Array.from({ length: Math.min(u.jobs_week, 5) }).map((_, i) => (
-                      <span key={i} className="w-1.5 h-3 rounded-sm bg-[#E8743B]/70" />
+                      <span key={i} className="w-1.5 h-3 rounded-sm bg-accent/70" />
                     ))}
-                    {u.jobs_week === 0 && <span className="w-1.5 h-3 rounded-sm bg-slate-200" />}
+                    {u.jobs_week === 0 && <span className="w-1.5 h-3 rounded-sm bg-muted" />}
                   </span>
                 </div>
               ))}
-              {(board?.crew || []).length === 0 && <p className="text-xs text-slate-400">No active crew accounts yet.</p>}
+              {(board?.crew || []).length === 0 && <p className="text-xs text-faint">No active crew accounts yet.</p>}
             </div>
-            <p className="text-[10px] text-slate-400 mt-2">Bars = jobs this week. Green dot = clocked in right now.</p>
+            <p className="text-[10px] text-faint mt-2">Bars = jobs this week. Green dot = clocked in right now.</p>
           </div>
 
-          <div data-testid="dispatch-truck-pool" className="bg-white border border-slate-200 rounded-lg p-4">
-            <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">Trucks</p>
+          <div data-testid="dispatch-truck-pool" className="surface p-4">
+            <p className="text-xs font-bold uppercase tracking-wide text-faint mb-2">Trucks</p>
             <div className="space-y-1.5">
               {(board?.trucks || []).map((t) => (
                 <div
@@ -374,15 +374,15 @@ export default function Dispatch() {
                   data-testid="dispatch-truck-chip"
                   draggable
                   onDragStart={dragPayload({ kind: "truck", truck_id: t.id, name: t.name })}
-                  className="flex items-center gap-2 border border-slate-200 rounded-md px-2 py-1.5 cursor-grab active:cursor-grabbing hover:border-[#E8743B]"
+                  className="flex items-center gap-2 border border-border rounded-md px-2 py-1.5 cursor-grab active:cursor-grabbing hover:border-accent"
                 >
-                  <GripVertical className="w-3.5 h-3.5 text-slate-300 shrink-0" />
-                  <Truck className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                  <span className="text-sm font-semibold text-[#1B2A4A] flex-1 truncate">{t.name}</span>
-                  {t.on_job && <Badge variant="outline" className="text-[9px] bg-sky-50 text-sky-700 border-sky-200 truncate max-w-[90px]">{t.on_job}</Badge>}
+                  <GripVertical className="w-3.5 h-3.5 text-faint/70 shrink-0" />
+                  <Truck className="w-3.5 h-3.5 text-faint shrink-0" />
+                  <span className="text-sm font-semibold text-primary flex-1 truncate">{t.name}</span>
+                  {t.on_job && <Badge variant="outline" className="text-[9px] bg-info/10 text-info border-info/25 truncate max-w-[90px]">{t.on_job}</Badge>}
                 </div>
               ))}
-              {(board?.trucks || []).length === 0 && <p className="text-xs text-slate-400">No trucks yet — add them on the Crew page.</p>}
+              {(board?.trucks || []).length === 0 && <p className="text-xs text-faint">No trucks yet — add them on the Crew page.</p>}
             </div>
           </div>
         </div>
@@ -421,14 +421,14 @@ export default function Dispatch() {
           </AlertDialogHeader>
           <div className="space-y-1">
             {(pending?.warnings || []).map((w, i) => (
-              <p key={i} data-testid="dispatch-conflict-line" className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded px-3 py-1.5 flex items-start gap-1.5">
+              <p key={i} data-testid="dispatch-conflict-line" className="text-sm text-warning bg-warning/10 border border-warning/25 rounded px-3 py-1.5 flex items-start gap-1.5">
                 <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {w}
               </p>
             ))}
           </div>
           <AlertDialogFooter>
             <AlertDialogCancel data-testid="dispatch-conflict-cancel">Never mind</AlertDialogCancel>
-            <AlertDialogAction data-testid="dispatch-conflict-force" onClick={(e) => { e.preventDefault(); forcePending(); }} className="bg-amber-600 hover:bg-amber-700">
+            <AlertDialogAction data-testid="dispatch-conflict-force" onClick={(e) => { e.preventDefault(); forcePending(); }} className="bg-warning hover:bg-warning">
               Assign anyway
             </AlertDialogAction>
           </AlertDialogFooter>

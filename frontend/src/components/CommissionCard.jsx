@@ -23,10 +23,10 @@ export const commissionFor = (quote, moveType, rates) => {
 };
 
 const STATUS_CHIP = {
-  pending: "bg-amber-100 text-amber-800 border-amber-300",
-  locked: "bg-emerald-100 text-emerald-800 border-emerald-300",
-  voided: "bg-red-100 text-red-700 border-red-300",
-  none: "bg-slate-100 text-slate-500 border-slate-300",
+  pending: "bg-warning/12 text-warning border-warning/30",
+  locked: "bg-success/12 text-success border-success/30",
+  voided: "bg-destructive/12 text-destructive border-destructive/30",
+  none: "bg-surface-sunk text-faint border-border-strong",
 };
 const STATUS_TEXT = {
   pending: "Pending — waiting on full payment",
@@ -103,17 +103,17 @@ export const CommissionCard = ({ lead, isOwner }) => {
   );
 
   return (
-    <div className="bg-white border border-slate-200 rounded-lg p-5" data-testid="commission-card">
-      <h2 className="font-display font-bold text-[#1B2A4A] mb-3 flex items-center gap-2">
-        <BadgeDollarSign className="w-4 h-4 text-[#E8743B]" /> Sales credit & commission
+    <div className="surface p-5" data-testid="commission-card">
+      <h2 className="font-display font-bold text-primary mb-3 flex items-center gap-2">
+        <BadgeDollarSign className="w-4 h-4 text-accent-ink" /> Sales credit & commission
       </h2>
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <Label>Quote sent by <span className="text-slate-400 font-normal">(stat only)</span></Label>
+          <Label>Quote sent by <span className="text-faint font-normal">(stat only)</span></Label>
           <RepSelect field="quote_sent_by" testId="commission-quote-sent-by" />
         </div>
         <div>
-          <Label>Closed by <span className="text-slate-400 font-normal">(earns it)</span></Label>
+          <Label>Closed by <span className="text-faint font-normal">(earns it)</span></Label>
           <RepSelect field="closed_by" testId="commission-closed-by" />
         </div>
         <div>
@@ -139,27 +139,27 @@ export const CommissionCard = ({ lead, isOwner }) => {
       </div>
 
       {isOwner && (
-        <div className="mt-3 space-y-2 border-t border-slate-100 pt-3" data-testid="commission-owner-flags">
+        <div className="mt-3 space-y-2 border-t border-border pt-3" data-testid="commission-owner-flags">
           {[
             { k: "deposit_paid", label: "Deposit paid", date: form.deposit_paid_at },
             { k: "fully_paid", label: "Fully paid", date: form.fully_paid_at },
             { k: "refunded", label: "Refunded (voids commission)", date: null },
           ].map(({ k, label, date }) => (
             <div key={k} className="flex items-center justify-between text-sm">
-              <span className={k === "refunded" ? "text-red-600 font-semibold" : "text-slate-600"}>
+              <span className={k === "refunded" ? "text-destructive font-semibold" : "text-ink-2"}>
                 {label}
-                {date && form[k] && <span className="text-xs text-slate-400 ml-1.5">({fmtDate(date)})</span>}
+                {date && form[k] && <span className="text-xs text-faint ml-1.5">({fmtDate(date)})</span>}
               </span>
               <Switch data-testid={`commission-${k}-switch`} checked={!!form[k]} onCheckedChange={(v) => set(k, v)} />
             </div>
           ))}
-          <p className="text-[11px] text-slate-400">Deposit and full payment flip on automatically when a Square invoice for this lead gets paid.</p>
+          <p className="text-[11px] text-faint">Deposit and full payment flip on automatically when a Square invoice for this lead gets paid.</p>
         </div>
       )}
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        <span className="text-sm text-slate-600">Commission:</span>
-        <span data-testid="commission-preview" className="font-display font-extrabold text-lg text-[#1B2A4A]">{fmtMoneyCents(amount)}</span>
+        <span className="text-sm text-ink-2">Commission:</span>
+        <span data-testid="commission-preview" className="font-display font-extrabold text-lg text-primary">{fmtMoneyCents(amount)}</span>
         {status && (
           <span data-testid="commission-status-chip" className={`border rounded-full px-2 py-0.5 text-[11px] font-bold ${STATUS_CHIP[status]}`}>
             {STATUS_TEXT[status]}
@@ -167,7 +167,7 @@ export const CommissionCard = ({ lead, isOwner }) => {
         )}
       </div>
 
-      <Button data-testid="commission-save-btn" size="sm" className="mt-3 gap-1.5 bg-[#E8743B] hover:bg-[#d4632e]" disabled={busy} onClick={save}>
+      <Button data-testid="commission-save-btn" size="sm" className="mt-3 gap-1.5 bg-accent hover:bg-accent-press" disabled={busy} onClick={save}>
         <Save className="w-4 h-4" /> Save commission info
       </Button>
     </div>

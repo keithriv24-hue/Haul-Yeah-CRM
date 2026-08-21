@@ -68,8 +68,8 @@ export const AdminCreditsTab = () => {
     <div className="space-y-4 mt-4">
       <CreditPromptsCard onResolved={loadCredits} />
 
-      <div className="bg-white border border-slate-200 rounded-lg p-4" data-testid="manual-credit-card">
-        <h2 className="font-bold text-[#1B2A4A] mb-3">Credit a job by hand</h2>
+      <div className="surface p-4" data-testid="manual-credit-card">
+        <h2 className="font-bold text-primary mb-3">Credit a job by hand</h2>
         <div className="grid sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end">
           <div>
             <Label>Who</Label>
@@ -114,26 +114,26 @@ export const AdminCreditsTab = () => {
             <Input data-testid="credit-date-input" type="date" value={form.date} onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))} />
           </div>
         </div>
-        <Button data-testid="credit-add-btn" size="sm" className="mt-3 gap-1.5 bg-[#E8743B] hover:bg-[#d4632e]" disabled={busy || !form.user_id || !form.date} onClick={add}>
+        <Button data-testid="credit-add-btn" size="sm" className="mt-3 gap-1.5 bg-accent hover:bg-accent-press" disabled={busy || !form.user_id || !form.date} onClick={add}>
           <Plus className="w-4 h-4" /> Add credit
         </Button>
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-lg" data-testid="credits-list">
-        <h2 className="font-bold text-[#1B2A4A] px-4 py-3 border-b border-slate-100">Recent credits</h2>
-        <div className="divide-y divide-slate-100">
-          {credits === null && <p className="text-sm text-slate-400 px-4 py-6 text-center">Loading…</p>}
-          {credits?.length === 0 && <p className="text-sm text-slate-400 px-4 py-6 text-center">No credits yet — everyone starts at zero from launch day.</p>}
+      <div className="surface" data-testid="credits-list">
+        <h2 className="font-bold text-primary px-4 py-3 border-b border-border">Recent credits</h2>
+        <div className="divide-y divide-border">
+          {credits === null && <p className="text-sm text-faint px-4 py-6 text-center">Loading…</p>}
+          {credits?.length === 0 && <p className="text-sm text-faint px-4 py-6 text-center">No credits yet — everyone starts at zero from launch day.</p>}
           {(credits || []).map((c) => (
             <div key={c.id} data-testid="credit-row" className="flex flex-wrap items-center gap-2 px-4 py-2.5 text-sm">
-              <span className="font-semibold text-[#1B2A4A]">{c.user_name}</span>
+              <span className="font-semibold text-primary">{c.user_name}</span>
               <Badge variant="outline" className={`text-[10px] capitalize ${TEAM_CHIP[c.team]}`}>{c.team === "crew" ? c.role_tag || "crew" : "close"}</Badge>
-              <span className="text-slate-500 truncate flex-1 min-w-[120px]">{c.job_ref}</span>
-              <span className="text-xs text-slate-400">{fmtDate(c.date)}</span>
-              <span className="text-[10px] text-slate-300 uppercase">{c.source}</span>
+              <span className="text-faint truncate flex-1 min-w-[120px]">{c.job_ref}</span>
+              <span className="text-xs text-faint">{fmtDate(c.date)}</span>
+              <span className="text-[10px] text-faint/70 uppercase">{c.source}</span>
               <AlertDialog>
                 <AlertDialogTrigger asChild>
-                  <Button data-testid="credit-delete-btn" variant="ghost" size="sm" className="h-7 px-2 text-red-600 hover:text-red-700">
+                  <Button data-testid="credit-delete-btn" variant="ghost" size="sm" className="h-7 px-2 text-destructive hover:text-destructive">
                     <Trash2 className="w-3.5 h-3.5" />
                   </Button>
                 </AlertDialogTrigger>
@@ -146,7 +146,7 @@ export const AdminCreditsTab = () => {
                   </AlertDialogHeader>
                   <AlertDialogFooter>
                     <AlertDialogCancel>Keep it</AlertDialogCancel>
-                    <AlertDialogAction data-testid="credit-delete-confirm" onClick={() => remove(c)} className="bg-red-600 hover:bg-red-700">Yes, remove</AlertDialogAction>
+                    <AlertDialogAction data-testid="credit-delete-confirm" onClick={() => remove(c)} className="bg-destructive hover:bg-destructive/90">Yes, remove</AlertDialogAction>
                   </AlertDialogFooter>
                 </AlertDialogContent>
               </AlertDialog>

@@ -161,3 +161,10 @@ User choices: phase order approved · route optimization = free OSRM/OpenStreetM
 - Test suite rewired: conftest seeds ephemeral "QA Crew One/Two" (qa.crew1/2@haulyeah.test, fixed old ids so QA fixtures keep working) and deletes them at session end (controller-only atexit). All JAVANTE_/JUNIOR_ constants renamed CREW1_/CREW2_ across tests + .env.test.
 - Also removed leaked "QA Temp Crew" artifact and made test_create_reset_deactivate_user delete its temp user.
 - Full suite: 393 passed. Roster after run: owner only. Old logins return 401.
+
+## 2026-08-21 — 7-step redesign+two-tier-quoting project STARTED (pause after each step)
+- Step 1 DONE: applied haul-yeah-crm-redesign.zip (95 files: 93 frontend + design_guidelines.json + CHANGES.md). Verified: zip contained no package.json/locks/.env/backend files; QuoteCalculator math byte-identical; all data-testids preserved (4 false alarms were testid-via-prop). CI build exit 0, eslint 0 errors (warnings 11→6). Testing agent iteration_23: 100% pass — 4 roles land correctly, 4-tab mobile nav + More sheet, privacy toggle, no horiz scroll @390px, quote math canonical vector $1,150–$1,250/deposit $312.50 intact.
+- Baseline quote totals recorded for Step 2 verification: A(2BR,3crew,5h,truck,30mi,0fl)=low1150/high1250/dep312.50 · B(3BR,4crew,6h min,truck,45mi,2fl)=low1900/high2100/dep525 · C(labor-only,2crew,3h,0mi,piano-upright)=low1000/high1100/dep275
+- Existing rates keys (settings/rates): manHour 65, cushionPercent 10, travelTruck 125, travelLabor 75, mileageAllowance 20, overageRate .85, stairFlight 85, packingRate 65, depositPercent 25, roundingIncrement 50
+- Steps remaining: 2 (settings pricing keys), 3 (scope calculator owner-only from haul-yeah-job-calculator-v2.jsx), 4 (lead_scopes collection), 5 (access tiers + assignment control), 6 (video survey fields), 7 (full verify + Save to GitHub)
+- Pre-existing issue noted by tester (NOT touched per rules): MetaCard.jsx L131 <Badge> inside <p> hydration warning; Ops brain "Owed to you" vs KPI "Owed to us" disagreement (per CHANGES.md, pre-existing data question)

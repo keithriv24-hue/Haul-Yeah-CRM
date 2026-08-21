@@ -29,17 +29,17 @@ const fmtJobDate = (d) =>
 const PayRow = ({ label, info }) => {
   const status = info?.status || "unpaid";
   const Icon = status === "paid" ? CheckCircle2 : status === "pending" ? Clock3 : XCircle;
-  const color = status === "paid" ? "text-emerald-600" : status === "pending" ? "text-amber-500" : "text-red-500";
+  const color = status === "paid" ? "text-success" : status === "pending" ? "text-warning" : "text-destructive";
   return (
     <div data-testid={`pay-row-${label.toLowerCase().replace(/[^a-z]+/g, "-")}`} className="flex items-center gap-2 text-sm">
       <Icon className={`w-4 h-4 shrink-0 ${color}`} />
-      <span className="font-semibold text-[#1B2A4A]">{label}:</span>
+      <span className="font-semibold text-primary">{label}:</span>
       {status === "paid" ? (
-        <span className="text-slate-600"><Private><Money v={info.amount} /></Private> — paid {fmtPaidAt(info.paid_at)}</span>
+        <span className="text-ink-2"><Private><Money v={info.amount} /></Private> — paid {fmtPaidAt(info.paid_at)}</span>
       ) : status === "pending" ? (
-        <span className="text-amber-600">Payment pending confirmation{info?.amount ? <> (<Private><Money v={info.amount} /></Private>)</> : ""}</span>
+        <span className="text-warning">Payment pending confirmation{info?.amount ? <> (<Private><Money v={info.amount} /></Private>)</> : ""}</span>
       ) : (
-        <span className="text-slate-400">Not paid</span>
+        <span className="text-faint">Not paid</span>
       )}
     </div>
   );
@@ -59,32 +59,32 @@ const PortalInfo = ({ job }) => {
   if (!rows.length && !job.portal_review) return null;
   const token = job.tracking?.token;
   return (
-    <div data-testid={`portal-info-${job.invoice_number}`} className="bg-orange-50/70 border border-orange-100 rounded-md p-3 space-y-1 text-sm">
-      <p className="text-[11px] font-bold uppercase tracking-wide text-orange-700">From the customer portal</p>
+    <div data-testid={`portal-info-${job.invoice_number}`} className="bg-accent/10 border border-accent/20 rounded-md p-3 space-y-1 text-sm">
+      <p className="text-[11px] font-bold uppercase tracking-wide text-accent-ink">From the customer portal</p>
       {rows.map(([k, label]) => (
-        <p key={k} className="text-slate-700"><strong>{label}:</strong> {d[k]}</p>
+        <p key={k} className="text-ink-2"><strong>{label}:</strong> {d[k]}</p>
       ))}
       {job.portal_review && (
-        <p data-testid={`portal-review-${job.invoice_number}`} className="text-slate-700">
+        <p data-testid={`portal-review-${job.invoice_number}`} className="text-ink-2">
           <strong>Review:</strong> {"★".repeat(job.portal_review.rating)}{"☆".repeat(5 - job.portal_review.rating)}
           {job.portal_review.text ? ` — "${job.portal_review.text}"` : ""}
         </p>
       )}
       {uploads === null ? (
-        <button data-testid={`portal-uploads-btn-${job.invoice_number}`} className="text-xs font-semibold text-[#E8743B] hover:underline"
+        <button data-testid={`portal-uploads-btn-${job.invoice_number}`} className="text-xs font-semibold text-accent-ink hover:underline"
           onClick={() => jobPortalUploadsApi(job.id).then((r) => setUploads(r.uploads)).catch(() => setUploads([]))}>
           Show customer files
         </button>
       ) : uploads.length === 0 ? (
-        <p className="text-xs text-slate-400">No files uploaded yet.</p>
+        <p className="text-xs text-faint">No files uploaded yet.</p>
       ) : (
         <div className="flex flex-wrap gap-2 pt-1">
           {uploads.map((u) => (
             <a key={u.id} data-testid="portal-owner-upload" href={portalUploadUrl(token, u.id)} target="_blank" rel="noreferrer" className="block">
               {(u.content_type || "").startsWith("image/") ? (
-                <img src={portalUploadUrl(token, u.id)} alt={u.filename} className="w-14 h-14 object-cover rounded border border-orange-200" />
+                <img src={portalUploadUrl(token, u.id)} alt={u.filename} className="w-14 h-14 object-cover rounded border border-accent/25" />
               ) : (
-                <span className="text-xs text-sky-700 underline">{u.filename}</span>
+                <span className="text-xs text-info underline">{u.filename}</span>
               )}
             </a>
           ))}
@@ -96,11 +96,11 @@ const PortalInfo = ({ job }) => {
 
 const AddrLink = ({ label, addr, testId }) =>
   addr ? (
-    <a data-testid={testId} href={mapsUrl(addr)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[#1B2A4A] underline decoration-slate-300 hover:decoration-[#E8743B]">
-      <MapPin className="w-3.5 h-3.5 text-[#E8743B] shrink-0" />{label ? `${label}: ` : ""}{addr}
+    <a data-testid={testId} href={mapsUrl(addr)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-primary underline decoration-border-strong hover:decoration-accent">
+      <MapPin className="w-3.5 h-3.5 text-accent-ink shrink-0" />{label ? `${label}: ` : ""}{addr}
     </a>
   ) : (
-    <span className="text-slate-400">{label ? `${label}: ` : ""}not set</span>
+    <span className="text-faint">{label ? `${label}: ` : ""}not set</span>
   );
 
 function AssignDialog({ job, users, trucks, onSaved, onClose, onTruckCreated }) {
@@ -158,13 +158,13 @@ function AssignDialog({ job, users, trucks, onSaved, onClose, onTruckCreated }) 
         <div className="space-y-4">
           <div>
             <Label className="mb-1.5 block">Crew &amp; positions</Label>
-            <div className="space-y-1.5 border border-slate-200 rounded-md p-2">
+            <div className="space-y-1.5 border border-border rounded-md p-2">
               {crewUsers.map((u) => {
                 const picked = sel.find((x) => x.user_id === u.id);
                 return (
                   <div key={u.id} data-testid={`crew-pick-${u.id}`} className="flex items-center gap-2">
                     <Checkbox data-testid={`crew-check-${u.id}`} checked={!!picked} onCheckedChange={() => toggle(u.id)} />
-                    <span className="text-sm flex-1 text-[#1B2A4A]">{u.name}</span>
+                    <span className="text-sm flex-1 text-primary">{u.name}</span>
                     {picked && (
                       <>
                         <Input data-testid={`crew-position-${u.id}`} className="w-24 h-8 text-xs" list="hy-positions"
@@ -174,7 +174,7 @@ function AssignDialog({ job, users, trucks, onSaved, onClose, onTruckCreated }) 
                   </div>
                 );
               })}
-              {crewUsers.length === 0 && <p className="text-xs text-slate-400">No crew accounts yet — add them on the Crew page.</p>}
+              {crewUsers.length === 0 && <p className="text-xs text-faint">No crew accounts yet — add them on the Crew page.</p>}
               <datalist id="hy-positions">
                 {POSITIONS.map((p) => <option key={p} value={p} />)}
               </datalist>
@@ -221,7 +221,7 @@ function AssignDialog({ job, users, trucks, onSaved, onClose, onTruckCreated }) 
             <Label>Truck pickup location</Label>
             <Input data-testid="assign-truck-pickup-input" value={fields.truck_pickup_location} onChange={(e) => setFields((s) => ({ ...s, truck_pickup_location: e.target.value }))} />
           </div>
-          <Button data-testid="assign-save-btn" className="w-full gap-2 bg-[#E8743B] hover:bg-[#d4632e]" disabled={saving} onClick={save}>
+          <Button data-testid="assign-save-btn" className="w-full gap-2 bg-accent hover:bg-accent-press" disabled={saving} onClick={save}>
             {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : null} Save &amp; publish to crew
           </Button>
         </div>
@@ -265,7 +265,7 @@ export default function JobsBoard() {
     <div data-testid="jobs-board-page" className="space-y-5">
       <PageTitle title="Jobs" subtitle="Deposit-paid moves, labeled by Square invoice number." />
       {sync && !sync.webhook_connected && (
-        <div data-testid="square-sync-banner" className="flex items-center gap-2 bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded-lg px-4 py-2.5">
+        <div data-testid="square-sync-banner" className="flex items-center gap-2 bg-warning/10 border border-warning/25 text-warning text-sm rounded-lg px-4 py-2.5">
           <PlugZap className="w-4 h-4 shrink-0" />
           <span>
             Square sync not connected — go to{" "}
@@ -281,23 +281,23 @@ export default function JobsBoard() {
       <SearchBar value={query} onChange={setQuery} placeholder="Search job #, customer, crew, truck, or address…" testId="jobs-search-input" />
 
       {jobs === null ? (
-        <p className="text-sm text-slate-400">Loading…</p>
+        <p className="text-sm text-faint">Loading…</p>
       ) : upcoming.length === 0 ? (
-        <div data-testid="jobs-empty" className="bg-white border border-slate-200 rounded-lg p-8 text-center">
-          <Briefcase className="w-10 h-10 text-slate-300 mx-auto" />
-          <p className="text-sm text-slate-500 mt-2">{query ? "No jobs match that search." : "No deposit-paid jobs yet. When a customer pays a Square deposit, the job pops up here on its own."}</p>
+        <div data-testid="jobs-empty" className="surface p-8 text-center">
+          <Briefcase className="w-10 h-10 text-faint/70 mx-auto" />
+          <p className="text-sm text-faint mt-2">{query ? "No jobs match that search." : "No deposit-paid jobs yet. When a customer pays a Square deposit, the job pops up here on its own."}</p>
         </div>
       ) : (
         <div className="space-y-4">
           {upcoming.map((job) => (
-            <div key={job.id} data-testid={`job-card-${job.invoice_number}`} className="bg-white border border-slate-200 rounded-lg p-4 space-y-3">
+            <div key={job.id} data-testid={`job-card-${job.invoice_number}`} className="surface p-4 space-y-3">
               <div className="flex items-start justify-between gap-2 flex-wrap">
                 <div>
-                  <p className="text-lg font-bold text-[#1B2A4A]">
+                  <p className="text-lg font-bold text-primary">
                     Job #{job.invoice_number}
-                    <span className="text-slate-400 font-medium"> — {fmtJobDate(job.job_date)}{job.start_time ? ` ${fmtTime12(job.start_time)}` : ""}</span>
+                    <span className="text-faint font-medium"> — {fmtJobDate(job.job_date)}{job.start_time ? ` ${fmtTime12(job.start_time)}` : ""}</span>
                   </p>
-                  <p className="text-sm text-slate-500">
+                  <p className="text-sm text-faint">
                     {job.customer?.name || "Customer"}{job.customer?.phone ? ` · ${job.customer.phone}` : ""}
                   </p>
                 </div>
@@ -305,18 +305,18 @@ export default function JobsBoard() {
                   <Pencil className="w-3.5 h-3.5" /> {job.crew?.length ? "Edit" : "Assign"}
                 </Button>
               </div>
-              <div className="space-y-1 bg-slate-50 rounded-md p-3">
+              <div className="space-y-1 bg-surface-sunk rounded-md p-3">
                 <PayRow label="Deposit Paid (25%)" info={job.deposit_paid} />
                 <PayRow label="Paid in Full" info={job.paid_in_full} />
               </div>
               <div className="flex flex-wrap gap-x-5 gap-y-1.5 text-sm">
-                <span className="inline-flex items-center gap-1.5 text-slate-600">
-                  <Users className="w-3.5 h-3.5 text-slate-400" />
-                  {job.crew?.length ? job.crew.map((c) => `${c.name.split(" ")[0]} (${c.position})`).join(", ") : <span className="text-slate-400">No crew yet</span>}
+                <span className="inline-flex items-center gap-1.5 text-ink-2">
+                  <Users className="w-3.5 h-3.5 text-faint" />
+                  {job.crew?.length ? job.crew.map((c) => `${c.name.split(" ")[0]} (${c.position})`).join(", ") : <span className="text-faint">No crew yet</span>}
                 </span>
-                <span className="inline-flex items-center gap-1.5 text-slate-600">
-                  <Truck className="w-3.5 h-3.5 text-slate-400" />
-                  {job.truck_name || <span className="text-slate-400">No truck yet</span>}
+                <span className="inline-flex items-center gap-1.5 text-ink-2">
+                  <Truck className="w-3.5 h-3.5 text-faint" />
+                  {job.truck_name || <span className="text-faint">No truck yet</span>}
                 </span>
               </div>
               <div className="flex flex-col gap-1 text-sm">
@@ -331,11 +331,11 @@ export default function JobsBoard() {
       )}
 
       <div>
-        <h2 className="text-sm font-bold uppercase tracking-wide text-slate-500 mb-2 mt-8">Review requests sent by crew</h2>
-        <div className="bg-white border border-slate-200 rounded-lg overflow-x-auto">
+        <h2 className="text-sm font-bold uppercase tracking-wide text-faint mb-2 mt-8">Review requests sent by crew</h2>
+        <div className="surface overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-left text-xs uppercase tracking-wide text-slate-400 border-b border-slate-100">
+              <tr className="text-left text-xs uppercase tracking-wide text-faint border-b border-border">
                 <th className="px-3 py-2">When</th>
                 <th className="px-3 py-2">Crew member</th>
                 <th className="px-3 py-2">Channel</th>
@@ -347,10 +347,10 @@ export default function JobsBoard() {
             </thead>
             <tbody>
               {reviewsShown.map((r) => (
-                <tr key={r.id} data-testid="review-log-row" className="border-b border-slate-50">
+                <tr key={r.id} data-testid="review-log-row" className="border-b border-border">
                   <td className="px-3 py-2 whitespace-nowrap">{fmtPaidAt(r.sent_at)}</td>
                   <td className="px-3 py-2">{r.crew_name}</td>
-                  <td className="px-3 py-2 uppercase text-xs font-bold text-slate-500">{r.channel}</td>
+                  <td className="px-3 py-2 uppercase text-xs font-bold text-faint">{r.channel}</td>
                   <td className="px-3 py-2">{r.customer?.name}</td>
                   <td className="px-3 py-2">{r.customer?.phone}</td>
                   <td className="px-3 py-2">{r.customer?.email}</td>
@@ -358,7 +358,7 @@ export default function JobsBoard() {
                 </tr>
               ))}
               {reviewsShown.length === 0 && (
-                <tr><td colSpan="7" className="px-3 py-5 text-center text-slate-400">{query ? "No review requests match that search." : "No review requests yet."}</td></tr>
+                <tr><td colSpan="7" className="px-3 py-5 text-center text-faint">{query ? "No review requests match that search." : "No review requests yet."}</td></tr>
               )}
             </tbody>
           </table>

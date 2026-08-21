@@ -37,56 +37,56 @@ export function useLivePricing(fallbackRates) {
 
 const QuoteLines = ({ q, rates, crew }) => (
   <>
-    <div className="flex justify-between text-sm text-slate-600">
+    <div className="flex justify-between text-sm text-ink-2">
       <span>Crew charge ({crew} × {q.hours} hrs × {fmtMoney(rates.manHour)})</span>
       <Private><span data-testid="line-crew">{fmtMoneyCents(q.crewCharge)}</span></Private>
     </div>
     {q.minHoursApplied && (
-      <p data-testid="min-hours-note" className="text-[11px] text-amber-700">6-hour minimum applied for this home size.</p>
+      <p data-testid="min-hours-note" className="text-[11px] text-warning">6-hour minimum applied for this home size.</p>
     )}
-    <div className="flex justify-between text-sm text-slate-600">
+    <div className="flex justify-between text-sm text-ink-2">
       <span>Travel fee (covers first {rates.mileageAllowance} miles)</span>
       <Private><span data-testid="line-travel">{fmtMoneyCents(q.travelFee)}</span></Private>
     </div>
     {q.mileageOverage > 0 && (
-      <div className="flex justify-between text-sm text-slate-600">
+      <div className="flex justify-between text-sm text-ink-2">
         <span>Mileage — {q.overMiles} mi beyond the first {rates.mileageAllowance} × {fmtMoneyCents(rates.overageRate)}/mi</span>
         <Private><span data-testid="line-overage">{fmtMoneyCents(q.mileageOverage)}</span></Private>
       </div>
     )}
     {q.stairs > 0 && (
-      <div className="flex justify-between text-sm text-slate-600">
+      <div className="flex justify-between text-sm text-ink-2">
         <span>Stairs</span>
         <Private><span data-testid="line-stairs">{fmtMoneyCents(q.stairs)}</span></Private>
       </div>
     )}
     {q.itemLines.map((l) => (
-      <div key={l.id} className="flex justify-between text-sm text-slate-600">
+      <div key={l.id} className="flex justify-between text-sm text-ink-2">
         <span>{l.name}</span>
         <Private><span data-testid="line-item">{fmtMoneyCents(l.amount)}</span></Private>
       </div>
     ))}
-    <div className="flex justify-between text-sm font-semibold text-slate-700 pt-2 border-t border-slate-200">
+    <div className="flex justify-between text-sm font-semibold text-ink-2 pt-2 border-t border-border">
       <span>Subtotal</span>
       <Private><span data-testid="line-subtotal">{fmtMoneyCents(q.subtotal)}</span></Private>
     </div>
-    <div className="flex justify-between items-center pt-2 border-t border-slate-200">
-      <span className="font-display font-extrabold text-lg text-[#1B2A4A]">Final Quote</span>
+    <div className="flex justify-between items-center pt-2 border-t border-border">
+      <span className="font-display font-extrabold text-lg text-primary">Final Quote</span>
       <Private>
-        <span data-testid="final-quote-value" className="font-display font-extrabold text-2xl text-[#E8743B]">
+        <span data-testid="final-quote-value" className="font-display font-extrabold text-2xl text-accent-ink">
           {q.quoteLow !== q.quoteHigh ? `${fmtMoney(q.quoteLow)} – ${fmtMoney(q.quoteHigh)}` : fmtMoney(q.quoteHigh)}
         </span>
       </Private>
     </div>
-    <div className="flex justify-between text-sm font-semibold text-[#1B2A4A]">
+    <div className="flex justify-between text-sm font-semibold text-primary">
       <span>Deposit due to book ({rates.depositPercent}% of high end)</span>
       <Private><span data-testid="deposit-value">{fmtMoneyCents(q.deposit)}</span></Private>
     </div>
-    <div className="flex justify-between text-sm text-slate-600">
+    <div className="flex justify-between text-sm text-ink-2">
       <span>Balance due on completion</span>
       <Private><span data-testid="balance-value">{fmtMoneyCents(q.balance)}</span></Private>
     </div>
-    <p className="text-xs text-slate-500 pt-1">{QUOTE_COACH_LINE}</p>
+    <p className="text-xs text-faint pt-1">{QUOTE_COACH_LINE}</p>
   </>
 );
 
@@ -200,7 +200,7 @@ export const QuoteCalculator = ({ lead = null, onSaved }) => {
         <div>
           <Label>Flights of stairs (all)</Label>
           <Input data-testid="calc-flights-input" type="number" min="0" max="50" value={flights} onChange={(e) => setFlights(e.target.value)} />
-          <p className="text-[11px] text-slate-400 mt-0.5">{fmtMoney(rates.stairFlight)} per flight.</p>
+          <p className="text-[11px] text-faint mt-0.5">{fmtMoney(rates.stairFlight)} per flight.</p>
         </div>
         <div>
           <Label>Elevator available</Label>
@@ -227,15 +227,15 @@ export const QuoteCalculator = ({ lead = null, onSaved }) => {
         <div>
           <Label>Round-trip miles</Label>
           <Input data-testid="calc-miles-input" type="number" min="0" max="5000" value={miles} onChange={(e) => setMiles(e.target.value)} />
-          <p className="text-[11px] text-slate-400 mt-0.5">First {rates.mileageAllowance} miles are free, then {fmtMoneyCents(rates.overageRate)}/mi.</p>
+          <p className="text-[11px] text-faint mt-0.5">First {rates.mileageAllowance} miles are free, then {fmtMoneyCents(rates.overageRate)}/mi.</p>
         </div>
       </div>
 
-      <div className="border border-[#1B2A4A]/15 bg-[#1B2A4A]/[0.04] rounded-lg p-4 space-y-1">
+      <div className="border border-primary/15 bg-primary/[0.04] rounded-lg p-4 space-y-1">
         <QuoteLines q={q} rates={rates} crew={crew} />
       </div>
 
-      <Button data-testid="calc-save-btn" onClick={save} disabled={saving || !lead || !Number(hours)} className="w-full gap-2 bg-[#E8743B] hover:bg-[#d4632e]">
+      <Button data-testid="calc-save-btn" onClick={save} disabled={saving || !lead || !Number(hours)} className="w-full gap-2 bg-accent hover:bg-accent-press">
         <Save className="w-4 h-4" /> {saving ? "Saving…" : lead ? `Save quote to ${f(lead, LF.name) || "lead"}` : "Pick a lead to save"}
       </Button>
     </div>

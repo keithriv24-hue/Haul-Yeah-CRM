@@ -49,11 +49,11 @@ export const JobChecklists = ({ assignmentId, truckId, truckName, onStatusAdvanc
     setBusy(false);
   };
 
-  if (lists === null) return <p className="text-xs text-slate-400 mt-2">Loading checklists…</p>;
+  if (lists === null) return <p className="text-xs text-faint mt-2">Loading checklists…</p>;
   return (
     <div data-testid="job-checklists" className="mt-2 space-y-1.5">
       {locked && (
-        <p data-testid="checklists-clock-in-notice" className="flex items-center gap-1.5 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+        <p data-testid="checklists-clock-in-notice" className="flex items-center gap-1.5 text-xs text-warning bg-warning/10 border border-warning/25 rounded-md px-3 py-2">
           <Clock className="w-3.5 h-3.5 shrink-0" /> Clock in first — checklists unlock once you're on the clock.
         </p>
       )}
@@ -63,20 +63,20 @@ export const JobChecklists = ({ assignmentId, truckId, truckName, onStatusAdvanc
         const open = openKey === l.key;
         const complete = l.done_count === l.total;
         return (
-          <div key={l.key} data-testid={`checklist-${l.key}`} className="border border-slate-200 rounded-md bg-white">
+          <div key={l.key} data-testid={`checklist-${l.key}`} className="border border-border rounded-md bg-surface">
             <button
               data-testid={`checklist-header-${l.key}`}
               className="w-full flex items-center gap-2 px-3 py-2 text-left"
               onClick={() => setOpenKey(open ? null : l.key)}
             >
-              {open ? <ChevronDown className="w-3.5 h-3.5 text-slate-400" /> : <ChevronRight className="w-3.5 h-3.5 text-slate-400" />}
-              <span className="text-sm font-semibold text-[#1B2A4A] flex-1">{l.label}</span>
+              {open ? <ChevronDown className="w-3.5 h-3.5 text-faint" /> : <ChevronRight className="w-3.5 h-3.5 text-faint" />}
+              <span className="text-sm font-semibold text-primary flex-1">{l.label}</span>
               {complete ? (
-                <Badge variant="outline" className="text-[9px] bg-emerald-100 text-emerald-700 border-emerald-300 gap-0.5">
+                <Badge variant="outline" className="text-[9px] bg-success/12 text-success border-success/30 gap-0.5">
                   <CheckCircle2 className="w-2.5 h-2.5" /> Done
                 </Badge>
               ) : (
-                <Badge variant="outline" className="text-[9px] bg-slate-100 text-slate-600 border-slate-300">
+                <Badge variant="outline" className="text-[9px] bg-surface-sunk text-ink-2 border-border-strong">
                   {l.done_count}/{l.total}
                 </Badge>
               )}
@@ -92,14 +92,14 @@ export const JobChecklists = ({ assignmentId, truckId, truckName, onStatusAdvanc
                       onCheckedChange={(v) => toggle(l.key, it.idx, !!v)}
                       className="mt-0.5"
                     />
-                    <span className={it.done ? "text-slate-400 line-through" : "text-slate-700"}>
+                    <span className={it.done ? "text-faint line-through" : "text-ink-2"}>
                       {it.label}
-                      {it.done && it.by && <span className="text-[10px] text-slate-400 ml-1">— {it.by}</span>}
+                      {it.done && it.by && <span className="text-[10px] text-faint ml-1">— {it.by}</span>}
                     </span>
                   </label>
                 ))}
                 {l.auto_status && !complete && (
-                  <p className="text-[10px] text-slate-400">Finishing this list moves the job to "{l.auto_status}".</p>
+                  <p className="text-[10px] text-faint">Finishing this list moves the job to "{l.auto_status}".</p>
                 )}
               </div>
             )}

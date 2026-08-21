@@ -99,13 +99,13 @@ export const EmailInbox = ({ mailboxes }) => {
             data-testid={`mailbox-switch-${mb.id}`}
             onClick={() => setBoxId(mb.id)}
             className={`text-xs font-semibold rounded-full border px-3 py-1.5 transition-colors ${
-              boxId === mb.id ? "bg-[#1B2A4A] text-white border-[#1B2A4A]" : "bg-white text-slate-600 border-slate-300 hover:border-slate-400"
+              boxId === mb.id ? "bg-primary text-white border-primary" : "bg-surface text-ink-2 border-border-strong hover:border-border-strong"
             }`}
           >
             {mb.email}
           </button>
         ))}
-        {mailboxes.length === 1 && <span className="text-xs font-semibold text-slate-500">{mailboxes[0].email}</span>}
+        {mailboxes.length === 1 && <span className="text-xs font-semibold text-faint">{mailboxes[0].email}</span>}
         <div className="flex items-center gap-1.5 ml-auto">
           <Input
             data-testid="email-search-input"
@@ -125,31 +125,31 @@ export const EmailInbox = ({ mailboxes }) => {
       </div>
 
       <div className="grid lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)] gap-3 items-start">
-        <div className={`bg-white border border-slate-200 rounded-lg overflow-hidden ${selected ? "hidden lg:block" : ""}`} data-testid="email-list">
+        <div className={`surface overflow-hidden ${selected ? "hidden lg:block" : ""}`} data-testid="email-list">
           {messages === null ? (
-            <p className="text-sm text-slate-400 text-center py-10">Loading inbox…</p>
+            <p className="text-sm text-faint text-center py-10">Loading inbox…</p>
           ) : messages.length === 0 ? (
-            <p className="text-sm text-slate-400 text-center py-10">{query ? "Nothing matches that search." : "Inbox zero. Nice."}</p>
+            <p className="text-sm text-faint text-center py-10">{query ? "Nothing matches that search." : "Inbox zero. Nice."}</p>
           ) : (
-            <div className="divide-y divide-slate-100 max-h-[70vh] overflow-y-auto">
+            <div className="divide-y divide-border max-h-[70vh] overflow-y-auto">
               {messages.map((m) => (
                 <button
                   key={m.id}
                   data-testid="email-list-row"
                   onClick={() => open(m)}
-                  className={`w-full text-left px-3 py-2.5 hover:bg-slate-50 transition-colors ${selected?.id === m.id ? "bg-orange-50/60" : ""}`}
+                  className={`w-full text-left px-3 py-2.5 hover:bg-surface-sunk transition-colors ${selected?.id === m.id ? "bg-accent/10" : ""}`}
                 >
                   <div className="flex items-center gap-2">
-                    {m.unread && <span className="w-2 h-2 rounded-full bg-[#E8743B] shrink-0" />}
-                    <span className={`text-sm truncate flex-1 ${m.unread ? "font-bold text-[#1B2A4A]" : "text-slate-600"}`}>{fromName(m.from)}</span>
-                    <span className="text-[11px] text-slate-400 shrink-0">{fmtMailDate(m.date)}</span>
+                    {m.unread && <span className="w-2 h-2 rounded-full bg-accent shrink-0" />}
+                    <span className={`text-sm truncate flex-1 ${m.unread ? "font-bold text-primary" : "text-ink-2"}`}>{fromName(m.from)}</span>
+                    <span className="text-[11px] text-faint shrink-0">{fmtMailDate(m.date)}</span>
                   </div>
-                  <p className={`text-xs truncate ${m.unread ? "font-semibold text-[#1B2A4A]" : "text-slate-500"}`}>{m.subject}</p>
-                  <p className="text-[11px] text-slate-400 truncate">{m.snippet}</p>
+                  <p className={`text-xs truncate ${m.unread ? "font-semibold text-primary" : "text-faint"}`}>{m.subject}</p>
+                  <p className="text-[11px] text-faint truncate">{m.snippet}</p>
                 </button>
               ))}
               {nextToken && (
-                <button data-testid="email-load-more" onClick={() => load(true, nextToken)} className="w-full text-center text-xs font-semibold text-[#E8743B] py-2.5 hover:bg-orange-50">
+                <button data-testid="email-load-more" onClick={() => load(true, nextToken)} className="w-full text-center text-xs font-semibold text-accent-ink py-2.5 hover:bg-accent/10">
                   Load more
                 </button>
               )}
@@ -157,9 +157,9 @@ export const EmailInbox = ({ mailboxes }) => {
           )}
         </div>
 
-        <div className={`bg-white border border-slate-200 rounded-lg ${selected ? "" : "hidden lg:block"}`} data-testid="email-reading-pane">
+        <div className={`surface ${selected ? "" : "hidden lg:block"}`} data-testid="email-reading-pane">
           {!selected ? (
-            <p className="text-sm text-slate-400 text-center py-16">Pick an email to read it here.</p>
+            <p className="text-sm text-faint text-center py-16">Pick an email to read it here.</p>
           ) : (
             <div className="p-4">
               <div className="flex flex-wrap items-center gap-2 mb-3">
@@ -176,21 +176,21 @@ export const EmailInbox = ({ mailboxes }) => {
                   <MailOpen className="w-3.5 h-3.5" /> Mark unread
                 </Button>
               </div>
-              <h3 className="font-display font-bold text-[#1B2A4A]" data-testid="email-subject">{selected.subject}</h3>
-              <p className="text-xs text-slate-500 mt-0.5">
+              <h3 className="font-display font-bold text-primary" data-testid="email-subject">{selected.subject}</h3>
+              <p className="text-xs text-faint mt-0.5">
                 From <strong>{selected.from}</strong>
                 {selected.to && <> · to {selected.to}</>}
                 {selected.date && <> · {new Date(Number(selected.date)).toLocaleString()}</>}
               </p>
               {replyOpen && (
-                <div className="mt-3 border border-orange-200 bg-orange-50/50 rounded-lg p-3" data-testid="email-reply-box">
+                <div className="mt-3 border border-accent/25 bg-accent/10 rounded-lg p-3" data-testid="email-reply-box">
                   <Textarea data-testid="email-reply-textarea" rows={4} value={replyText} onChange={(e) => setReplyText(e.target.value)} placeholder={`Reply to ${fromName(selected.from)}…`} />
-                  <Button data-testid="email-reply-send-btn" size="sm" className="mt-2 gap-1.5 bg-[#E8743B] hover:bg-[#d4632e]" disabled={busy || !replyText.trim()} onClick={sendReply}>
+                  <Button data-testid="email-reply-send-btn" size="sm" className="mt-2 gap-1.5 bg-accent hover:bg-accent-press" disabled={busy || !replyText.trim()} onClick={sendReply}>
                     <Send className="w-3.5 h-3.5" /> Send reply
                   </Button>
                 </div>
               )}
-              <div className="mt-3 border-t border-slate-100 pt-3">
+              <div className="mt-3 border-t border-border pt-3">
                 {selected.body_html ? (
                   <iframe
                     title="email-body"
@@ -200,7 +200,7 @@ export const EmailInbox = ({ mailboxes }) => {
                     data-testid="email-body-html"
                   />
                 ) : (
-                  <pre className="text-sm text-slate-700 whitespace-pre-wrap font-sans" data-testid="email-body-text">{selected.body_text || selected.snippet}</pre>
+                  <pre className="text-sm text-ink-2 whitespace-pre-wrap font-sans" data-testid="email-body-text">{selected.body_text || selected.snippet}</pre>
                 )}
               </div>
             </div>

@@ -9,7 +9,7 @@ const AuthContext = createContext({ role: null });
 export const useAuth = () => useContext(AuthContext);
 
 const Shell = ({ children }) => (
-  <div className="min-h-screen bg-[#1B2A4A] flex items-center justify-center px-4">{children}</div>
+  <div className="min-h-screen bg-primary flex items-center justify-center px-4">{children}</div>
 );
 
 export default function AuthGate({ children }) {
@@ -114,12 +114,12 @@ export default function AuthGate({ children }) {
   if (!authed) {
     return (
       <Shell>
-        <form onSubmit={submit} data-testid="login-form" className="w-full max-w-sm bg-white rounded-lg p-8 border border-white/10">
+        <form onSubmit={submit} data-testid="login-form" className="w-full max-w-sm bg-surface rounded-lg p-8 border border-white/10">
           <img src="/logo.png" alt="Haul Yeah Moving" data-testid="login-logo" className="w-48 rounded-lg" />
-          <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400 mt-3 mb-6">Moving CRM</div>
-          <p className="text-sm text-slate-600 mb-4">Sign in with your username (or email) and password. This device stays logged in.</p>
+          <div className="text-[11px] uppercase tracking-[0.2em] text-faint mt-3 mb-6">Moving CRM</div>
+          <p className="text-sm text-ink-2 mb-4">Sign in with your username (or email) and password. This device stays logged in.</p>
           <div className="relative mb-3">
-            <UserRound className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <UserRound className="w-4 h-4 text-faint absolute left-3 top-1/2 -translate-y-1/2" />
             <Input
               data-testid="login-username-input"
               type="text"
@@ -133,7 +133,7 @@ export default function AuthGate({ children }) {
             />
           </div>
           <div className="relative mb-3">
-            <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <Lock className="w-4 h-4 text-faint absolute left-3 top-1/2 -translate-y-1/2" />
             <Input
               data-testid="login-password-input"
               type={showPassword ? "text" : "password"}
@@ -148,16 +148,16 @@ export default function AuthGate({ children }) {
               data-testid="login-toggle-password-btn"
               aria-label={showPassword ? "Hide password" : "Show password"}
               onClick={() => setShowPassword((s) => !s)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-[#1B2A4A] transition-colors"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-faint hover:text-primary transition-colors"
             >
               {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
             </button>
           </div>
-          {error && <p data-testid="login-error" className="text-sm text-red-600 mb-3">{error}</p>}
-          <Button data-testid="login-submit-button" type="submit" disabled={busy || !password} className="w-full gap-2 bg-[#E8743B] hover:bg-[#d4632e]">
+          {error && <p data-testid="login-error" className="text-sm text-destructive mb-3">{error}</p>}
+          <Button data-testid="login-submit-button" type="submit" disabled={busy || !password} className="w-full gap-2 bg-accent hover:bg-accent-press">
             <LogIn className="w-4 h-4" /> {busy ? "Checking…" : "Sign in"}
           </Button>
-          <p className="text-[11px] text-slate-400 mt-4">
+          <p className="text-[11px] text-faint mt-4">
             Crew and sales sign in with their email. Old shared passwords still work — leave the top box empty.
           </p>
         </form>
@@ -168,15 +168,15 @@ export default function AuthGate({ children }) {
   if (mustChange) {
     return (
       <Shell>
-        <form onSubmit={submitNewPassword} data-testid="change-password-form" className="w-full max-w-sm bg-white rounded-lg p-8 border border-white/10">
+        <form onSubmit={submitNewPassword} data-testid="change-password-form" className="w-full max-w-sm bg-surface rounded-lg p-8 border border-white/10">
           <img src="/logo.png" alt="Haul Yeah Moving" className="w-48 rounded-lg" />
-          <h1 className="text-lg font-bold text-[#1B2A4A] mt-4">Set your new password</h1>
-          <p className="text-sm text-slate-600 mt-1 mb-4">
+          <h1 className="text-lg font-bold text-primary mt-4">Set your new password</h1>
+          <p className="text-sm text-ink-2 mt-1 mb-4">
             First time in{user?.name ? `, ${user.name.split(" ")[0]}` : ""}! Pick a password only you know (8+ characters).
           </p>
           {!currentPw && (
             <div className="relative mb-3">
-              <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <Lock className="w-4 h-4 text-faint absolute left-3 top-1/2 -translate-y-1/2" />
               <Input
                 data-testid="change-current-input"
                 type="password"
@@ -188,7 +188,7 @@ export default function AuthGate({ children }) {
             </div>
           )}
           <div className="relative mb-3">
-            <KeyRound className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <KeyRound className="w-4 h-4 text-faint absolute left-3 top-1/2 -translate-y-1/2" />
             <Input
               data-testid="change-new-input"
               type="password"
@@ -200,7 +200,7 @@ export default function AuthGate({ children }) {
             />
           </div>
           <div className="relative mb-3">
-            <KeyRound className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <KeyRound className="w-4 h-4 text-faint absolute left-3 top-1/2 -translate-y-1/2" />
             <Input
               data-testid="change-confirm-input"
               type="password"
@@ -210,8 +210,8 @@ export default function AuthGate({ children }) {
               onChange={(e) => setConfirmPw(e.target.value)}
             />
           </div>
-          {changeError && <p data-testid="change-password-error" className="text-sm text-red-600 mb-3">{changeError}</p>}
-          <Button data-testid="change-password-submit" type="submit" disabled={busy || !newPw || !confirmPw} className="w-full gap-2 bg-[#E8743B] hover:bg-[#d4632e]">
+          {changeError && <p data-testid="change-password-error" className="text-sm text-destructive mb-3">{changeError}</p>}
+          <Button data-testid="change-password-submit" type="submit" disabled={busy || !newPw || !confirmPw} className="w-full gap-2 bg-accent hover:bg-accent-press">
             {busy ? "Saving…" : "Save my password"}
           </Button>
         </form>

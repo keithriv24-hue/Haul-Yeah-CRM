@@ -15,17 +15,17 @@ const Field = ({ label, value, onChange, placeholder, testId, textarea }) => (
     <label className="text-[11px] font-semibold text-white/60">{label}</label>
     {textarea ? (
       <textarea data-testid={testId} rows={2} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
-        className="w-full mt-0.5 rounded-md bg-white/10 border border-white/15 px-3 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-[#E8743B]" />
+        className="w-full mt-0.5 rounded-md bg-white/10 border border-white/15 px-3 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-accent" />
     ) : (
       <input data-testid={testId} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
-        className="w-full mt-0.5 rounded-md bg-white/10 border border-white/15 px-3 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-[#E8743B]" />
+        className="w-full mt-0.5 rounded-md bg-white/10 border border-white/15 px-3 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-accent" />
     )}
   </div>
 );
 
 const Btn = ({ children, onClick, disabled, testId, className = "" }) => (
   <button data-testid={testId} disabled={disabled} onClick={onClick}
-    className={`inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#E8743B] hover:bg-[#d4632e] disabled:opacity-50 text-white font-bold text-sm px-4 py-2 transition-colors ${className}`}>
+    className={`inline-flex items-center justify-center gap-1.5 rounded-lg bg-accent hover:bg-accent-press disabled:opacity-50 text-white font-bold text-sm px-4 py-2 transition-colors ${className}`}>
     {children}
   </button>
 );
@@ -39,12 +39,12 @@ export const PortalBalance = ({ data }) => {
         <div className="space-y-1 text-sm">
           <p className="flex justify-between text-white/80"><span>Move total</span><span className="font-bold">{money(data.quote_total)}</span></p>
           {data.deposit_amount != null && (
-            <p className="flex justify-between text-emerald-300"><span>Deposit paid ✓</span><span className="font-bold">{money(data.deposit_amount)}</span></p>
+            <p className="flex justify-between text-success"><span>Deposit paid ✓</span><span className="font-bold">{money(data.deposit_amount)}</span></p>
           )}
           {data.paid_in_full ? (
-            <p data-testid="portal-paid-full" className="flex justify-between text-emerald-300 font-bold border-t border-white/10 pt-1.5"><span>Paid in full ✓</span><span>$0.00</span></p>
+            <p data-testid="portal-paid-full" className="flex justify-between text-success font-bold border-t border-white/10 pt-1.5"><span>Paid in full ✓</span><span>$0.00</span></p>
           ) : data.remaining_balance != null ? (
-            <p data-testid="portal-remaining" className="flex justify-between text-amber-300 font-bold border-t border-white/10 pt-1.5"><span>Remaining balance</span><span>{money(data.remaining_balance)}</span></p>
+            <p data-testid="portal-remaining" className="flex justify-between text-warning font-bold border-t border-white/10 pt-1.5"><span>Remaining balance</span><span>{money(data.remaining_balance)}</span></p>
           ) : null}
         </div>
       )}
@@ -52,7 +52,7 @@ export const PortalBalance = ({ data }) => {
         <div className="mt-3 space-y-1">
           {data.invoices.filter((i) => i.url).map((inv, i) => (
             <a key={i} data-testid="portal-invoice-link" href={inv.url} target="_blank" rel="noreferrer"
-              className="flex items-center gap-1.5 text-xs text-sky-300 hover:underline">
+              className="flex items-center gap-1.5 text-xs text-info hover:underline">
               <FileText className="w-3.5 h-3.5" /> Invoice #{inv.invoice_number} — view / download <ExternalLink className="w-3 h-3" />
             </a>
           ))}
@@ -120,13 +120,13 @@ export const PortalUploads = ({ token, initial }) => {
       <div className="flex gap-2">
         <label className="flex-1">
           <input data-testid="portal-photo-input" type="file" accept="image/*" multiple className="hidden" onChange={pick("photo")} />
-          <span className="flex items-center justify-center gap-1.5 cursor-pointer rounded-lg border border-white/20 bg-white/10 hover:bg-white/15 px-3 py-2 text-sm font-semibold">
+          <span className="flex items-center justify-center gap-1.5 cursor-pointer rounded-lg border border-white/20 bg-white/10 hover:bg-surface/15 px-3 py-2 text-sm font-semibold">
             <Upload className="w-4 h-4" /> Photos
           </span>
         </label>
         <label className="flex-1">
           <input data-testid="portal-inventory-input" type="file" accept="image/*,application/pdf" multiple className="hidden" onChange={pick("inventory")} />
-          <span className="flex items-center justify-center gap-1.5 cursor-pointer rounded-lg border border-white/20 bg-white/10 hover:bg-white/15 px-3 py-2 text-sm font-semibold">
+          <span className="flex items-center justify-center gap-1.5 cursor-pointer rounded-lg border border-white/20 bg-white/10 hover:bg-surface/15 px-3 py-2 text-sm font-semibold">
             <FileText className="w-4 h-4" /> Inventory
           </span>
         </label>
@@ -139,7 +139,7 @@ export const PortalUploads = ({ token, initial }) => {
               {(u.content_type || "").startsWith("image/") ? (
                 <img src={portalUploadUrl(token, u.id)} alt={u.filename} className="w-14 h-14 object-cover rounded-md border border-white/15" />
               ) : (
-                <span className="flex items-center gap-1 text-[11px] text-sky-300 border border-white/15 rounded-md px-2 py-1.5"><FileText className="w-3.5 h-3.5" /> {u.filename}</span>
+                <span className="flex items-center gap-1 text-[11px] text-info border border-white/15 rounded-md px-2 py-1.5"><FileText className="w-3.5 h-3.5" /> {u.filename}</span>
               )}
             </a>
           ))}
@@ -172,13 +172,13 @@ export const PortalTip = ({ token, crewNames }) => {
       <div className="flex gap-2 mb-2.5">
         {[20, 40, 60].map((v) => (
           <button key={v} data-testid={`portal-tip-${v}`} onClick={() => { setAmount(v); setCustom(""); }}
-            className={`flex-1 rounded-lg border px-3 py-2 text-sm font-bold transition-colors ${amount === v && !custom ? "border-[#E8743B] bg-[#E8743B]/20 text-[#E8743B]" : "border-white/20 bg-white/5 text-white/80 hover:bg-white/10"}`}>
+            className={`flex-1 rounded-lg border px-3 py-2 text-sm font-bold transition-colors ${amount === v && !custom ? "border-accent bg-accent/20 text-accent-ink" : "border-white/20 bg-white/5 text-white/80 hover:bg-surface/10"}`}>
             ${v}
           </button>
         ))}
         <input data-testid="portal-tip-custom" type="number" min="1" placeholder="Other" value={custom}
           onChange={(e) => setCustom(e.target.value)}
-          className="w-20 rounded-lg bg-white/10 border border-white/20 px-2 py-2 text-sm text-white text-center placeholder:text-white/30 focus:outline-none focus:border-[#E8743B]" />
+          className="w-20 rounded-lg bg-white/10 border border-white/20 px-2 py-2 text-sm text-white text-center placeholder:text-white/30 focus:outline-none focus:border-accent" />
       </div>
       <Field label="Who's this from? (leave your name)" value={name} onChange={setName} placeholder="The Johnson family" testId="portal-tip-name" />
       <Btn testId="portal-tip-btn" onClick={go} disabled={busy || !amt || amt < 1} className="w-full mt-2.5">
@@ -213,7 +213,7 @@ export const PortalReview = ({ token, reviewLink, alreadyDone }) => {
         <p className="text-sm text-white/80">Thanks — we read every single one. 🧡</p>
         {(shareLink || (rating >= 4 && reviewLink)) && (
           <a data-testid="portal-google-review-link" href={shareLink || reviewLink} target="_blank" rel="noreferrer"
-            className="mt-2 inline-flex items-center gap-1.5 text-sm font-bold text-sky-300 hover:underline">
+            className="mt-2 inline-flex items-center gap-1.5 text-sm font-bold text-info hover:underline">
             Share it on Google too <ExternalLink className="w-3.5 h-3.5" />
           </a>
         )}
@@ -225,13 +225,13 @@ export const PortalReview = ({ token, reviewLink, alreadyDone }) => {
       <div className="flex gap-1.5 mb-2.5">
         {[1, 2, 3, 4, 5].map((s) => (
           <button key={s} data-testid={`portal-star-${s}`} onClick={() => setRating(s)}>
-            <Star className={`w-7 h-7 transition-colors ${s <= rating ? "fill-amber-400 text-amber-400" : "text-white/25"}`} />
+            <Star className={`w-7 h-7 transition-colors ${s <= rating ? "fill-amber-400 text-warning" : "text-white/25"}`} />
           </button>
         ))}
       </div>
       <textarea data-testid="portal-review-text" rows={2} value={text} onChange={(e) => setText(e.target.value)}
         placeholder="Tell us about your move (optional)"
-        className="w-full rounded-md bg-white/10 border border-white/15 px-3 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-[#E8743B]" />
+        className="w-full rounded-md bg-white/10 border border-white/15 px-3 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-accent" />
       <Btn testId="portal-review-submit" onClick={submit} disabled={busy || !rating} className="w-full mt-2.5">
         {busy && <Loader2 className="w-4 h-4 animate-spin" />} Send review
       </Btn>

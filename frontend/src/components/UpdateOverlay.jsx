@@ -45,11 +45,11 @@ export const UpdateOverlay = () => {
   if (!down) return null;
   const offline = typeof navigator !== "undefined" && navigator.onLine === false;
   return (
-    <div data-testid="update-overlay" className="fixed inset-0 z-[100] bg-[#1B2A4A]/95 backdrop-blur-sm flex items-center justify-center px-6">
+    <div data-testid="update-overlay" className="fixed inset-0 z-[100] bg-primary/95 backdrop-blur-sm flex items-center justify-center px-6">
       <div className="text-center max-w-sm">
         <img src="/logo.png" alt="Haul Yeah Moving" className="w-40 mx-auto rounded-lg" />
         <div className="mt-6 flex justify-center">
-          <span className="w-8 h-8 border-[3px] border-white/20 border-t-[#E8743B] rounded-full animate-spin" />
+          <span className="w-8 h-8 border-[3px] border-white/20 border-t-accent rounded-full animate-spin" />
         </div>
         <h1 data-testid="update-overlay-title" className="text-white font-bold text-lg mt-5">
           {offline ? "You're offline" : "The website is updating"}

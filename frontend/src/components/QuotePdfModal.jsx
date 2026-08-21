@@ -62,47 +62,47 @@ export default function QuotePdfModal({ lead, open, onOpenChange }) {
       <DialogContent data-testid="quote-pdf-modal" className="max-w-md">
         <DialogHeader>
           <DialogTitle className="font-display flex items-center gap-2">
-            <FileText className="w-5 h-5 text-[#E8743B]" /> Quote PDF for {name}
+            <FileText className="w-5 h-5 text-accent-ink" /> Quote PDF for {name}
           </DialogTitle>
           <DialogDescription>
             A clean branded one-pager for the customer. No cushion or internal numbers — the lines add up exactly to the flat price.
           </DialogDescription>
         </DialogHeader>
         {!quote ? (
-          <p className="text-sm text-slate-500">Save a quote to this lead first (Quote button), then come back.</p>
+          <p className="text-sm text-faint">Save a quote to this lead first (Quote button), then come back.</p>
         ) : data === null ? (
-          <p className="text-sm text-slate-400">Loading…</p>
+          <p className="text-sm text-faint">Loading…</p>
         ) : !b ? (
           <div className="space-y-3">
-            <p className="text-sm text-slate-600">This quote was saved before itemized PDFs existed.</p>
-            <Button data-testid="pdf-build-simple-btn" onClick={buildSimple} disabled={building} className="w-full gap-2 bg-[#1B2A4A] hover:bg-[#16233d]">
+            <p className="text-sm text-ink-2">This quote was saved before itemized PDFs existed.</p>
+            <Button data-testid="pdf-build-simple-btn" onClick={buildSimple} disabled={building} className="w-full gap-2 bg-primary hover:bg-[#16233d]">
               {building ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
               Make a one-line PDF ({fmtMoney(quote)} flat)
             </Button>
-            <p className="text-xs text-slate-400">
+            <p className="text-xs text-faint">
               Want the full line-by-line breakdown (travel, stairs, big items)? Open Quote, re-enter the move, press Save — then reopen this window.
             </p>
           </div>
         ) : (
           <div className="space-y-3">
-            <div data-testid="pdf-preview-lines" className="border border-slate-200 rounded-md overflow-hidden">
+            <div data-testid="pdf-preview-lines" className="border border-border rounded-md overflow-hidden">
               {(b.lines || []).map((l, i) => (
-                <div key={i} className="flex items-center justify-between px-3 py-1.5 text-sm border-b border-slate-100">
-                  <span className="text-slate-600">{l.name}</span>
-                  <span className="font-medium text-[#1B2A4A]"><Private>{fmtMoney(l.amount)}</Private></span>
+                <div key={i} className="flex items-center justify-between px-3 py-1.5 text-sm border-b border-border">
+                  <span className="text-ink-2">{l.name}</span>
+                  <span className="font-medium text-primary"><Private>{fmtMoney(l.amount)}</Private></span>
                 </div>
               ))}
-              <div className="flex items-center justify-between px-3 py-2 bg-[#1B2A4A] text-white text-sm font-bold">
+              <div className="flex items-center justify-between px-3 py-2 bg-primary text-white text-sm font-bold">
                 <span>Flat total</span>
-                <span data-testid="pdf-preview-total" className="text-[#E8743B]"><Private>{fmtMoney(b.finalQuote)}</Private></span>
+                <span data-testid="pdf-preview-total" className="text-accent-ink"><Private>{fmtMoney(b.finalQuote)}</Private></span>
               </div>
-              <div className="flex items-center justify-between px-3 py-1.5 text-xs text-slate-500">
+              <div className="flex items-center justify-between px-3 py-1.5 text-xs text-faint">
                 <span>Deposit <Private>{fmtMoney(b.deposit)}</Private></span>
                 <span>Balance on move day <Private>{fmtMoney(balance)}</Private></span>
               </div>
             </div>
             <div className="grid grid-cols-2 gap-2">
-              <Button data-testid="pdf-open-btn" asChild className="gap-1.5 bg-[#E8743B] hover:bg-[#d4632e]">
+              <Button data-testid="pdf-open-btn" asChild className="gap-1.5 bg-accent hover:bg-accent-press">
                 <a href={pdfUrl} target="_blank" rel="noreferrer"><ExternalLink className="w-4 h-4" /> Open PDF</a>
               </Button>
               <Button data-testid="pdf-copy-btn" variant="outline" className="gap-1.5" onClick={copyLink}>
@@ -115,7 +115,7 @@ export default function QuotePdfModal({ lead, open, onOpenChange }) {
                 <a href={emailHref}><Mail className="w-4 h-4" /> Email it</a>
               </Button>
             </div>
-            <p className="text-[11px] text-slate-400">The link always opens the newest saved quote for this lead.</p>
+            <p className="text-[11px] text-faint">The link always opens the newest saved quote for this lead.</p>
           </div>
         )}
       </DialogContent>

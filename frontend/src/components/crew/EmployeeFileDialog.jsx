@@ -61,12 +61,12 @@ export const EmployeeFileDialog = ({ user, onOpenChange }) => {
       <DialogContent data-testid="employee-file-dialog" className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
           <DialogTitle className="font-display flex items-center gap-2">
-            <IdCard className="w-5 h-5 text-[#E8743B]" /> {user?.name}'s employee file
+            <IdCard className="w-5 h-5 text-accent-ink" /> {user?.name}'s employee file
           </DialogTitle>
           <DialogDescription>Everything here is optional and only visible to owners.</DialogDescription>
         </DialogHeader>
         {loading ? (
-          <p className="text-sm text-slate-400 py-6 text-center">Loading…</p>
+          <p className="text-sm text-faint py-6 text-center">Loading…</p>
         ) : (
           <div className="grid sm:grid-cols-2 gap-3">
             <div>
@@ -81,7 +81,7 @@ export const EmployeeFileDialog = ({ user, onOpenChange }) => {
               <div className="flex items-center gap-2">
                 <Label>Birthday</Label>
                 {age !== null && (
-                  <Badge data-testid="file-age-chip" variant="outline" className="text-[10px] bg-orange-50 text-orange-800 border-orange-200">
+                  <Badge data-testid="file-age-chip" variant="outline" className="text-[10px] bg-accent/10 text-accent-ink border-accent/25">
                     Age {age}
                   </Badge>
                 )}
@@ -105,7 +105,7 @@ export const EmployeeFileDialog = ({ user, onOpenChange }) => {
                   data-testid="file-ssn-toggle"
                   aria-label={showSsn ? "Hide SSN" : "Show SSN"}
                   onClick={() => setShowSsn((s) => !s)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-[#1B2A4A] transition-colors"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-faint hover:text-primary transition-colors"
                 >
                   {showSsn ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
@@ -135,7 +135,7 @@ export const EmployeeFileDialog = ({ user, onOpenChange }) => {
         )}
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(null)}>Cancel</Button>
-          <Button data-testid="employee-file-save" disabled={busy || loading} onClick={save} className="bg-[#E8743B] hover:bg-[#d4632e]">
+          <Button data-testid="employee-file-save" disabled={busy || loading} onClick={save} className="bg-accent hover:bg-accent-press">
             Save file
           </Button>
         </DialogFooter>

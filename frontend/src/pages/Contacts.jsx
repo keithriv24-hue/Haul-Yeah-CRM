@@ -103,7 +103,7 @@ const ContactForm = ({ open, onOpenChange, contact }) => {
             <Textarea value={form.notes} onChange={set("notes")} rows={2} />
           </div>
         </div>
-        <Button data-testid="contact-save-btn" onClick={save} disabled={saving} className="w-full gap-2 bg-[#E8743B] hover:bg-[#d4632e]">
+        <Button data-testid="contact-save-btn" onClick={save} disabled={saving} className="w-full gap-2 bg-accent hover:bg-accent-press">
           <Plus className="w-4 h-4" /> {saving ? "Saving…" : contact ? "Save changes" : "Save contact"}
         </Button>
       </DialogContent>
@@ -133,7 +133,7 @@ export default function Contacts() {
         title="Contacts"
         subtitle="Everyone you work with."
         action={
-          <Button data-testid="new-contact-btn" onClick={() => { setEditing(null); setModalOpen(true); }} className="gap-1.5 bg-[#E8743B] hover:bg-[#d4632e]">
+          <Button data-testid="new-contact-btn" onClick={() => { setEditing(null); setModalOpen(true); }} className="gap-1.5 bg-accent hover:bg-accent-press">
             <Plus className="w-4 h-4" /> New contact
           </Button>
         }
@@ -150,8 +150,8 @@ export default function Contacts() {
             key={t}
             data-testid={`contact-filter-${t.toLowerCase().replace(/\s+/g, "-")}`}
             onClick={() => setFilter(t)}
-            className={`shrink-0 rounded-full border px-3.5 py-1.5 text-xs font-semibold transition-colors ${
-              filter === t ? "bg-[#1B2A4A] text-white border-[#1B2A4A]" : "bg-white text-slate-600 border-slate-300 hover:border-[#1B2A4A]"
+            className={`press shrink-0 rounded-lg px-3 py-2 text-[12.5px] font-semibold transition-colors duration-[160ms] ${
+              filter === t ? "bg-primary text-white" : "bg-surface-sunk text-ink-2 hover:bg-muted hover:text-ink"
             }`}
           >
             {t}
@@ -166,43 +166,60 @@ export default function Contacts() {
       ) : contacts.length === 0 ? (
         <EmptyState>No contacts here yet. Press "+ New contact".</EmptyState>
       ) : (
-        <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
+        <div className="grid items-stretch gap-4 md:grid-cols-2 xl:grid-cols-3">
           {contacts.map((c) => (
-            <div key={c.id} data-testid="contact-card" className="bg-white border border-slate-200 rounded-lg p-4 flex flex-col gap-2">
+            <div key={c.id} data-testid="contact-card" className="surface-interactive p-4 flex flex-col gap-2.5">
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <Private className="font-display font-bold text-lg text-[#1B2A4A] truncate">{f(c, CF.name) || "No name"}</Private>
-                  <div className="text-xs text-slate-500 space-x-2">
-                    {f(c, CF.phone) && <Private>{f(c, CF.phone)}</Private>}
-                    {f(c, CF.email) && <Private>{f(c, CF.email)}</Private>}
+                  <Private className="block truncate font-display text-[18px] font-extrabold leading-tight text-primary">{f(c, CF.name) || "No name"}</Private>
+                  <div className="mt-1 flex flex-wrap gap-x-2 gap-y-0.5 text-[12.5px] text-faint">
+                    {f(c, CF.phone) && <Private className="tnum">{f(c, CF.phone)}</Private>}
+                    {f(c, CF.email) && <Private className="truncate">{f(c, CF.email)}</Private>}
                   </div>
                 </div>
-                <span className="shrink-0 text-[10px] font-bold uppercase tracking-wide bg-[#1B2A4A]/5 text-[#1B2A4A] border border-[#1B2A4A]/20 rounded-full px-2 py-1">
+                <span className="shrink-0 rounded-md bg-primary/8 px-2 py-1 text-[10.5px] font-bold uppercase tracking-[0.08em] text-primary">
                   {f(c, CF.type) || "Contact"}
                 </span>
               </div>
-              <div className="text-xs text-slate-600 space-y-1">
-                {f(c, CF.company) && <div className="flex items-center gap-1.5"><Building2 className="w-3.5 h-3.5 text-slate-400" /> {f(c, CF.company)}</div>}
-                {f(c, CF.town) && <div className="flex items-center gap-1.5"><MapPin className="w-3.5 h-3.5 text-slate-400" /> {f(c, CF.town)}</div>}
-              </div>
-              <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 mt-1">
-                <Button asChild variant="outline" size="sm" className="gap-1 text-xs" disabled={!f(c, CF.phone)} data-testid="contact-call-btn">
-                  <a href={f(c, CF.phone) ? `tel:${f(c, CF.phone)}` : undefined}><Phone className="w-3.5 h-3.5" /> Call</a>
-                </Button>
-                <Button asChild variant="outline" size="sm" className="gap-1 text-xs" data-testid="contact-email-btn">
-                  <a href={gmailCompose(f(c, CF.email))} target="_blank" rel="noreferrer"><Mail className="w-3.5 h-3.5" /> Email</a>
-                </Button>
-                <Button asChild variant="outline" size="sm" className="gap-1 text-xs" data-testid="contact-gmail-search-btn">
-                  <a href={gmailSearch(f(c, CF.email) || f(c, CF.name))} target="_blank" rel="noreferrer"><Search className="w-3.5 h-3.5" /> Mail log</a>
-                </Button>
-                <Button variant="outline" size="sm" className="gap-1 text-xs" onClick={() => { setEditing(c); setModalOpen(true); }} data-testid="contact-edit-btn">
-                  <Pencil className="w-3.5 h-3.5" /> Edit
-                </Button>
-                <ConfirmDeleteButton
-                  what="this contact"
-                  testId="contact-delete-btn"
-                  onConfirm={() => deleteRecord("contacts", c.id).then(() => toast.success("Contact deleted.")).catch(() => {})}
-                />
+              {(f(c, CF.company) || f(c, CF.town)) && (
+                <div className="flex flex-wrap gap-x-3 gap-y-1 text-[12.5px] text-ink-2">
+                  {f(c, CF.company) && <span className="inline-flex items-center gap-1.5"><Building2 className="w-3.5 h-3.5 text-faint" aria-hidden="true" /> {f(c, CF.company)}</span>}
+                  {f(c, CF.town) && <span className="inline-flex items-center gap-1.5"><MapPin className="w-3.5 h-3.5 text-faint" aria-hidden="true" /> {f(c, CF.town)}</span>}
+                </div>
+              )}
+              <div className="mt-auto space-y-2 pt-1">
+                <div className="grid grid-cols-2 gap-2">
+                  <Button asChild variant="accent" className="gap-1.5" disabled={!f(c, CF.phone)} data-testid="contact-call-btn">
+                    <a href={f(c, CF.phone) ? `tel:${f(c, CF.phone)}` : undefined}><Phone className="w-4 h-4" /> Call</a>
+                  </Button>
+                  <Button asChild variant="outline" className="gap-1.5" data-testid="contact-email-btn">
+                    <a href={gmailCompose(f(c, CF.email))} target="_blank" rel="noreferrer"><Mail className="w-4 h-4" /> Email</a>
+                  </Button>
+                </div>
+                <div className="-mx-1 flex flex-wrap items-center gap-x-0.5 gap-y-1">
+                  <a
+                    data-testid="contact-gmail-search-btn"
+                    href={gmailSearch(f(c, CF.email) || f(c, CF.name))}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-[12.5px] font-semibold text-ink-2 transition-colors hover:bg-surface-sunk hover:text-primary"
+                  >
+                    <Search className="w-3.5 h-3.5" aria-hidden="true" /> Mail log
+                  </a>
+                  <button
+                    data-testid="contact-edit-btn"
+                    onClick={() => { setEditing(c); setModalOpen(true); }}
+                    className="inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-[12.5px] font-semibold text-ink-2 transition-colors hover:bg-surface-sunk hover:text-primary"
+                  >
+                    <Pencil className="w-3.5 h-3.5" aria-hidden="true" /> Edit
+                  </button>
+                  <ConfirmDeleteButton
+                    what="this contact"
+                    testId="contact-delete-btn"
+                    className="ml-auto"
+                    onConfirm={() => deleteRecord("contacts", c.id).then(() => toast.success("Contact deleted.")).catch(() => {})}
+                  />
+                </div>
               </div>
             </div>
           ))}

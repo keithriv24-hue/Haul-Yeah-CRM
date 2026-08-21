@@ -65,20 +65,20 @@ export const MapTab = () => {
 
   return (
     <div className="mt-4 space-y-4">
-      <div data-testid="live-map" ref={mapRef} className="h-[420px] rounded-lg border border-slate-200 z-0" />
-      <div className="bg-white rounded-lg border border-slate-200 divide-y divide-slate-100">
-        <p className="px-4 py-2.5 text-sm font-bold text-[#1B2A4A]">Clocked in right now ({list.length})</p>
+      <div data-testid="live-map" ref={mapRef} className="h-[420px] rounded-lg border border-border z-0" />
+      <div className="surface divide-y divide-border">
+        <p className="px-4 py-2.5 text-sm font-bold text-primary">Clocked in right now ({list.length})</p>
         {crew !== null && list.length === 0 && (
-          <p className="text-sm text-slate-400 px-4 py-6 text-center">Nobody's on the clock. Pins show up here the moment someone clocks in.</p>
+          <p className="text-sm text-faint px-4 py-6 text-center">Nobody's on the clock. Pins show up here the moment someone clocks in.</p>
         )}
         {list.map((c) => (
           <div key={c.user_id} data-testid="live-crew-row" className="flex items-center justify-between px-4 py-2.5 text-sm">
             <div>
-              <p className="font-semibold text-[#1B2A4A]">{c.name}</p>
-              <p className="text-xs text-slate-500">{c.job_name || "No job linked"} · in since {fmtTime(c.clocked_in_at)}</p>
+              <p className="font-semibold text-primary">{c.name}</p>
+              <p className="text-xs text-faint">{c.job_name || "No job linked"} · in since {fmtTime(c.clocked_in_at)}</p>
             </div>
-            <span className="text-xs text-slate-500 inline-flex items-center gap-1">
-              <MapPin className={`w-3.5 h-3.5 ${c.lat != null ? "text-emerald-500" : "text-slate-300"}`} />
+            <span className="text-xs text-faint inline-flex items-center gap-1">
+              <MapPin className={`w-3.5 h-3.5 ${c.lat != null ? "text-success" : "text-faint/70"}`} />
               {c.lat != null ? (c.last_ping ? `${ageLabel(minutesSince(c.last_ping))} ago` : "located") : "no GPS yet"}
             </span>
           </div>

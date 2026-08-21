@@ -50,19 +50,19 @@ export default function Help() {
 
       <div className="space-y-4 mb-8">
         {STEPS.map(({ icon: Icon, title, text }) => (
-          <div key={title} className="bg-white border border-slate-200 rounded-lg p-5 flex gap-4">
-            <div className="w-10 h-10 rounded-lg bg-[#E8743B]/10 border border-[#E8743B]/25 flex items-center justify-center shrink-0">
-              <Icon className="w-5 h-5 text-[#E8743B]" />
+          <div key={title} className="surface p-5 flex gap-4">
+            <div className="w-10 h-10 rounded-lg bg-accent/10 border border-accent/25 flex items-center justify-center shrink-0">
+              <Icon className="w-5 h-5 text-accent-ink" />
             </div>
             <div>
-              <h2 className="font-display font-bold text-lg text-[#1B2A4A]">{title}</h2>
-              <p className="text-sm text-slate-600 mt-1">{text}</p>
+              <h2 className="label-eyebrow">{title}</h2>
+              <p className="text-sm text-ink-2 mt-1">{text}</p>
             </div>
           </div>
         ))}
       </div>
 
-      <div className="bg-[#1B2A4A] text-white rounded-lg p-6 mb-8">
+      <div className="bg-primary text-white rounded-lg p-6 mb-8">
         <h2 className="font-display font-bold text-lg mb-3">Pricing cheat sheet (current rates)</h2>
         <ul className="text-sm space-y-1.5 text-white/85">
           <li>{fmtMoney(rates.manHour)} per man-hour</li>
@@ -78,8 +78,8 @@ export default function Help() {
         <p className="text-xs text-white/60 mt-3">One clean final price — no ranges. Change these numbers on the Settings page.</p>
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-lg p-5">
-        <h2 className="font-display font-bold text-lg text-[#1B2A4A] mb-3">Quick tools</h2>
+      <div className="surface p-5">
+        <h2 className="label-eyebrow mb-3">Quick tools</h2>
         <div className="flex flex-wrap gap-2">
           <Button asChild variant="outline" className="gap-1.5" data-testid="help-meet-btn">
             <a href="https://meet.google.com/new" target="_blank" rel="noreferrer"><Video className="w-4 h-4" /> Start a video call</a>
@@ -88,7 +88,7 @@ export default function Help() {
             <a href="https://mail.google.com/mail/?view=cm&fs=1" target="_blank" rel="noreferrer"><PhoneCall className="w-4 h-4" /> New Gmail message</a>
           </Button>
         </div>
-        <p className="text-xs text-slate-500 mt-3">
+        <p className="text-xs text-faint mt-3">
           Privacy Mode (top right) blurs names, numbers, and dollar amounts on every page — turn it on before you share your screen.
         </p>
       </div>
