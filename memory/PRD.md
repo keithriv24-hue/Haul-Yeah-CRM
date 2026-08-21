@@ -168,3 +168,10 @@ User choices: phase order approved · route optimization = free OSRM/OpenStreetM
 - Existing rates keys (settings/rates): manHour 65, cushionPercent 10, travelTruck 125, travelLabor 75, mileageAllowance 20, overageRate .85, stairFlight 85, packingRate 65, depositPercent 25, roundingIncrement 50
 - Steps remaining: 2 (settings pricing keys), 3 (scope calculator owner-only from haul-yeah-job-calculator-v2.jsx), 4 (lead_scopes collection), 5 (access tiers + assignment control), 6 (video survey fields), 7 (full verify + Save to GitHub)
 - Pre-existing issue noted by tester (NOT touched per rules): MetaCard.jsx L131 <Badge> inside <p> hydration warning; Ops brain "Owed to you" vs KPI "Owed to us" disagreement (per CHANGES.md, pre-existing data question)
+
+## 2026-08-21 — Step 2 DONE: Scope pricing settings (owner-only)
+- New endpoints GET/PUT /api/settings/scope-pricing (require_owner). Values stored under nested key `scope_pricing` in existing settings doc _id=calculator_rates (old GET /settings/rates response shape untouched — verified same 11 keys). Lazy-seeded on first read.
+- Seeded: manHourRate 65, cushionPercent 10, tripFeeTruck 125, tripFeeLabor 75, floorTruck 650, floorLabor 375, roundingIncrement 25, depositPercent 25, manHoursPer100CuFt 2.1
+- Settings.jsx: new ScopePricingCard (testids scope-{key}-input, scope-pricing-save-btn), own save flow. /settings route is owner-only.
+- Verified: sales GET/PUT → 403, unauth → 401; owner PUT round-trip + per-key stamps; 3 baseline quote totals IDENTICAL before/after (A 1150/1250/312.50, B 1900/2100/525, C 1000/1100/275); build exit 0; quote-calc + auth pytest 40 passed.
+- Next: Step 3 (scope calculator page from haul-yeah-job-calculator-v2.jsx, owner-only) — awaiting user go-ahead.

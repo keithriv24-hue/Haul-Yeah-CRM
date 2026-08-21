@@ -523,6 +523,72 @@ async def save_rates(payload: RatesPayload, role: str = Depends(require_auth)):
     return {**rates, "_updatedAt": stamps}
 
 
+# ------- Scope calculator pricing (owner-only; consumed by the Job Scope Calculator, NOT the Quote Calculator)
+
+DEFAULT_SCOPE_PRICING = {
+    "manHourRate": 65.0,
+    "cushionPercent": 10.0,
+    "tripFeeTruck": 125.0,
+    "tripFeeLabor": 75.0,
+    "floorTruck": 650.0,
+    "floorLabor": 375.0,
+    "roundingIncrement": 25.0,
+    "depositPercent": 25.0,
+    "manHoursPer100CuFt": 2.10,
+}
+
+
+class ScopePricingPayload(BaseModel):
+    manHourRate: float
+    cushionPercent: float
+    tripFeeTruck: float
+    tripFeeLabor: float
+    floorTruck: float
+    floorLabor: float
+    roundingIncrement: float
+    depositPercent: float
+    manHoursPer100CuFt: float
+
+
+async def get_scope_pricing_values() -> Dict[str, Any]:
+    doc = await mongo_db.settings.find_one({"_id": "calculator_rates"}) or {}
+    stored = doc.get("scope_pricing") or {}
+    if not stored:
+        await mongo_db.settings.update_one(
+            {"_id": "calculator_rates"},
+            {"$set": {"scope_pricing": dict(DEFAULT_SCOPE_PRICING), "scope_pricing_updated_at": {}}},
+            upsert=True)
+        stored = dict(DEFAULT_SCOPE_PRICING)
+    return {**DEFAULT_SCOPE_PRICING, **{k: v for k, v in stored.items() if k in DEFAULT_SCOPE_PRICING}}
+
+
+@api_router.get("/settings/scope-pricing")
+async def get_scope_pricing(p: Dict[str, Any] = Depends(require_owner)):
+    values = await get_scope_pricing_values()
+    doc = await mongo_db.settings.find_one({"_id": "calculator_rates"}) or {}
+    return {**values, "_updatedAt": doc.get("scope_pricing_updated_at", {})}
+
+
+@api_router.put("/settings/scope-pricing")
+async def save_scope_pricing(payload: ScopePricingPayload, p: Dict[str, Any] = Depends(require_owner)):
+    values = payload.model_dump()
+    if any(v < 0 for v in values.values()):
+        raise HTTPException(status_code=422, detail="Scope pricing values can't be negative.")
+    if values["roundingIncrement"] < 1:
+        raise HTTPException(status_code=422, detail="The rounding increment must be at least $1.")
+    doc = await mongo_db.settings.find_one({"_id": "calculator_rates"}) or {}
+    current = {**DEFAULT_SCOPE_PRICING, **(doc.get("scope_pricing") or {})}
+    stamps = doc.get("scope_pricing_updated_at", {})
+    ts = datetime.now(timezone.utc).isoformat()
+    for k, v in values.items():
+        if v != current.get(k):
+            stamps[k] = ts
+    await mongo_db.settings.update_one(
+        {"_id": "calculator_rates"},
+        {"$set": {"scope_pricing": values, "scope_pricing_updated_at": stamps}}, upsert=True)
+    return {**values, "_updatedAt": stamps}
+
+
 DEFAULT_ITEMS = [
     {"id": "piano-upright", "name": "Piano (upright)", "price": 500, "active": True},
     {"id": "piano-grand", "name": "Piano (baby grand)", "price": 800, "active": True},
