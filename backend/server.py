@@ -589,6 +589,53 @@ async def save_scope_pricing(payload: ScopePricingPayload, p: Dict[str, Any] = D
     return {**values, "_updatedAt": stamps}
 
 
+# ------- Saved job scopes (lead_scopes collection; owner-only in step 3, tiers come in step 5)
+
+class ScopeSavePayload(BaseModel):
+    lead_id: Optional[str] = None
+    label: Optional[str] = None
+    inputs: Dict[str, Any]
+    pricing: Dict[str, Any]
+    result: Dict[str, Any]
+    survey_complete: bool = False
+
+
+@api_router.post("/scopes")
+async def save_scope(payload: ScopeSavePayload, p: Dict[str, Any] = Depends(require_owner)):
+    pricing = {k: float(payload.pricing.get(k, v)) for k, v in DEFAULT_SCOPE_PRICING.items()}
+    doc = {
+        "_id": str(uuid4()),
+        "lead_id": payload.lead_id or None,
+        "label": (payload.label or "").strip(),
+        "created_by": p.get("name") or "Owner",
+        "created_by_id": p.get("user_id"),
+        "tier": "owner",
+        "inputs": payload.inputs,
+        "pricing": pricing,
+        "result": payload.result,
+        "survey_complete": bool(payload.survey_complete),
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+    }
+    await mongo_db.lead_scopes.insert_one(doc)
+    return doc
+
+
+@api_router.get("/scopes")
+async def list_scopes(lead_id: Optional[str] = None, p: Dict[str, Any] = Depends(require_owner)):
+    query = {"lead_id": lead_id} if lead_id else {}
+    docs = await mongo_db.lead_scopes.find(query).sort("created_at", -1).to_list(100)
+    return {"scopes": docs}
+
+
+@api_router.get("/scopes/{scope_id}")
+async def get_scope(scope_id: str, p: Dict[str, Any] = Depends(require_owner)):
+    doc = await mongo_db.lead_scopes.find_one({"_id": scope_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="No such saved scope.")
+    return doc
+
+
 DEFAULT_ITEMS = [
     {"id": "piano-upright", "name": "Piano (upright)", "price": 500, "active": True},
     {"id": "piano-grand", "name": "Piano (baby grand)", "price": 800, "active": True},

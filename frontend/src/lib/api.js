@@ -27,6 +27,9 @@ export const getRates = () => axios.get(`${API}/settings/rates`).then((r) => r.d
 export const saveRatesApi = (rates) => axios.put(`${API}/settings/rates`, rates).then((r) => r.data);
 export const getScopePricingApi = () => axios.get(`${API}/settings/scope-pricing`).then((r) => r.data);
 export const saveScopePricingApi = (values) => axios.put(`${API}/settings/scope-pricing`, values).then((r) => r.data);
+export const saveScopeApi = (payload) => axios.post(`${API}/scopes`, payload).then((r) => r.data);
+export const listScopesApi = (leadId) => axios.get(`${API}/scopes`, { params: leadId ? { lead_id: leadId } : {} }).then((r) => r.data.scopes);
+export const getScopeApi = (id) => axios.get(`${API}/scopes/${id}`).then((r) => r.data);
 export const listCalcItemsApi = () => axios.get(`${API}/settings/items`).then((r) => r.data.items);
 export const saveCalcItemsApi = (payload) => axios.put(`${API}/settings/items`, payload).then((r) => r.data.items);
 export const getBusinessApi = () => axios.get(`${API}/settings/business`).then((r) => r.data);

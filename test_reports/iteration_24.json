@@ -1,0 +1,23 @@
+{
+  "summary": "Frontend verification of new owner-only Job Scope Calculator (/scope-calculator). All 10 scenarios in the review request PASS. Scope page renders for owner with all controls; job type toggle correctly swaps trip fee line and moves the band; final-mode is hard-gated behind Mark Survey Complete and un-toggling reverts to range; save+snapshot flow writes a lead_scopes doc and reopens it with a snapshot banner + Back-to-live works; steppers increment; sales & crew ghosts are redirected away and have no sidebar entry; no horizontal scroll at 390px; Quote Calculator regression vector (2BR/3crew/5hrs/Truck/30mi/0flights) still shows $1,150 – $1,250 with deposit $312.50.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "ScopeCalculator.jsx is 694 lines — over the >700 threshold soon; consider splitting ROOMS/ITEMS/PACKING/ACCESS/MATERIALS constants into a scopeData.js module and the engine (price()) into a useScopePricing hook. Not blocking.",
+    "The 401 console errors observed on initial load originate from pre-auth API calls on the login screen, not from /scope-calculator itself; benign but noisy. Consider gating API calls behind auth readiness."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (skipped per request)", "frontend": "100%"},
+  "test_credentials": "Owner: HaulYeahAdmin / HaulYeah2026! ; Sales ghost: TestSalesAdmin / HaulYeah2026! ; Crew ghost: TestCrewAdmin / HaulYeah2026!",
+  "seed_data_creation": "Created one saved scope via UI labelled TEST_scope_<epoch> in lead_scopes (in addition to the pre-existing 'QA snapshot test').",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Scope Calculator (Step 3/7) verified end-to-end from the frontend. Observed values: default truck band with only Living-room=Avg was $650–$700; switching to Labor moved it to $500–$550 (correct trip fee + lower floor). After Living+Kitchen Avg the band was $725–$825, and Mark Survey Complete → Final produced a firm $650/$162.50 initially (before Kitchen add) — the gate + un-toggle transition works both directions. Calculator page canonical vector (2BR/3crew/5hrs/Truck/30mi/0flights) confirmed at $1,150–$1,250 / $312.50 deposit. Airtable-key banner is present as expected (documented in agent-to-agent context).",
+  "rca of the issue": "n/a — no issues found."
+}

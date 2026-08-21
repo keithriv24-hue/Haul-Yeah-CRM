@@ -5,7 +5,7 @@ import {
   LayoutDashboard, Users, BookUser, Truck, KanbanSquare, PenLine, Receipt,
   CreditCard, Handshake, HelpCircle, Eye, EyeOff, RefreshCw, KeyRound, LogOut, Calculator, SlidersHorizontal, MessageSquareText, Video, UserRound,
   HardHat, ClipboardList, AlarmClock, CalendarDays, Briefcase, Sun, Megaphone, UsersRound, Trophy, Swords, Medal,
-  BadgeDollarSign, BellRing, Radio, Wrench, MoreHorizontal, Search,
+  BadgeDollarSign, BellRing, Radio, Wrench, MoreHorizontal, Search, Boxes,
 } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { useAuth } from "@/components/AuthGate";
@@ -40,6 +40,7 @@ const NAV = [
 
   { to: "/leads", label: "Leads", icon: Users, roles: ["owner", "sales"], group: "Sales" },
   { to: "/calculator", label: "Quote Calculator", icon: Calculator, roles: ["sales"], group: "Sales" },
+  { to: "/scope-calculator", label: "Scope Calculator", icon: Boxes, roles: ["owner"], group: "Sales" },
   { to: "/script", label: "Script", icon: MessageSquareText, roles: ["owner", "sales"], group: "Sales" },
   { to: "/commissions", label: "Commissions", icon: BadgeDollarSign, roles: ["owner", "sales"], group: "Sales" },
   { to: "/contacts", label: "Contacts", icon: BookUser, roles: ["owner"], group: "Sales" },

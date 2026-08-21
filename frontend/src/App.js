@@ -5,6 +5,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { AppProvider } from "@/context/AppContext";
 import AuthGate, { useAuth } from "@/components/AuthGate";
 import Calculator from "@/pages/Calculator";
+import ScopeCalculator from "@/pages/ScopeCalculator";
 import Script from "@/pages/Script";
 import Settings from "@/pages/Settings";
 import Layout from "@/components/Layout";
@@ -144,6 +145,7 @@ function RoleRoutes() {
         <Route path="/subscriptions" element={<Subscriptions />} />
         <Route path="/partner" element={<Partner />} />
         <Route path="/settings" element={<Settings />} />
+        <Route path="/scope-calculator" element={<ScopeCalculator />} />
         <Route path="/help" element={<Help />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

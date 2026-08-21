@@ -175,3 +175,11 @@ User choices: phase order approved · route optimization = free OSRM/OpenStreetM
 - Settings.jsx: new ScopePricingCard (testids scope-{key}-input, scope-pricing-save-btn), own save flow. /settings route is owner-only.
 - Verified: sales GET/PUT → 403, unauth → 401; owner PUT round-trip + per-key stamps; 3 baseline quote totals IDENTICAL before/after (A 1150/1250/312.50, B 1900/2100/525, C 1000/1100/275); build exit 0; quote-calc + auth pytest 40 passed.
 - Next: Step 3 (scope calculator page from haul-yeah-job-calculator-v2.jsx, owner-only) — awaiting user go-ahead.
+
+## 2026-08-21 — Step 3 DONE: Job Scope Calculator (owner-only)
+- New page /scope-calculator (pages/ScopeCalculator.jsx, default export ScopeCalculator). Scope arithmetic from v2 file byte-faithful (ROOMS/ITEMS/PACKING/ACCESS/MATERIALS/TRUCK_CF/TRUCK_LBS/crew sizing/billable-hour floor). Final pricing steps per spec, all from settings scope-pricing: labor=billMH×manHourRate; travel=tripFee×trucks (jobType-dependent); subtotal; ×(1+cushion); max(floor); ceil to roundingIncrement (never down); deposit=total×depositPct.
+- Job type selector truck/labor (default truck) — swaps trip fee AND floor. Output modes: Range (band via ±1 tier shift on high-variance, non-binding) and Final (single firm price+deposit) hard-gated behind Mark Survey Complete.
+- Saved scopes: lead_scopes collection (POST/GET /api/scopes, require_owner for now), client sends pricing snapshot; reopening uses stored snapshot (Settings changes never re-price). Restyled to design tokens (no hardcoded colors/fonts/inline style block); steppers 22px visual with 44px hit area (::before -inset-11px).
+- Nav: Layout NAV entry (owner, Sales group, Boxes icon); route only in owner branch of App.js.
+- Verified: roundUp(641)=650, floor clamps exactly at 375/650 when cushioned below (note: engine's 6-mh billable floor means min real labor-only job = $525; price floor binds only when cushioned<375), jobType switches fee+floor, snapshot survives manHourRate 65→80→65 change, sales/crew API 403 + URL redirect, quote-calc canonical vector intact, build exit 0, testing agent iteration_24 100% (10/10 scenarios).
+- Next: Step 4 (scopes on the lead: list/refine/start-new) — awaiting user.
