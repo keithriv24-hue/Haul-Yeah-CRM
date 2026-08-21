@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { Phone, Mail, Calculator, CreditCard, Truck, Plus, MapPin, CalendarDays, CalendarPlus, Home, Lightbulb, Package, StickyNote, Search, MessageSquare, ChevronRight, FileText, Undo2, BellRing } from "lucide-react";
 import { useApp } from "@/context/AppContext";
@@ -10,7 +10,6 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { InstructionBanner, PageTitle, Private, Money, AgeTimer, EmptyState, LoadingRows, ConfirmDeleteButton, FollowUpBadge, InvoiceBadge, SearchBar, searchMatch } from "@/components/Bits";
-import QuoteModal from "@/components/QuoteModal";
 import QuotePdfModal from "@/components/QuotePdfModal";
 import DepositModal from "@/components/DepositModal";
 import LeadModal from "@/components/LeadModal";
@@ -373,7 +372,8 @@ export default function Leads() {
   const [searchParams, setSearchParams] = useSearchParams();
   const filter = searchParams.get("filter") || "All";
   const setFilter = (v) => setSearchParams(v === "All" ? {} : { filter: v });
-  const [quoteLead, setQuoteLead] = useState(null);
+  const navigate = useNavigate();
+  const openScope = (l) => navigate(`/scope-calculator?lead=${l.id}&name=${encodeURIComponent(f(l, LF.name) || "")}`);
   const [pdfLead, setPdfLead] = useState(null);
   const [depositLead, setDepositLead] = useState(null);
   const [noteLead, setNoteLead] = useState(null);
@@ -438,12 +438,11 @@ export default function Leads() {
       ) : (
         <div className="grid items-start gap-4 md:grid-cols-2 xl:grid-cols-3">
           {leads.map((l) => (
-            <LeadCard key={l.id} lead={l} onQuote={setQuoteLead} onDeposit={setDepositLead} onNote={setNoteLead} onInvoice={setInvoiceLead} onPdf={setPdfLead} />
+            <LeadCard key={l.id} lead={l} onQuote={openScope} onDeposit={setDepositLead} onNote={setNoteLead} onInvoice={setInvoiceLead} onPdf={setPdfLead} />
           ))}
         </div>
       )}
 
-      {quoteLead && <QuoteModal key={quoteLead.id} lead={quoteLead} open={!!quoteLead} onOpenChange={(o) => !o && setQuoteLead(null)} />}
       {pdfLead && <QuotePdfModal key={pdfLead.id} lead={pdfLead} open={!!pdfLead} onOpenChange={(o) => !o && setPdfLead(null)} />}
       {depositLead && <DepositModal lead={depositLead} open={!!depositLead} onOpenChange={(o) => !o && setDepositLead(null)} />}
       {noteLead && <AddNoteDialog lead={noteLead} open={!!noteLead} onOpenChange={(o) => !o && setNoteLead(null)} />}

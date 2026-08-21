@@ -1,0 +1,37 @@
+{
+  "summary": "PRICING SPEC v2.0 full-stack verification. BACKEND spot regression (6/6 pytest): /api/settings/rates owner=200 with 44 keys incl. all v2 core fields (manHourRate 65, cushionPercent 10, stairFlightFee 80, etc.), sales(switched)=403, unauth=401; /api/scopes/pricing-values owner returns raw (cushion 10, manHourRate 65) and sales(switched) returns FOLDED (cushion 0, manHourRate 71.5); POST /api/scopes as sales with result.mode=final returns 403. FRONTEND (Playwright vs REACT_APP_BACKEND_URL): owner /calculator catch-all redirects to / (no Quote Calculator sidebar entry, Scope Calculator present); /scope-calculator loads with scope-calculator-page testid; 2BR package -> $1,250–$1,400 (matches spec); miles=30 -> scope-zone-note='Zone 2 — 21–40 mi · +$150' + band $1,400–$1,575; miles=70 -> scope-custom-quote-block appears and band card hidden; miles=10 restores band $1,250–$1,400; dropoff=NY -> scope-out-of-state-block + scope-state-refusal-card visible and scope-save-btn disabled; Settings page has scope-pricing-card with grouped v2 inputs (scope-stairFlightFee-input, scope-zone2Fee-input, scope-surchargePoolTable-input, scope-serviceStates-input) — edited stairFlightFee 80->85, saved (persisted), then restored to 80; Script page has all sections (Opening/Qualify/specialty/Objection/Close), script-surcharges + script-examples testids present, script-download-btn href='/haul-yeah-phone-script.docx' which returns HTTP 200 (40949 bytes docx MIME); Help page has help-pricing-cheatsheet with $65/$125/$75/$80/NJ and NO old $0.85/mile or $85/flight strings; regression owner routes / /leads /jobs /dispatch /settings load without pageerrors. SALES tier: /calculator redirects to /leads; sidebar has NO Quote Calculator, Scope Calculator visible; on /scope-calculator sales sees band ($1,250–$1,400 identical to owner because cushion is folded into sales values) but scope-mode-final / scope-survey-complete-toggle / scope-price-build / scope-margin-block are ALL ABSENT as required. CREW & MARKETING: /scope-calculator shows scope-no-access; sidebar has no Scope Calculator entry — pass. Only console warning remains the pre-existing MetaCard hydration warning (<div> in <p>) on /settings — carry-over from iteration_26, not introduced by this build.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "MetaCard (Settings)", "issue": "Pre-existing React hydration warning on /settings — <div> (Badge) descendant of <p> in MetaCard.jsx:131. Cosmetic only. Carry-over from iteration_26.", "selector": "[data-testid='meta-settings-card'] p", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_scope_v2_regression.py",
+    "/app/test_reports/pytest/scope_v2_regression.xml"
+  ],
+  "action_items": [
+    "OPTIONAL/LOW: Fix MetaCard.jsx:131 <p><div> hydration warning (still not addressed since iteration_26)."
+  ],
+  "critical_code_review_comments": [
+    "PRICING SPEC v2.0 implementation is clean and passes all review scenarios end-to-end: single source of truth at /api/settings/rates, correct 403 for sales, correct cushion-folding for sales /api/scopes/pricing-values (x1.10 dollar values, cushion set to 0), and correct scope-save 403 when sales requests mode=final.",
+    "Sales tier UX correctly hides mode-final/survey-complete/price-build/margin — no leak observed on 2BR flow.",
+    "Distance zone 4 (>60 miles) triggers scope-custom-quote-block and hides the band card as spec'd.",
+    "Out-of-state (dropoff=NY) shows scope-out-of-state-block banner, replaces price with scope-state-refusal-card, and disables scope-save-btn — full gating works.",
+    "The old Quote Calculator route (/calculator) is properly removed — catch-all routes owner to Dashboard and sales to /leads, no Quote Calculator sidebar entries remain.",
+    "/haul-yeah-phone-script.docx static asset is deployed and returns HTTP 200 with correct MIME (40949 bytes).",
+    "Only outstanding issue: MetaCard.jsx:131 pre-existing hydration warning (not part of this build)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_scope_v2_regression.py (new test file — 6 spot regression cases)"
+  ],
+  "success_rate": {"backend": "100% (6/6 spot regression)", "frontend": "100% (all v2.0 review scenarios pass across owner/sales/crew/marketing)"},
+  "test_credentials": "Owner HaulYeahAdmin / HaulYeah2026!, Sales ghost TestSalesAdmin, Crew ghost TestCrewAdmin, Marketing ghost TestMarketingAdmin (all HaulYeah2026!). Ghost accounts land as owner and must POST /api/auth/switch-role to activate the intended tier for backend testing — /app/backend/tests/test_scope_v2_regression.py handles this via switch_role kwarg on _login().",
+  "seed_data_creation": "None. stairFlightFee was momentarily edited 80->85 in Settings then restored to 80. No test scopes were persisted (save-btn was only tested-disabled on NY refusal). One transient TEST_ scope save attempt as sales was expected to 403 and did — nothing persisted.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "PRICING SPEC v2.0 is fully verified. Backend endpoint shapes: (a) GET /api/settings/rates returns FLAT dict of all rates (44 keys visible incl. _updatedAt metadata) — response is NOT wrapped in {values:...}. (b) GET /api/scopes/pricing-values returns FLAT dict too; folds cushion into every CUSHION_FOLDED_KEYS entry x(1+cushion/100) and sets cushionPercent=0 when tier=='sales'. (c) POST /api/scopes ScopeSavePayload requires: lead_id?, label?, inputs, pricing, result, survey_complete?, refined_from?, video?. Sales-tier 403 when result.mode=='final' or inputs.mode=='final'. (d) Ghost admins (TestSalesAdmin etc.) log in as OWNER by design; to test sales-tier behavior via curl/pytest you MUST call POST /api/auth/switch-role {role:'sales'} and use the returned token. The frontend sidebar 'Sales account' button at the bottom does this same call. (e) Scope calc canonical 2BR band with defaults = $1,250–$1,400 (was $1,150–$1,250 in v1). (f) Distance zones: 0-20 free, 21-40 +$150, 41-60 +$300, >60 blocked (scope-custom-quote-block). (g) NJ is the only serviceState; NY dropoff triggers refusal card. (h) 3BR+ hard 6-hour floor only visibly triggers scope-hard-floor-note when volume/items push billMH BELOW 6h*crew — using the 3BR package button (pkg3brHours=6.5) sets hours above the floor so the note stays hidden; this is correct per engine logic (hardFloorApplied requires floor to be the binding constraint).",
+  "rca of the issue": "N/A — no bugs found in this build. MetaCard.jsx:131 hydration warning is a pre-existing carry-over from iteration_26 (Badge div nested inside a p element)."
+}

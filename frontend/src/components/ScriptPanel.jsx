@@ -1,7 +1,7 @@
 import React from "react";
-import { AlertTriangle, ListChecks, MapPinOff } from "lucide-react";
+import { AlertTriangle, ListChecks, MapPinOff, MessagesSquare } from "lucide-react";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
-import { SCRIPT_SECTIONS, SURCHARGE_CHECKLIST, RED_FLAGS, NO_ADDRESS_RESPONSE } from "@/lib/scriptContent";
+import { SCRIPT_SECTIONS, SURCHARGE_CHECKLIST, RED_FLAGS, NO_ADDRESS_RESPONSE, SCRIPT_EXAMPLES } from "@/lib/scriptContent";
 
 const Say = ({ text, note }) => (
   <blockquote className="border-l-4 border-accent bg-accent/5 rounded-r-lg px-3 py-2 text-sm text-primary italic">
@@ -59,6 +59,21 @@ export const ScriptPanel = ({ defaultOpen = ["opening"] }) => (
         <ul className="text-xs text-destructive space-y-0.5 list-disc pl-4">
           {RED_FLAGS.items.map((it) => <li key={it}>{it}</li>)}
         </ul>
+      </div>
+      <div data-testid="script-examples" className="rounded-lg border border-border bg-surface-sunk/70 p-3">
+        <p className="text-xs font-bold uppercase tracking-wide text-ink-2 flex items-center gap-1.5 mb-2">
+          <MessagesSquare className="w-3.5 h-3.5 text-accent-ink" /> {SCRIPT_EXAMPLES.title}
+        </p>
+        <div className="space-y-2.5">
+          {SCRIPT_EXAMPLES.examples.map((ex) => (
+            <div key={ex.label}>
+              <p className="text-[11px] font-bold text-primary mb-1">{ex.label}</p>
+              <ul className="text-xs text-ink-2 space-y-0.5 pl-1">
+                {ex.lines.map((l, i) => <li key={i}>{l}</li>)}
+              </ul>
+            </div>
+          ))}
+        </div>
       </div>
       <div data-testid="script-no-address" className="rounded-lg border border-info/25 bg-info/10 p-3">
         <p className="text-xs font-bold uppercase tracking-wide text-info flex items-center gap-1.5 mb-2">

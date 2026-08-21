@@ -3,7 +3,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import {
   LayoutDashboard, Users, BookUser, Truck, KanbanSquare, PenLine, Receipt,
-  CreditCard, Handshake, HelpCircle, Eye, EyeOff, RefreshCw, KeyRound, LogOut, Calculator, SlidersHorizontal, MessageSquareText, Video, UserRound,
+  CreditCard, Handshake, HelpCircle, Eye, EyeOff, RefreshCw, KeyRound, LogOut, SlidersHorizontal, MessageSquareText, Video, UserRound,
   HardHat, ClipboardList, AlarmClock, CalendarDays, Briefcase, Sun, Megaphone, UsersRound, Trophy, Swords, Medal,
   BadgeDollarSign, BellRing, Radio, Wrench, MoreHorizontal, Search, Boxes,
 } from "lucide-react";
@@ -39,7 +39,6 @@ const NAV = [
   { to: "/days-off", label: "Days Off", icon: CalendarDays, roles: ["crew"], group: "My day" },
 
   { to: "/leads", label: "Leads", icon: Users, roles: ["owner", "sales"], group: "Sales" },
-  { to: "/calculator", label: "Quote Calculator", icon: Calculator, roles: ["sales"], group: "Sales" },
   { to: "/scope-calculator", label: "Scope Calculator", icon: Boxes, roles: ["owner", "sales"], group: "Sales" },
   { to: "/script", label: "Script", icon: MessageSquareText, roles: ["owner", "sales"], group: "Sales" },
   { to: "/commissions", label: "Commissions", icon: BadgeDollarSign, roles: ["owner", "sales"], group: "Sales" },
@@ -65,7 +64,7 @@ const NAV = [
 /** Four fixed thumb targets per role. Everything else lives behind More. */
 const PRIMARY_TABS = {
   owner: ["/", "/leads", "/jobs", "/crew"],
-  sales: ["/leads", "/calculator", "/script", "/team"],
+  sales: ["/leads", "/scope-calculator", "/script", "/team"],
   marketing: ["/marketing", "/tasks", "/blog", "/team"],
   crew: ["/today", "/jobs", "/clock", "/team"],
   employee: ["/projects", "/day-sheet", "/tasks", "/team"],

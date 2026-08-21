@@ -12,7 +12,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { InstructionBanner, Private, Money, AgeTimer, EmptyState, LoadingRows, ConfirmDeleteButton, FollowUpBadge, InvoiceBadge } from "@/components/Bits";
-import QuoteModal from "@/components/QuoteModal";
 import QuotePdfModal from "@/components/QuotePdfModal";
 import DepositModal from "@/components/DepositModal";
 import SquareInvoiceModal from "@/components/SquareInvoiceModal";
@@ -40,7 +39,6 @@ export default function LeadDetail() {
   const { role } = useAuth();
   const isSales = role === "sales";
   const isOwner = role === "owner";
-  const [quoteOpen, setQuoteOpen] = useState(false);
   const [pdfOpen, setPdfOpen] = useState(false);
   const [depositOpen, setDepositOpen] = useState(false);
   const [noteOpen, setNoteOpen] = useState(false);
@@ -294,7 +292,8 @@ export default function LeadDetail() {
                   <CalendarPlus className="w-3.5 h-3.5" /> Calendar
                 </a>
               </Button>
-              <Button data-testid="lead-detail-quote-btn" variant="outline" size="sm" className="gap-1 text-xs" onClick={() => setQuoteOpen(true)}>
+              <Button data-testid="lead-detail-quote-btn" variant="outline" size="sm" className="gap-1 text-xs"
+                onClick={() => navigate(`/scope-calculator?lead=${lead.id}&name=${encodeURIComponent(name || "")}`)}>
                 <Calculator className="w-3.5 h-3.5" /> Quote
               </Button>
               <Button data-testid="lead-detail-text-quote-btn" asChild variant="outline" size="sm" className="gap-1 text-xs" disabled={!phone || !quote}>
@@ -383,7 +382,6 @@ export default function LeadDetail() {
         </div>
       </div>
 
-      {quoteOpen && <QuoteModal key={lead.id} lead={lead} open={quoteOpen} onOpenChange={setQuoteOpen} />}
       {pdfOpen && <QuotePdfModal key={`pdf-${lead.id}`} lead={lead} open={pdfOpen} onOpenChange={setPdfOpen} />}
       {depositOpen && <DepositModal lead={lead} open={depositOpen} onOpenChange={setDepositOpen} />}
       {noteOpen && <AddNoteDialog lead={lead} open={noteOpen} onOpenChange={setNoteOpen} />}

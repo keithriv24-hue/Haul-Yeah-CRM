@@ -4,7 +4,6 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Toaster } from "@/components/ui/sonner";
 import { AppProvider } from "@/context/AppContext";
 import AuthGate, { useAuth } from "@/components/AuthGate";
-import Calculator from "@/pages/Calculator";
 import ScopeCalculator from "@/pages/ScopeCalculator";
 import Script from "@/pages/Script";
 import Settings from "@/pages/Settings";
@@ -48,7 +47,6 @@ function RoleRoutes() {
         <Route element={<Layout />}>
           <Route path="/leads" element={<Leads />} />
           <Route path="/leads/:id" element={<LeadDetail />} />
-          <Route path="/calculator" element={<Calculator />} />
           <Route path="/scope-calculator" element={<ScopeCalculator />} />
           <Route path="/script" element={<Script />} />
           <Route path="/commissions" element={<Commissions />} />
@@ -126,7 +124,6 @@ function RoleRoutes() {
         <Route path="/notifications" element={<Notifications />} />
         <Route path="/leads" element={<Leads />} />
         <Route path="/leads/:id" element={<LeadDetail />} />
-        <Route path="/calculator" element={<Calculator />} />
         <Route path="/script" element={<Script />} />
         <Route path="/commissions" element={<Commissions />} />
         <Route path="/contacts" element={<Contacts />} />

@@ -314,31 +314,48 @@ class RecordPayload(BaseModel):
 mongo_client = AsyncIOMotorClient(os.environ["MONGO_URL"])
 mongo_db = mongo_client[os.environ["DB_NAME"]]
 
+# ------- Pricing Spec v2.0 — the SINGLE source of truth for every dollar the calculator uses.
 DEFAULT_RATES = {
-    "manHour": 65,
-    "cushionPercent": 10,
-    "travelTruck": 125,
-    "travelLabor": 75,
-    "mileageAllowance": 20,
-    "overageRate": 0.85,
-    "stairFlight": 85,
-    "packingRate": 65,
-    "depositPercent": 25,
-    "roundingIncrement": 50,
+    # core
+    "manHourRate": 65.0, "cushionPercent": 10.0, "depositPercent": 25.0,
+    "roundingIncrement": 25.0, "manHoursPer100CuFt": 2.10,
+    # trip fees, price floors, hour minimums
+    "tripFeeTruck": 125.0, "tripFeeLabor": 75.0,
+    "floorTruck": 650.0, "floorLabor": 375.0,
+    "minHoursTruck": 3.0, "minHoursLabor": 2.0,
+    # distance zones (one-way miles; beyond zone 3 = quote individually)
+    "zone1MaxMiles": 20.0, "zone1Fee": 0.0,
+    "zone2MaxMiles": 40.0, "zone2Fee": 150.0,
+    "zone3MaxMiles": 60.0, "zone3Fee": 300.0,
+    # access & handling (flat, never volume-scaled)
+    "stairFlightFee": 80.0, "longCarryFee": 100.0, "disassemblyFee": 100.0, "extraStopFee": 125.0,
+    # specialty surcharges
+    "surchargeUprightPiano": 500.0, "surchargeGrandPiano": 800.0, "surchargePoolTable": 600.0,
+    "surchargeSafeT1": 200.0, "surchargeSafeT2": 500.0, "surchargeSafeT3": 800.0,
+    "surchargeGymT1": 150.0, "surchargeGymT2": 300.0, "surchargeMotorcycle": 300.0,
+    # materials
+    "materialMattressBag": 15.0, "materialWardrobeBox": 12.0, "materialTvBox": 25.0,
+    # rules
+    "hardFloorBedrooms": 3.0, "hardFloorHours": 6.0,
+    # package defaults (crew / hours-on-site per home size)
+    "pkgStudioCrew": 2.0, "pkgStudioHours": 3.5,
+    "pkg2brCrew": 3.0, "pkg2brHours": 5.5,
+    "pkg3brCrew": 4.0, "pkg3brHours": 6.5,
+    "pkg4brCrew": 4.0, "pkg4brHours": 8.0,
 }
+RATE_STRING_KEYS = {"serviceStates": "NJ"}
 
-
-class RatesPayload(BaseModel):
-    manHour: float
-    cushionPercent: float
-    travelTruck: float
-    travelLabor: float
-    mileageAllowance: float
-    overageRate: float
-    stairFlight: float
-    packingRate: float
-    depositPercent: float
-    roundingIncrement: float
+# dollar keys that get the cushion folded in for the sales tier, so the payload
+# they receive never contains the cushion itself yet prices out identically
+CUSHION_FOLDED_KEYS = (
+    "manHourRate", "tripFeeTruck", "tripFeeLabor",
+    "zone1Fee", "zone2Fee", "zone3Fee",
+    "stairFlightFee", "longCarryFee", "disassemblyFee", "extraStopFee",
+    "surchargeUprightPiano", "surchargeGrandPiano", "surchargePoolTable",
+    "surchargeSafeT1", "surchargeSafeT2", "surchargeSafeT3",
+    "surchargeGymT1", "surchargeGymT2", "surchargeMotorcycle",
+    "materialMattressBag", "materialWardrobeBox", "materialTvBox",
+)
 
 
 app = FastAPI(title="Haul Yeah Moving CRM Proxy")
@@ -495,104 +512,61 @@ async def health():
     return {"airtable_configured": bool(get_api_key()), "base_id_configured": bool(get_base_id())}
 
 
-@api_router.get("/settings/rates")
-async def get_rates(role: str = Depends(require_auth)):
-    if role not in ("owner", "sales"):
-        raise HTTPException(status_code=403, detail="Your role can't open this.")
+async def get_rates_values() -> Dict[str, Any]:
+    """Current pricing config. Seeds from defaults (migrating any legacy scope_pricing keys) on first read."""
     doc = await mongo_db.settings.find_one({"_id": "calculator_rates"}) or {}
-    return {**DEFAULT_RATES, **{k: v for k, v in doc.items() if k in DEFAULT_RATES}, "_updatedAt": doc.get("_updatedAt", {})}
+    stored = doc.get("pricing_v2")
+    if not stored:
+        legacy = doc.get("scope_pricing") or {}
+        stored = {**DEFAULT_RATES, **{k: v for k, v in legacy.items() if k in DEFAULT_RATES}, **RATE_STRING_KEYS}
+        await mongo_db.settings.update_one(
+            {"_id": "calculator_rates"},
+            {"$set": {"pricing_v2": stored, "pricing_v2_updated_at": {}}}, upsert=True)
+    out: Dict[str, Any] = {**DEFAULT_RATES, **RATE_STRING_KEYS}
+    out.update({k: v for k, v in stored.items() if k in DEFAULT_RATES or k in RATE_STRING_KEYS})
+    return out
+
+
+@api_router.get("/settings/rates")
+async def get_rates(p: Dict[str, Any] = Depends(require_owner)):
+    values = await get_rates_values()
+    doc = await mongo_db.settings.find_one({"_id": "calculator_rates"}) or {}
+    return {**values, "_updatedAt": doc.get("pricing_v2_updated_at", {})}
 
 
 @api_router.put("/settings/rates")
-async def save_rates(payload: RatesPayload, role: str = Depends(require_auth)):
-    if role != "owner":
-        raise HTTPException(status_code=403, detail="Only the owner can change rates.")
-    rates = payload.model_dump()
-    if any(v < 0 for v in rates.values()):
-        raise HTTPException(status_code=422, detail="Rates can't be negative.")
-    if rates["roundingIncrement"] < 1:
-        raise HTTPException(status_code=422, detail="The rounding increment must be at least $1.")
-    doc = await mongo_db.settings.find_one({"_id": "calculator_rates"}) or {}
-    current = {**DEFAULT_RATES, **{k: v for k, v in doc.items() if k in DEFAULT_RATES}}
-    stamps = doc.get("_updatedAt", {})
-    now_iso = datetime.now(timezone.utc).isoformat()
-    for k, v in rates.items():
-        if v != current.get(k):
-            stamps[k] = now_iso
-    await mongo_db.settings.update_one({"_id": "calculator_rates"}, {"$set": {**rates, "_updatedAt": stamps}}, upsert=True)
-    return {**rates, "_updatedAt": stamps}
-
-
-# ------- Scope calculator pricing (owner-only; consumed by the Job Scope Calculator, NOT the Quote Calculator)
-
-DEFAULT_SCOPE_PRICING = {
-    "manHourRate": 65.0,
-    "cushionPercent": 10.0,
-    "tripFeeTruck": 125.0,
-    "tripFeeLabor": 75.0,
-    "floorTruck": 650.0,
-    "floorLabor": 375.0,
-    "roundingIncrement": 25.0,
-    "depositPercent": 25.0,
-    "manHoursPer100CuFt": 2.10,
-}
-
-
-class ScopePricingPayload(BaseModel):
-    manHourRate: float
-    cushionPercent: float
-    tripFeeTruck: float
-    tripFeeLabor: float
-    floorTruck: float
-    floorLabor: float
-    roundingIncrement: float
-    depositPercent: float
-    manHoursPer100CuFt: float
-
-
-async def get_scope_pricing_values() -> Dict[str, Any]:
-    doc = await mongo_db.settings.find_one({"_id": "calculator_rates"}) or {}
-    stored = doc.get("scope_pricing") or {}
-    if not stored:
-        await mongo_db.settings.update_one(
-            {"_id": "calculator_rates"},
-            {"$set": {"scope_pricing": dict(DEFAULT_SCOPE_PRICING), "scope_pricing_updated_at": {}}},
-            upsert=True)
-        stored = dict(DEFAULT_SCOPE_PRICING)
-    return {**DEFAULT_SCOPE_PRICING, **{k: v for k, v in stored.items() if k in DEFAULT_SCOPE_PRICING}}
-
-
-@api_router.get("/settings/scope-pricing")
-async def get_scope_pricing(p: Dict[str, Any] = Depends(require_owner)):
-    values = await get_scope_pricing_values()
-    doc = await mongo_db.settings.find_one({"_id": "calculator_rates"}) or {}
-    return {**values, "_updatedAt": doc.get("scope_pricing_updated_at", {})}
-
-
-@api_router.put("/settings/scope-pricing")
-async def save_scope_pricing(payload: ScopePricingPayload, p: Dict[str, Any] = Depends(require_owner)):
-    values = payload.model_dump()
-    if any(v < 0 for v in values.values()):
-        raise HTTPException(status_code=422, detail="Scope pricing values can't be negative.")
+async def save_rates(payload: Dict[str, Any], p: Dict[str, Any] = Depends(require_owner)):
+    current = await get_rates_values()
+    values = dict(current)
+    for k, v in payload.items():
+        if k in DEFAULT_RATES:
+            try:
+                n = float(v)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=422, detail=f"'{k}' must be a number.")
+            if n < 0:
+                raise HTTPException(status_code=422, detail="Rates can't be negative.")
+            values[k] = n
+        elif k in RATE_STRING_KEYS:
+            values[k] = (str(v or "").strip().upper()[:100]) or RATE_STRING_KEYS[k]
     if values["roundingIncrement"] < 1:
         raise HTTPException(status_code=422, detail="The rounding increment must be at least $1.")
     doc = await mongo_db.settings.find_one({"_id": "calculator_rates"}) or {}
-    current = {**DEFAULT_SCOPE_PRICING, **(doc.get("scope_pricing") or {})}
-    stamps = doc.get("scope_pricing_updated_at", {})
+    stamps = doc.get("pricing_v2_updated_at", {})
     ts = datetime.now(timezone.utc).isoformat()
     for k, v in values.items():
         if v != current.get(k):
             stamps[k] = ts
     await mongo_db.settings.update_one(
         {"_id": "calculator_rates"},
-        {"$set": {"scope_pricing": values, "scope_pricing_updated_at": stamps}}, upsert=True)
+        {"$set": {"pricing_v2": values, "pricing_v2_updated_at": stamps}}, upsert=True)
     return {**values, "_updatedAt": stamps}
 
 
 # ------- Saved job scopes (lead_scopes) + calculator access tiers
 # Tiers: owner (everything) · final (final quotes, no margin) · survey (no pricing) · sales (range only)
 
-SCOPE_MONETARY_KEYS = ("bandLo", "bandHi", "finalTotal", "deposit")
+SCOPE_MONETARY_KEYS = ("bandLo", "bandHi", "finalTotal", "deposit", "distFee")
 
 
 async def scope_tier_for(p: Dict[str, Any]) -> Optional[str]:
@@ -630,6 +604,7 @@ def redact_scope_doc(doc: Dict[str, Any], tier: str) -> Dict[str, Any]:
         d["pricing"] = {}
         result.pop("finalTotal", None)
         result.pop("deposit", None)
+        result.pop("distFee", None)
     d["result"] = result
     return d
 
@@ -665,7 +640,15 @@ async def scope_pricing_values(request: Request):
     p, tier = await require_scope_tier(request)
     if tier == "survey":
         raise HTTPException(status_code=403, detail="Survey access doesn't include pricing.")
-    return await get_scope_pricing_values()
+    values = await get_rates_values()
+    if tier == "sales":
+        # fold the cushion into every dollar figure — sales quotes identical numbers
+        # without ever receiving the cushion (or margin) itself
+        factor = 1 + float(values.get("cushionPercent", 0)) / 100
+        for k in CUSHION_FOLDED_KEYS:
+            values[k] = round(float(values.get(k, 0)) * factor, 2)
+        values["cushionPercent"] = 0.0
+    return values
 
 
 @api_router.post("/scopes")
@@ -676,10 +659,22 @@ async def save_scope(payload: ScopeSavePayload, request: Request):
     wants_final = (payload.result or {}).get("mode") == "final" or (payload.inputs or {}).get("mode") == "final"
     if wants_final and tier not in ("owner", "final"):
         raise HTTPException(status_code=403, detail="Your access level can't produce a final quote.")
-    if tier == "survey":
-        pricing = await get_scope_pricing_values()  # server-side snapshot; never returned to this tier
+    server_values = await get_rates_values()
+    if tier in ("owner", "final"):
+        # snapshot the values the client actually priced with (true, unfolded values)
+        pricing = {}
+        for k, v in server_values.items():
+            sent = (payload.pricing or {}).get(k, v)
+            if k in RATE_STRING_KEYS:
+                pricing[k] = str(sent)[:100]
+            else:
+                try:
+                    pricing[k] = float(sent)
+                except (TypeError, ValueError):
+                    pricing[k] = float(v)
     else:
-        pricing = {k: float(payload.pricing.get(k, v)) for k, v in DEFAULT_SCOPE_PRICING.items()}
+        # sales gets folded values / survey gets none — snapshot server truth instead
+        pricing = server_values
     result = dict(payload.result or {})
     if tier == "survey":
         for k in SCOPE_MONETARY_KEYS:

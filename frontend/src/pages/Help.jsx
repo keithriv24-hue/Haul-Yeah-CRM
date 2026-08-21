@@ -1,10 +1,10 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { PhoneCall, Calculator, CreditCard, Truck, CheckCircle2, Star, Video } from "lucide-react";
 import { InstructionBanner, PageTitle } from "@/components/Bits";
 import { Button } from "@/components/ui/button";
-import { useApp } from "@/context/AppContext";
-import { fmtMoney, fmtMoneyCents } from "@/lib/format";
-import { useLivePricing } from "@/components/QuoteCalculator";
+import { fmtMoney } from "@/lib/format";
+import { getRates } from "@/lib/api";
+import { DEFAULT_RATES } from "@/lib/pricing";
 
 const STEPS = [
   {
@@ -14,13 +14,13 @@ const STEPS = [
   },
   {
     icon: Calculator,
-    title: "2. Quote the move",
-    text: "Use the Quote button on the lead card or the Quote Calculator page. Pick crew size, hours, travel type, miles, stairs, packing, and any big items. The app shows one final price plus the deposit. Say it with confidence.",
+    title: "2. Scope and quote the move",
+    text: "Use the Quote button on the lead card or the Scope Calculator page. Pick a package or scope room by room, set distance and access, and read the range out loud. After a survey (or a received video), it becomes one firm price.",
   },
   {
     icon: CreditCard,
     title: "3. Send the deposit link",
-    text: "Send a Square invoice for the deposit shown by the calculator, or make a payment link in your Square dashboard and paste it in the Deposit window. The app saves it to the lead and writes the email for you.",
+    text: "Send a Square invoice for the 25% deposit shown by the calculator, or make a payment link in your Square dashboard and paste it in the Deposit window. The app saves it to the lead and writes the email for you.",
   },
   {
     icon: Truck,
@@ -40,9 +40,10 @@ const STEPS = [
 ];
 
 export default function Help() {
-  const { rates: ctxRates } = useApp();
-  const { rates, items } = useLivePricing(ctxRates);
-  const activeItems = items.filter((it) => it.active);
+  const [rates, setRates] = useState(DEFAULT_RATES);
+  useEffect(() => {
+    getRates().then(setRates).catch(() => {});
+  }, []);
   return (
     <div data-testid="help-page">
       <PageTitle title="Help" subtitle="From new lead to cash in the bank." />
@@ -62,20 +63,22 @@ export default function Help() {
         ))}
       </div>
 
-      <div className="bg-primary text-white rounded-lg p-6 mb-8">
-        <h2 className="font-display font-bold text-lg mb-3">Pricing cheat sheet (current rates)</h2>
+      <div className="bg-primary text-white rounded-lg p-6 mb-8" data-testid="help-pricing-cheatsheet">
+        <h2 className="font-display font-bold text-lg mb-3">Pricing cheat sheet (v2.0 — current values)</h2>
         <ul className="text-sm space-y-1.5 text-white/85">
-          <li>{fmtMoney(rates.manHour)} per man-hour</li>
-          <li>Travel fee: {fmtMoney(rates.travelTruck)} with truck · {fmtMoney(rates.travelLabor)} labor-only</li>
-          <li>First {rates.mileageAllowance} round-trip miles free, then {fmtMoneyCents(rates.overageRate)} per extra mile</li>
-          <li>Stairs: {fmtMoney(rates.stairFlight)} per flight · Packing: {fmtMoney(rates.packingRate)} per man-hour</li>
-          {activeItems.length > 0 && (
-            <li data-testid="help-items-line">Big items: {activeItems.map((it) => `${it.name} ${fmtMoney(it.price)}`).join(" · ")}</li>
-          )}
-          <li>Final quote = subtotal + {rates.cushionPercent}% cushion, rounded up to the nearest {fmtMoney(rates.roundingIncrement)}</li>
-          <li>Deposit = {rates.depositPercent}% of the final quote</li>
+          <li>{fmtMoney(rates.manHourRate)} per man-hour, flat for every crew size</li>
+          <li>Trip fee: {fmtMoney(rates.tripFeeTruck)} truck · {fmtMoney(rates.tripFeeLabor)} labor-only (covers the first {rates.zone1MaxMiles} miles)</li>
+          <li>Distance one-way: 0–{rates.zone1MaxMiles} mi included · {Number(rates.zone1MaxMiles) + 1}–{rates.zone2MaxMiles} mi +{fmtMoney(rates.zone2Fee)} · {Number(rates.zone2MaxMiles) + 1}–{rates.zone3MaxMiles} mi +{fmtMoney(rates.zone3Fee)} · over {rates.zone3MaxMiles} = quote individually</li>
+          <li>Stairs: {fmtMoney(rates.stairFlightFee)} per flight, pickup AND drop-off counted separately</li>
+          <li>Long carry over 50 ft: {fmtMoney(rates.longCarryFee)} per location · Disassembly: {fmtMoney(rates.disassemblyFee)} per major piece</li>
+          <li>Piano: upright {fmtMoney(rates.surchargeUprightPiano)} / grand {fmtMoney(rates.surchargeGrandPiano)} · Pool table (slate) {fmtMoney(rates.surchargePoolTable)}</li>
+          <li>Safe: under 300 lb {fmtMoney(rates.surchargeSafeT1)} · 300–700 lb {fmtMoney(rates.surchargeSafeT2)} · over 700 lb {fmtMoney(rates.surchargeSafeT3)}</li>
+          <li>Gym: treadmill/single machine {fmtMoney(rates.surchargeGymT1)} · rack/multi-station {fmtMoney(rates.surchargeGymT2)} · free weights billed in hours</li>
+          <li>Floors: {fmtMoney(rates.floorTruck)} truck / {fmtMoney(rates.floorLabor)} labor-only · Minimums: {rates.minHoursTruck} hrs truck / {rates.minHoursLabor} hrs labor-only · 3BR+ has a hard {rates.hardFloorHours}-hour floor</li>
+          <li>Final number rounds UP to the nearest {fmtMoney(rates.roundingIncrement)} · Deposit = {rates.depositPercent}% · balance on completion</li>
+          <li>Service area: {rates.serviceStates} only — out-of-state moves are declined, full stop</li>
         </ul>
-        <p className="text-xs text-white/60 mt-3">One clean final price — no ranges. Change these numbers on the Settings page.</p>
+        <p className="text-xs text-white/60 mt-3">Quote a range on the call; one firm price after the survey. Change these numbers on the Settings page — the calculator follows instantly.</p>
       </div>
 
       <div className="surface p-5">

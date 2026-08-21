@@ -128,14 +128,14 @@ export const MetaCard = () => {
 
       {capi && (
         <div data-testid="meta-capi-status" className="mt-4 border-t border-border pt-3">
-          <p className="text-sm font-semibold text-primary flex items-center gap-2">
+          <div className="text-sm font-semibold text-primary flex items-center gap-2">
             Conversions API (ad signals)
             {capi.configured ? (
               <Badge variant="outline" className="text-[10px] bg-success/12 text-success border-success/30">On</Badge>
             ) : (
               <Badge variant="outline" className="text-[10px] bg-surface-sunk text-faint border-border-strong">Off</Badge>
             )}
-          </p>
+          </div>
           {capi.configured ? (
             <p data-testid="meta-capi-counts" className="text-[11px] text-faint mt-1">
               New leads and paid deposits are sent to Meta so your ads learn from real bookings.

@@ -71,7 +71,7 @@ export const AppProvider = ({ children }) => {
 
   useEffect(() => {
     checkHealth();
-    if (role === "owner" || role === "sales") getRates().then(setRates).catch(() => {});
+    if (role === "owner") getRates().then(setRates).catch(() => {});
     if (role === "owner") getBusinessApi().then(setBusiness).catch(() => {});
   }, [checkHealth, role]);
 

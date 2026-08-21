@@ -1,159 +1,21 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
-import { Save, RotateCcw, FolderOpen, X, PencilRuler } from "lucide-react";
+import { Save, RotateCcw, FolderOpen, X, PencilRuler, Ban } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { PageTitle } from "@/components/Bits";
 import { apiErrorMessage, getScopeApi, getScopeAccessApi, getScopePricingValuesApi, listScopesApi, saveScopeApi } from "@/lib/api";
+import {
+  TIERS, TRUCK_CF, TRUCK_LBS, ROOMS, ITEMS, PACKING, ACCESS, MATERIALS, NON_TRANSPORT,
+  PKGS, STATE_OPTIONS, NO_PRICING, LEGACY_ITEM_KEYS,
+  itemBill, materialPrice, scopeOutputs, stateGate,
+} from "@/lib/scopeEngine";
 
-/* Haul Yeah Moving — Job Scope Calculator (v2 port)
-   Scope arithmetic (ROOMS/ITEMS/PACKING/ACCESS/MATERIALS, volume/weight maths,
-   crew sizing, billable-hour floor) is calibrated — DO NOT ALTER.
-   Final pricing steps read from Settings → scope pricing (owner-only). */
-
-const TIERS = ["—", "Light", "Avg", "Packed"];
-const TRUCK_CF = 1500;      // usable cu ft, 26-ft box, blanket-wrapped
-const TRUCK_LBS = 9000;     // safe payload; verify each door-jamb sticker
-
-/* v = cu ft at Light/Avg/Packed · w = lbs per cu ft · i = what's included at each tier */
-const ROOMS = [
-  { g: "Bedrooms", k: "primary", n: "Primary bedroom", v: [180, 250, 340], w: 6, bed: true, i: [
-    "Queen bed set, 1 dresser, 1 nightstand, ~4 boxes",
-    "King/queen bed set, dresser, 2 nightstands, chest, TV, ~10 boxes",
-    "Above + armoire or wardrobe, bench, full mirror, packed closet, 20+ boxes" ] },
-  { g: "Bedrooms", k: "stdbed", n: "Standard bedroom", v: [130, 190, 260], w: 6, bed: true, i: [
-    "Full/twin bed, small dresser, ~3 boxes",
-    "Queen bed, dresser, nightstand, desk or chair, ~8 boxes",
-    "Above + bookcase, TV, toy storage, packed closet, 15+ boxes" ] },
-  { g: "Bedrooms", k: "smallbed", n: "Small bedroom / nursery", v: [90, 130, 180], w: 6, bed: true, i: [
-    "Twin bed or crib, small dresser, ~2 boxes",
-    "Bed, dresser, changing table or desk, ~6 boxes",
-    "Bed, dresser, glider, shelving, 12+ boxes" ] },
-
-  { g: "Living areas", k: "living", n: "Living room", v: [180, 275, 400], w: 6, i: [
-    "Sofa, coffee table, TV + stand, ~4 boxes",
-    "Sofa, loveseat or 2 chairs, coffee table, 2 end tables, TV + console, rug, ~10 boxes",
-    "Sectional, recliners, wall unit or bookcases, large TV, rug, lamps, 20+ boxes" ] },
-  { g: "Living areas", k: "family", n: "Family room / den", v: [220, 330, 480], w: 6, i: [
-    "Sectional, TV, ~4 boxes",
-    "Sectional, recliner, media console, TV, side tables, ~10 boxes",
-    "Above + bar, bookcases, game table, 20+ boxes" ] },
-  { g: "Living areas", k: "dining", n: "Dining room", v: [120, 200, 290], w: 8, i: [
-    "Table + 4 chairs, ~3 boxes",
-    "Table + 6 chairs, buffet or hutch, ~8 boxes china",
-    "Table + 8 chairs, china cabinet, buffet, bar cart, 15+ boxes glass/china" ] },
-  { g: "Living areas", k: "kitchen", n: "Kitchen", v: [90, 140, 220], w: 9, i: [
-    "~6 boxes, microwave, small table",
-    "Table + chairs, ~15 boxes, microwave, small appliances",
-    "25+ boxes, island or cart, full pantry, small appliances — major appliances counted separately" ] },
-  { g: "Living areas", k: "office", n: "Home office", v: [80, 130, 200], w: 10, i: [
-    "Desk, chair, ~3 boxes",
-    "Desk, chair, file cabinet, bookcase, monitors, ~8 boxes",
-    "L-desk, 2 file cabinets, multiple bookcases, printer, 15+ boxes of books" ] },
-  { g: "Living areas", k: "bath", n: "Bathroom", v: [15, 25, 40], w: 8, i: [
-    "~1 box", "~2 boxes, small cabinet, hamper", "~4 boxes, storage cabinet, linens" ] },
-  { g: "Living areas", k: "laundry", n: "Laundry room", v: [30, 60, 100], w: 7, i: [
-    "Shelving, ~2 boxes",
-    "Shelving, utility cart, ironing board, ~4 boxes",
-    "Cabinets, drying racks, 8+ boxes — washer/dryer counted separately" ] },
-  { g: "Living areas", k: "misc", n: "Hallways / linen closets", v: [30, 60, 110], w: 7, i: [
-    "Console table, ~2 boxes", "Linens, coats, ~5 boxes, small shelving", "10+ boxes, storage cabinets, coat closet" ] },
-
-  { g: "High-variance spaces", k: "basefin", n: "Basement — finished", v: [200, 350, 550], w: 7, risky: true, i: [
-    "Sofa, TV, ~5 boxes",
-    "Sofa, TV + stand, shelving, exercise piece, ~15 boxes",
-    "Full second living room + storage shelving, 30+ boxes and bins" ] },
-  { g: "High-variance spaces", k: "baseunfin", n: "Basement — unfinished", v: [150, 350, 700], w: 10, risky: true, i: [
-    "One shelving unit, ~8 boxes, hand tools",
-    "2–3 shelving units, workbench, tools, ~20 boxes and bins",
-    "Wall-to-wall shelving, workbench, spare furniture, 40+ boxes and bins" ] },
-  { g: "High-variance spaces", k: "attic", n: "Attic", v: [80, 200, 400], w: 6, risky: true, i: [
-    "~6 boxes or bins",
-    "~15 bins, holiday decor, luggage",
-    "30+ bins, spare furniture, filled to the rafters" ] },
-  { g: "High-variance spaces", k: "gar1", n: "Garage — 1 car", v: [150, 300, 500], w: 10, risky: true, i: [
-    "Car still parks in it. Bikes, a few bins, hand tools",
-    "No car fits, but you can walk to the back wall. Shelving, ~15 bins, mower, tools",
-    "It's at the door. Full shelving, workbench, 30+ bins, mower, spare fridge" ] },
-  { g: "High-variance spaces", k: "gar2", n: "Garage — 2 car", v: [300, 550, 900], w: 10, risky: true, i: [
-    "Both cars still park. Perimeter shelving, bins, bikes",
-    "One bay usable. Shelving on both walls, ~25 bins, mower, workbench",
-    "No bays. Wall-to-wall, 50+ bins, workbench, spare appliances, seasonal" ] },
-  { g: "High-variance spaces", k: "shed", n: "Shed", v: [60, 130, 240], w: 10, risky: true, i: [
-    "Mower, a few tools", "Mower, shelving, yard tools, ~8 bins", "Packed — shelving, equipment, 15+ bins" ] },
-  { g: "High-variance spaces", k: "patio", n: "Patio / deck", v: [60, 120, 220], w: 8, i: [
-    "Bistro set, grill",
-    "Patio set + 4–6 chairs, grill, umbrella, planters",
-    "Sectional patio set, grill, fire pit, heater, 8+ planters, deck box" ] },
-  { g: "High-variance spaces", k: "closet", n: "Walk-in closet overflow", v: [30, 60, 100], w: 5, i: [
-    "~2 wardrobe boxes", "~4 wardrobe boxes, shoe storage", "8+ wardrobe boxes, shelving, seasonal" ] },
-  { g: "High-variance spaces", k: "unit10", n: "Storage unit (10×10)", v: [400, 600, 800], w: 8, risky: true, i: [
-    "Half full, walkway down the middle", "Two-thirds full, stacked chest height", "Full to the door, floor to ceiling" ] },
-  { g: "High-variance spaces", k: "unit5", n: "Storage unit (5×10)", v: [200, 300, 400], w: 8, risky: true, i: [
-    "Half full", "Two-thirds full", "Full to the door" ] },
-];
-
-/* Items priced by handling, not just volume. mh = added man-hours each. */
-const ITEMS = [
-  { g: "Appliances", k: "fridge", n: "Refrigerator", cf: 60, lbs: 300, mh: 0.75 },
-  { g: "Appliances", k: "fridge2", n: "Fridge — French door / built-in", cf: 75, lbs: 400, mh: 1.25 },
-  { g: "Appliances", k: "washer", n: "Washer", cf: 25, lbs: 200, mh: 0.5 },
-  { g: "Appliances", k: "dryer", n: "Dryer", cf: 25, lbs: 150, mh: 0.5 },
-  { g: "Appliances", k: "range", n: "Range / oven", cf: 30, lbs: 200, mh: 0.5 },
-  { g: "Appliances", k: "freezer", n: "Chest freezer", cf: 35, lbs: 200, mh: 0.75 },
-
-  { g: "Heavy & awkward", k: "upright", n: "Upright piano", cf: 60, lbs: 500, mh: 1.5, bill: 500 },
-  { g: "Heavy & awkward", k: "grand", n: "Grand piano", cf: 100, lbs: 700, mh: 2.5, bill: 800 },
-  { g: "Heavy & awkward", k: "safe", n: "Safe / gun safe", cf: 30, lbs: 700, mh: 1.25, bill: 400 },
-  { g: "Heavy & awkward", k: "pool", n: "Pool table (slate)", cf: 90, lbs: 800, mh: 2.5, bill: 400 },
-  { g: "Heavy & awkward", k: "gym", n: "Squat rack / home gym", cf: 70, lbs: 500, mh: 1.25 },
-  { g: "Heavy & awkward", k: "tread", n: "Treadmill", cf: 40, lbs: 250, mh: 0.75 },
-  { g: "Heavy & awkward", k: "plates", n: "Weight set / plates", cf: 20, lbs: 400, mh: 0.75 },
-  { g: "Heavy & awkward", k: "mower", n: "Riding mower", cf: 60, lbs: 500, mh: 1.0 },
-  { g: "Heavy & awkward", k: "moto", n: "Motorcycle / ATV", cf: 80, lbs: 450, mh: 1.5, bill: 300 },
-
-  { g: "Fragile & oversized", k: "hutch", n: "China cabinet / hutch", cf: 60, lbs: 250, mh: 0.75 },
-  { g: "Fragile & oversized", k: "tv", n: 'TV 70"+', cf: 25, lbs: 80, mh: 0.5 },
-  { g: "Fragile & oversized", k: "marble", n: "Marble / glass table top", cf: 30, lbs: 300, mh: 0.75 },
-  { g: "Fragile & oversized", k: "sleeper", n: "Sleeper sofa", cf: 90, lbs: 300, mh: 0.5 },
-  { g: "Fragile & oversized", k: "tank", n: "Aquarium 50 gal+", cf: 25, lbs: 150, mh: 1.0 },
-];
-
-const PACKING = [
-  { n: "Fully packed, furniture broken down", m: 1.0 },
-  { n: "Mostly packed, a few loose items", m: 1.12 },
-  { n: "Partially packed — closets or kitchen loose", m: 1.3 },
-  { n: "Not packed", m: 1.6 },
-];
-
-/* Access adders scale with volume — one flight of stairs on 2,500 cu ft is not
-   the same job as one flight on 800. Base is calibrated at 800 cu ft. */
-const ACCESS = [
-  { k: "stairsO", n: "Flights of stairs — origin", per: 1.5, bill: 85, count: 6, scale: true },
-  { k: "stairsD", n: "Flights of stairs — destination", per: 1.5, bill: 85, count: 6, scale: true },
-  { k: "elevO", n: "Shared building elevator", per: 2.0, scale: true },
-  { k: "carryO", n: "Long carry >50 ft — origin", per: 1.5, scale: true },
-  { k: "carryD", n: "Long carry >50 ft — destination", per: 1.5, scale: true },
-  { k: "ladder", n: "Attic pull-down ladder only", per: 2.0 },
-  { k: "tight", n: "Destination furnished / tight", per: 2.0, scale: true },
-  { k: "noPark", n: "No truck parking — shuttle", per: 3.0, scale: true },
-  { k: "disasm", n: "Pieces needing disassembly", per: 0.75, count: 12 },
-  { k: "stops", n: "Extra stops (storage, 2nd address)", per: 1.0, bill: 125, count: 4 },
-];
-
-const MATERIALS = [
-  { k: "mattress", n: "Mattress bags", price: 15, cap: 8 },
-  { k: "wardrobe", n: "Wardrobe boxes", price: 12, cap: 20 },
-  { k: "tvbox", n: "TV boxes", price: 25, cap: 6 },
-];
-
-const NON_TRANSPORT = "Propane tanks · gasoline & fuel cans · paint & solvents · aerosols · pool chemicals · fertilizer · ammunition · fire extinguishers · perishables · live plants";
-
-/* survey tier gets no pricing values at all — engine runs with zeros, UI shows none */
-const NO_PRICING = { manHourRate: 0, cushionPercent: 0, tripFeeTruck: 0, tripFeeLabor: 0,
-  floorTruck: 0, floorLabor: 0, roundingIncrement: 25, depositPercent: 0, manHoursPer100CuFt: 2.1 };
+/* Haul Yeah Moving — Job Scope Calculator (Pricing Spec v2.0)
+   THE only calculator. All math lives in lib/scopeEngine.js; every dollar
+   comes from the pricing config served by the backend — nothing hardcoded. */
 
 const money = (n) => "$" + Math.round(n).toLocaleString();
 const moneyCents = (n) => "$" + Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -194,6 +56,10 @@ export default function ScopeCalculator() {
   const [pack, setPack] = useState(0);
   const [rate, setRate] = useState(2.1);
   const [jobType, setJobType] = useState("truck");
+  const [miles, setMiles] = useState("");
+  const [pickupState, setPickupState] = useState("NJ");
+  const [dropoffState, setDropoffState] = useState("NJ");
+  const [pkg, setPkg] = useState("");
   const [surveyComplete, setSurveyComplete] = useState(false);
   const [crewOverride, setCrewOverride] = useState(null);
   const [hoursOverride, setHoursOverride] = useState(null);
@@ -232,90 +98,26 @@ export default function ScopeCalculator() {
   }, [refineId]);
   /* eslint-enable react-hooks/exhaustive-deps */
 
-  const P = viewingSaved ? viewingSaved.pricing : livePricing;
+  /* Saved snapshots price from their stored values; live pricing fills any
+     key the snapshot pre-dates (older scopes saved before spec v2.0). */
+  const P = viewingSaved ? { ...(livePricing || {}), ...(viewingSaved.pricing || {}) } : livePricing;
 
-  /* ---- engine — scope arithmetic UNCHANGED from the calibrated v2 file ---- */
-  const price = (shift) => {
-    let cf = 0, lbs = 0, itemMH = 0, beds = 0;
-    ROOMS.forEach((r) => {
-      let lvl = dens[r.k] || 0; if (!lvl) return;
-      if (r.risky && shift) lvl = Math.min(3, Math.max(1, lvl + shift));
-      const n = cnt[r.k] || 1;
-      cf += r.v[lvl - 1] * n; lbs += r.v[lvl - 1] * n * r.w;
-      if (r.bed) beds += n;
-    });
-    ITEMS.forEach((it) => {
-      const n = qty[it.k] || 0; if (!n) return;
-      cf += it.cf * n; lbs += it.lbs * n; itemMH += it.mh * n;
-    });
-
-    const trucks = Math.max(1, Math.ceil(cf / TRUCK_CF), Math.ceil(lbs / TRUCK_LBS));
-    const sc = Math.max(1, cf / 800);          // volume scaling factor
-    const volMH = (cf / 100) * rate * PACKING[pack].m;
-
-    let accMH = 0, accBill = 0;
-    ACCESS.forEach((a) => {
-      const v = acc[a.k] || 0; if (!v) return;
-      accMH += a.per * v * (a.scale ? sc : 1);
-      if (a.bill) accBill += a.bill * v * (a.scale ? sc : 1);
-    });
-    let itemBill = 0;
-    ITEMS.forEach((it) => { if (it.bill && qty[it.k]) itemBill += it.bill * qty[it.k]; });
-    let matBill = 0;
-    MATERIALS.forEach((m) => { matBill += (mat[m.k] || 0) * m.price; });
-
-    let billMH = volMH + itemMH;
-    const schedMH = billMH + accMH;
-
-    let crewRec = schedMH < 12 ? 2 : schedMH < 24 ? 3 : 4;
-    if (trucks >= 2) crewRec = 3 * trucks;
-    const crew = crewOverride || crewRec;
-
-    const hourFloor = beds >= 3 ? 6 : 3;
-    billMH = Math.max(billMH, hourFloor * Math.min(crew, 4));
-    const onsiteRec = schedMH / crew;
-    let onsite = onsiteRec;
-    if (hoursOverride) {
-      billMH = hoursOverride * crew;   // explicit override — the owner's call beats the billable floor
-      onsite = hoursOverride;
-    }
-
-    /* ---- final pricing steps — every value from Settings, exact spec order ---- */
-    const manHourRate = P?.manHourRate ?? 0;
-    const tripFee = jobType === "labor" ? (P?.tripFeeLabor ?? 0) : (P?.tripFeeTruck ?? 0);
-    const priceFloor = jobType === "labor" ? (P?.floorLabor ?? 0) : (P?.floorTruck ?? 0);
-    const labor = billMH * manHourRate;                                   // 2
-    const travel = tripFee * trucks;                                      // 3
-    const sub = labor + travel + accBill + itemBill + matBill;            // 4
-    const cushioned = sub * (1 + (P?.cushionPercent ?? 0) / 100);         // 5
-    const total = Math.max(cushioned, priceFloor);                        // 6 (rounding applied at output)
-
-    return { cf, lbs, trucks, sc, volMH, itemMH, accMH, accBill, itemBill, matBill,
-      billMH, schedMH, crew, crewRec, onsite, onsiteRec, labor, travel, sub, cushioned, total, beds, priceFloor };
-  };
-
+  const inputs = { dens, cnt, qty, acc, mat, pack, rate, jobType, crewOverride, hoursOverride, miles: Number(miles) || 0, pkg };
   /* eslint-disable react-hooks/exhaustive-deps */
-  const r = useMemo(() => price(0), [dens, cnt, qty, acc, mat, pack, rate, jobType, crewOverride, hoursOverride, P]);
-  const lo = useMemo(() => price(-1), [dens, cnt, qty, acc, mat, pack, rate, jobType, crewOverride, hoursOverride, P]);
-  const hi = useMemo(() => price(+1), [dens, cnt, qty, acc, mat, pack, rate, jobType, crewOverride, hoursOverride, P]);
+  const out = useMemo(() => scopeOutputs(inputs, P || {}), [dens, cnt, qty, acc, mat, pack, rate, jobType, crewOverride, hoursOverride, miles, pkg, P]);
   /* eslint-enable react-hooks/exhaustive-deps */
+  const { r, bandLo, bandHi, spread, finalTotal, deposit, inc } = out;
 
-  const inc = Math.max(1, P?.roundingIncrement ?? 25);
-  const roundUp = (n) => Math.ceil(n / inc) * inc;                         // 7 — never down
-
-  const bandLo = roundUp(Math.max(r.priceFloor, Math.min(lo.total, r.total) * 0.94));
-  const bandHi = roundUp(Math.max(r.priceFloor, Math.max(hi.total, r.total) * 1.06));
-  const spread = bandLo > 0 ? (bandHi - bandLo) / bandLo : 0;
-  const finalTotal = roundUp(r.total);
-  const deposit = finalTotal * ((P?.depositPercent ?? 0) / 100);           // 8
+  const gate = stateGate(pickupState, dropoffState, P || {});
+  const customQuote = r.zone.custom;
 
   const surveyDone = surveyComplete || video.received; // a received video counts as a completed survey
 
   useEffect(() => {
-    if (!surveyDone && mode === "final") setMode("range");
-  }, [surveyDone, mode]);
+    if ((!surveyDone || customQuote || gate.blocked) && mode === "final") setMode("range");
+  }, [surveyDone, mode, customQuote, gate.blocked]);
 
-  const finalMode = mode === "final" && surveyDone;
+  const finalMode = mode === "final" && surveyDone && !customQuote && !gate.blocked;
 
   /* tier gates — UI mirrors of the backend enforcement, never the other way round */
   const isOwner = tier === "owner";
@@ -323,20 +125,34 @@ export default function ScopeCalculator() {
   const isSurvey = tier === "survey";
   const canFinal = isOwner || isFinalTier;
   const canSurveyToggle = isOwner || isFinalTier || isSurvey;
-  const showBuild = isOwner || isFinalTier;   // price build + man-hour figures + weight detail
+  const showBuild = isOwner || isFinalTier;   // price build + per-item dollar figures + weight detail
   const showPricing = !isSurvey;              // survey tier sees no pricing at all
 
   const flagged = ROOMS.filter((x) => x.risky && (dens[x.k] || 0) >= 2).map((x) => x.n);
   const overWeight = r.lbs > TRUCK_LBS * r.trucks * 0.92;
-  const clear = () => { setDens({}); setCnt({}); setQty({}); setAcc({}); setMat({}); setPack(0); setSurveyComplete(false); setMode("range"); setViewingSaved(null); setRefineFrom(null); setLabel(""); setCrewOverride(null); setHoursOverride(null); setVideo({ link: "", received: false, date: "" }); };
+  const clear = () => { setDens({}); setCnt({}); setQty({}); setAcc({}); setMat({}); setPack(0); setSurveyComplete(false); setMode("range"); setViewingSaved(null); setRefineFrom(null); setLabel(""); setCrewOverride(null); setHoursOverride(null); setVideo({ link: "", received: false, date: "" }); setMiles(""); setPickupState("NJ"); setDropoffState("NJ"); setPkg(""); };
 
   const loadSavedList = () => listScopesApi().then(setSavedList).catch((e) => toast.error(apiErrorMessage(e)));
 
+  const applyPkg = (k) => {
+    if (pkg === k) { setPkg(""); setCrewOverride(null); setHoursOverride(null); return; }
+    const def = PKGS.find((x) => x.k === k);
+    setPkg(k);
+    setCrewOverride(Number(P?.[def.crewKey]) || null);
+    setHoursOverride(Number(P?.[def.hoursKey]) || null);
+  };
+
   const applyInputs = (doc) => {
     const i = doc.inputs || {};
-    setDens(i.dens || {}); setCnt(i.cnt || {}); setQty(i.qty || {}); setAcc(i.acc || {}); setMat(i.mat || {});
+    const q = { ...(i.qty || {}) };
+    Object.entries(LEGACY_ITEM_KEYS).forEach(([oldK, newK]) => {
+      if (q[oldK]) { q[newK] = (q[newK] || 0) + q[oldK]; delete q[oldK]; }
+    });
+    setDens(i.dens || {}); setCnt(i.cnt || {}); setQty(q); setAcc(i.acc || {}); setMat(i.mat || {});
     setPack(i.pack || 0); setRate(i.rate || 2.1); setJobType(i.jobType || "truck");
     setCrewOverride(i.crewOverride ?? null); setHoursOverride(i.hoursOverride ?? null);
+    setMiles(i.miles ? String(i.miles) : ""); setPickupState(i.pickupState || "NJ"); setDropoffState(i.dropoffState || "NJ");
+    setPkg(i.pkg || "");
     const v = doc.video || {};
     setVideo({ link: v.link || "", received: !!v.received, date: v.received_date || "" });
     setSurveyComplete(!!doc.survey_complete);
@@ -369,15 +185,18 @@ export default function ScopeCalculator() {
         lead_id: leadId,
         label: label.trim() || leadName || null,
         refined_from: refineFrom?._id || null,
-        inputs: { dens, cnt, qty, acc, mat, pack, rate, jobType, crewOverride, hoursOverride, mode: finalMode ? "final" : "range" },
+        inputs: { dens, cnt, qty, acc, mat, pack, rate, jobType, crewOverride, hoursOverride,
+          miles: Number(miles) || 0, pickupState, dropoffState, pkg, mode: finalMode ? "final" : "range" },
         pricing: P,
         result: {
           cf: r.cf, lbs: r.lbs, trucks: r.trucks, crew: r.crew, crewRec: r.crewRec,
           onsiteHours: Math.round(r.onsite * 10) / 10,
           billMH: Math.round(r.billMH * 100) / 100, schedMH: Math.round(r.schedMH * 100) / 100,
-          bandLo, bandHi, finalTotal: finalMode ? finalTotal : null,
+          zone: r.zone.zone, distFee: customQuote ? null : r.distBill, customQuote,
+          bandLo: customQuote ? null : bandLo, bandHi: customQuote ? null : bandHi,
+          finalTotal: finalMode ? finalTotal : null,
           deposit: finalMode ? Math.round(deposit * 100) / 100 : null,
-          mode: finalMode ? "final" : "range", jobType,
+          mode: customQuote ? "custom" : finalMode ? "final" : "range", jobType,
         },
         survey_complete: surveyComplete,
         video: { link: video.link, received: video.received, received_date: video.date },
@@ -425,6 +244,16 @@ export default function ScopeCalculator() {
         </div>
       </div>
 
+      {gate.blocked && (
+        <div data-testid="scope-out-of-state-block" className="mb-4 flex items-start gap-3 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-[13px] text-primary">
+          <Ban className="w-4 h-4 text-destructive mt-0.5 shrink-0" />
+          <span>
+            <strong className="text-destructive">We don't take this move — {gate.badStates.join(" / ")} is out of our service area.</strong>{" "}
+            We move within {gate.allowed.join(", ")} only (no interstate authority). Politely decline — no quote, no referral, no "let me check."
+          </span>
+        </div>
+      )}
+
       {refineFrom && (
         <div data-testid="scope-refine-banner" className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-accent/40 bg-accent-wash px-4 py-2.5 text-[12.5px] text-primary">
           <span>
@@ -466,7 +295,8 @@ export default function ScopeCalculator() {
                   </span>
                 </button>
                 <span className="tnum text-ink-2 text-[13px] shrink-0">
-                  {s.result?.mode === "final" && s.result?.finalTotal ? money(s.result.finalTotal)
+                  {s.result?.mode === "custom" ? "custom"
+                    : s.result?.mode === "final" && s.result?.finalTotal ? money(s.result.finalTotal)
                     : s.result?.bandLo != null ? `${money(s.result.bandLo)}–${money(s.result.bandHi)}` : "—"}
                 </span>
                 <Button data-testid="scope-saved-refine-btn" size="sm" variant="outline" className="h-7 text-xs shrink-0" onClick={() => startRefine(s)}>
@@ -478,8 +308,8 @@ export default function ScopeCalculator() {
         </div>
       )}
 
-      {/* Job type + survey + mode controls */}
-      <div className="surface p-4 mb-4 flex flex-wrap items-center gap-x-6 gap-y-3">
+      {/* Job type + distance + survey + mode controls */}
+      <div className="surface p-4 mb-4 flex flex-wrap items-start gap-x-6 gap-y-3">
         <div>
           <Eyebrow className="mb-1">Job type</Eyebrow>
           <div className="flex gap-1.5">
@@ -492,10 +322,48 @@ export default function ScopeCalculator() {
               Labor only
             </button>
           </div>
-          {showPricing && (
-          <p className="text-[10.5px] text-faint mt-1">Sets the trip fee ({jobType === "labor" ? moneyCents(P.tripFeeLabor) : moneyCents(P.tripFeeTruck)}) and the price floor ({jobType === "labor" ? money(P.floorLabor) : money(P.floorTruck)}).</p>
+          {showBuild && (
+          <p className="text-[10.5px] text-faint mt-1">Trip fee {jobType === "labor" ? moneyCents(P.tripFeeLabor) : moneyCents(P.tripFeeTruck)} · floor {jobType === "labor" ? money(P.floorLabor) : money(P.floorTruck)} · min {jobType === "labor" ? P.minHoursLabor : P.minHoursTruck} hrs</p>
           )}
         </div>
+
+        <div>
+          <Eyebrow className="mb-1">Quick start — package defaults</Eyebrow>
+          <div className="flex gap-1.5 flex-wrap">
+            {PKGS.map((pk) => (
+              <button key={pk.k} data-testid={`scope-pkg-${pk.k}-btn`} aria-pressed={pkg === pk.k} onClick={() => applyPkg(pk.k)}
+                className={`px-3 min-h-[44px] text-xs font-bold rounded ${pkg === pk.k ? "bg-accent text-accent-foreground" : "bg-surface-sunk text-faint"}`}>
+                {pk.n}
+              </button>
+            ))}
+          </div>
+          <p className="text-[10.5px] text-faint mt-1">
+            {pkg ? `Sets crew & hours to the ${PKGS.find((x) => x.k === pkg)?.n} package — tap again to clear.` : "Seeds crew & hours before you scope room by room."}
+          </p>
+        </div>
+
+        <div>
+          <Eyebrow className="mb-1">Distance & service area</Eyebrow>
+          <div className="flex flex-wrap items-center gap-2">
+            <Input data-testid="scope-miles-input" type="number" min="0" max="500" placeholder="Miles"
+              value={miles} onChange={(e) => setMiles(e.target.value)} className="h-9 w-[84px] text-right tnum" />
+            <span className="text-[11px] text-faint">mi one-way</span>
+            <select data-testid="scope-pickup-state" aria-label="Pickup state" value={pickupState}
+              onChange={(e) => setPickupState(e.target.value)}
+              className="h-9 rounded-md border border-border bg-surface px-2 text-xs font-semibold text-primary">
+              {STATE_OPTIONS.map((s) => <option key={s} value={s}>{s === pickupState ? `from ${s}` : s}</option>)}
+            </select>
+            <select data-testid="scope-dropoff-state" aria-label="Drop-off state" value={dropoffState}
+              onChange={(e) => setDropoffState(e.target.value)}
+              className="h-9 rounded-md border border-border bg-surface px-2 text-xs font-semibold text-primary">
+              {STATE_OPTIONS.map((s) => <option key={s} value={s}>{s === dropoffState ? `to ${s}` : s}</option>)}
+            </select>
+          </div>
+          <p data-testid="scope-zone-note" className={`text-[10.5px] mt-1 ${customQuote ? "text-warning font-bold" : "text-faint"}`}>
+            Zone {r.zone.zone} — {r.zone.label}{showBuild && !customQuote && r.distBill > 0 ? ` · +${money(r.distBill)}` : ""}
+          </p>
+        </div>
+
         {canSurveyToggle && (
         <div>
           <Eyebrow className="mb-1">Survey</Eyebrow>
@@ -514,11 +382,11 @@ export default function ScopeCalculator() {
               className={`px-4 min-h-[44px] text-xs font-bold rounded ${!finalMode ? "bg-accent text-accent-foreground" : "bg-surface-sunk text-faint"}`}>
               Range
             </button>
-            <button data-testid="scope-mode-final" aria-pressed={finalMode} disabled={!surveyDone}
-              onClick={() => surveyDone && setMode("final")}
-              title={surveyDone ? "" : "Locked until the survey is complete or a video survey is received"}
+            <button data-testid="scope-mode-final" aria-pressed={finalMode} disabled={!surveyDone || customQuote || gate.blocked}
+              onClick={() => surveyDone && !customQuote && !gate.blocked && setMode("final")}
+              title={customQuote ? "Over-distance jobs are quoted individually" : surveyDone ? "" : "Locked until the survey is complete or a video survey is received"}
               className={`px-4 min-h-[44px] text-xs font-bold rounded disabled:opacity-40 disabled:cursor-not-allowed ${finalMode ? "bg-success text-white" : "bg-surface-sunk text-faint"}`}>
-              Final {surveyDone ? "" : "🔒"}
+              Final {surveyDone && !customQuote && !gate.blocked ? "" : "🔒"}
             </button>
           </div>
         </div>
@@ -605,7 +473,7 @@ export default function ScopeCalculator() {
                   <div className="grid grid-cols-[1fr_110px] gap-2 items-center py-1.5 border-b border-border" key={it.k}>
                     <span className="text-[13.5px] font-semibold text-primary">{it.n}
                       <span className="tnum text-faint font-normal text-[11px] ml-2">
-                        {it.cf}cf · {it.lbs}lb · +{it.mh}mh{showPricing && it.bill ? ` · $${it.bill}` : ""}
+                        {it.cf}cf · {it.lbs}lb · +{it.mh}mh{showBuild && it.billKey ? ` · $${itemBill(it, P)}` : ""}
                       </span></span>
                     <Step v={qty[it.k] || 0} lbl={it.n} max={4} set={(v) => setQty({ ...qty, [it.k]: v })} />
                   </div>
@@ -626,13 +494,13 @@ export default function ScopeCalculator() {
 
             <Eyebrow>Access conditions</Eyebrow>
             <p className="text-xs text-faint -mt-1 mb-2 leading-relaxed">
-              Stairs, carries and elevators scale with load size — currently ×{r.sc.toFixed(2)} at {r.cf.toLocaleString()} cu ft.
+              Stairs, carries and elevators add man-hours that scale with load size — currently ×{r.sc.toFixed(2)} at {r.cf.toLocaleString()} cu ft. Billed fees are flat.
             </p>
             {ACCESS.map((a) => (
               <div className="grid grid-cols-[1fr_110px] gap-2 items-center py-1.5 border-b border-border" key={a.k}>
                 <span className="text-[13.5px] font-semibold text-primary">{a.n}
                   <span className="tnum text-faint font-normal text-[11px] ml-2">
-                    +{a.per}mh{showPricing && a.bill ? ` · $${a.bill}` : ""}{a.scale ? " ×vol" : ""}</span></span>
+                    +{a.per}mh{showBuild && a.billKey ? ` · $${itemBill(a, P)}` : ""}{a.scale ? " ×vol" : ""}</span></span>
                 {a.count
                   ? <Step v={acc[a.k] || 0} lbl={a.n} max={a.count} set={(v) => setAcc({ ...acc, [a.k]: v })} />
                   : <button className={chip(!!acc[a.k])} aria-pressed={!!acc[a.k]}
@@ -644,7 +512,7 @@ export default function ScopeCalculator() {
             {MATERIALS.map((m) => (
               <div className="grid grid-cols-[1fr_110px] gap-2 items-center py-1.5 border-b border-border" key={m.k}>
                 <span className="text-[13.5px] font-semibold text-primary">{m.n}
-                  {showPricing && <span className="tnum text-faint font-normal text-[11px] ml-2">${m.price} ea</span>}</span>
+                  {showBuild && <span className="tnum text-faint font-normal text-[11px] ml-2">${materialPrice(m, P)} ea</span>}</span>
                 <Step v={mat[m.k] || 0} lbl={m.n} max={m.cap} set={(v) => setMat({ ...mat, [m.k]: v })} />
               </div>
             ))}
@@ -759,6 +627,11 @@ export default function ScopeCalculator() {
                 )}
               </span>
             </div>
+            {r.hardFloorApplied && (
+              <p data-testid="scope-hard-floor-note" className="text-[11px] text-warning font-semibold mt-1">
+                {Number(P.hardFloorHours) || 6}-hour minimum applied — 3BR+ moves never bill under it.
+              </p>
+            )}
             <p className="text-[10.5px] text-faint mt-1 leading-snug">
               {crewOverride != null || hoursOverride != null
                 ? (showPricing ? "Using your numbers — the quote below follows them." : "Using your numbers.")
@@ -766,7 +639,32 @@ export default function ScopeCalculator() {
             </p>
           </div>
 
-          {showPricing ? (
+          {!showPricing ? (
+          <div className="surface p-4" data-testid="scope-no-pricing-card">
+            <Eyebrow className="text-info">Survey walkthrough — no pricing at this access level</Eyebrow>
+            <p className="text-[12.5px] text-primary leading-relaxed">
+              Walk every room and set its tier, count the individual items, and note the access conditions.
+              When you've seen everything, press <strong>Mark survey complete</strong> and then
+              <strong> Submit to owner</strong>. The owner prices it from your scope.
+            </p>
+          </div>
+          ) : gate.blocked ? (
+          <div className="surface p-4 border-destructive/40" data-testid="scope-state-refusal-card">
+            <Eyebrow className="text-destructive">Out of service area — no quote</Eyebrow>
+            <p className="text-[12.5px] text-primary leading-relaxed">
+              This move touches {gate.badStates.join(" / ")}. We only move within {gate.allowed.join(", ")} —
+              decline politely and move to the next lead. Nothing to price, nothing to save.
+            </p>
+          </div>
+          ) : customQuote ? (
+          <div className="surface p-4 border-warning/50" data-testid="scope-custom-quote-block">
+            <Eyebrow className="text-warning">Custom quote required — over {Number(P.zone3MaxMiles) || 60} miles</Eyebrow>
+            <p className="text-[12.5px] text-primary leading-relaxed">
+              This distance is outside the flat zones, so the calculator won't put a number on it.
+              Save the scope and the owner prices it individually — drive time, fuel, and the day it eats.
+            </p>
+          </div>
+          ) : (
           <div className="surface p-4">
             <Eyebrow className={finalMode ? "text-success" : "text-accent-ink"}>
               {finalMode ? "Final quote — survey complete" : "Range — survey not complete · non-binding"}
@@ -810,7 +708,8 @@ export default function ScopeCalculator() {
             <Eyebrow className="mt-3.5">Price build</Eyebrow>
             <Stat label={`Labor · ${r.billMH.toFixed(1)} mh × ${moneyCents(P.manHourRate)}`} value={money(r.labor)} />
             <Stat label={`Trip fee (${jobType === "labor" ? "labor only" : "truck"}) × ${r.trucks}`} value={money(r.travel)} />
-            {r.accBill > 0 && <Stat label="Stairs / stops" value={money(r.accBill)} />}
+            {r.distBill > 0 && <Stat label={`Distance — zone ${r.zone.zone} (${r.zone.label})`} value={money(r.distBill)} />}
+            {r.accBill > 0 && <Stat label="Stairs / carries / stops" value={money(r.accBill)} />}
             {r.itemBill > 0 && <Stat label="Specialty handling" value={money(r.itemBill)} />}
             {r.matBill > 0 && <Stat label="Materials" value={money(r.matBill)} />}
             <Stat label={`+ ${P.cushionPercent}% cushion`} value={money(r.cushioned - r.sub)} />
@@ -827,15 +726,6 @@ export default function ScopeCalculator() {
                 are when damage claims happen.
               </div>
             )}
-          </div>
-          ) : (
-          <div className="surface p-4" data-testid="scope-no-pricing-card">
-            <Eyebrow className="text-info">Survey walkthrough — no pricing at this access level</Eyebrow>
-            <p className="text-[12.5px] text-primary leading-relaxed">
-              Walk every room and set its tier, count the individual items, and note the access conditions.
-              When you've seen everything, press <strong>Mark survey complete</strong> and then
-              <strong> Submit to owner</strong>. The owner prices it from your scope.
-            </p>
           </div>
           )}
 
@@ -856,12 +746,14 @@ export default function ScopeCalculator() {
               <Input data-testid="scope-label-input" placeholder="Label (customer / address)" value={label}
                 onChange={(e) => setLabel(e.target.value)} className="h-9 flex-1" />
               <Button data-testid="scope-save-btn" size="sm" className="gap-1.5 bg-accent hover:bg-accent-press min-h-[44px]"
-                disabled={saving || r.cf === 0} onClick={saveScope}>
+                disabled={saving || (r.cf === 0 && !pkg) || gate.blocked} onClick={saveScope}>
                 <Save className="w-3.5 h-3.5" /> {saving ? "Saving…" : isSurvey ? "Submit to owner" : refineFrom ? "Save as new version" : "Save scope"}
               </Button>
             </div>
             <p className="text-[11px] text-faint">
-              {isSurvey
+              {gate.blocked
+                ? "Out-of-state moves can't be saved — we refuse the job on the call."
+                : isSurvey
                 ? "Submitting sends your walkthrough scope to the owner — they price it from there."
                 : "Saving snapshots today's pricing values with the quote. Changing Settings later never re-prices a saved scope."}
             </p>
@@ -877,7 +769,7 @@ export default function ScopeCalculator() {
             {ownerBlock && (() => {
               const crewCost = r.schedMH * 25.3, truckOp = 140 * r.trucks, matCost = r.matBill * 0.4;
               const cost = crewCost + truckOp + matCost + 25 * r.trucks;
-              const worst = lo.total - (lo.schedMH * 25.3 + 140 * lo.trucks + 25 * lo.trucks);
+              const worst = out.lo.total - (out.lo.schedMH * 25.3 + 140 * out.lo.trucks + 25 * out.lo.trucks);
               const mid = finalMode ? finalTotal : (bandLo + bandHi) / 2;
               return (
                 <div className="mt-2" data-testid="scope-margin-block">
