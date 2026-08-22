@@ -29,7 +29,9 @@ CREW2_EMAIL = _require("TEST_CREW2_EMAIL")
 CREW2_PASSWORD = _require("TEST_CREW2_PASSWORD")
 CREW2_INITIAL_PASSWORD = os.environ.get("TEST_CREW2_INITIAL_PASSWORD") or CREW2_PASSWORD
 STARTING_PASSWORD = _require("TEST_STARTING_PASSWORD")
-# legacy shared role passwords — default to the backend's own env values
-SALES_LEGACY_PASSWORD = os.environ.get("TEST_SALES_LEGACY_PASSWORD") or _require("SALES_PASSWORD")
-EMPLOYEE_LEGACY_PASSWORD = os.environ.get("TEST_EMPLOYEE_LEGACY_PASSWORD") or _require("EMPLOYEE_PASSWORD")
+# legacy shared role passwords are RETIRED (2026-06) — kept optional for old test refs
+SALES_LEGACY_PASSWORD = (os.environ.get("TEST_SALES_LEGACY_PASSWORD")
+                         or os.environ.get("SALES_PASSWORD", "retired"))
+EMPLOYEE_LEGACY_PASSWORD = (os.environ.get("TEST_EMPLOYEE_LEGACY_PASSWORD")
+                            or os.environ.get("EMPLOYEE_PASSWORD", "retired"))
 QA_TRACK_TOKEN = _require("QA_TRACK_TOKEN")

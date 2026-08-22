@@ -94,6 +94,36 @@ export const formatExtraValue = (v) => {
   return String(v);
 };
 
+/* --- Tally form access fields (2026-06) — "Pickup access" / "Drop-off access" are
+   first-class; the old floor/stairs/elevator questions are dead and stay hidden. --- */
+const normFieldName = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+
+export const LEGACY_LEAD_FIELD_NAMES = new Set([
+  "floor", "new building floor", "stairs at destination", "stairs at new destination",
+  "elevator", "elevator at new location",
+]);
+export const isLegacyLeadField = (name) => LEGACY_LEAD_FIELD_NAMES.has(normFieldName(name));
+
+export const findAccessFieldIds = (schemaFields) => {
+  const out = { pickup: null, dropoff: null };
+  (schemaFields || []).forEach((fd) => {
+    const n = normFieldName(fd.name);
+    if (n === "pickup access" || n === "pick up access") out.pickup = fd.id;
+    else if (n === "drop off access" || n === "dropoff access") out.dropoff = fd.id;
+  });
+  return out;
+};
+
+export const leadAccess = (lead, schemaFields) => {
+  const ids = findAccessFieldIds(schemaFields);
+  const val = (id) => {
+    if (!id) return "";
+    const v = f(lead, id);
+    return v == null ? "" : formatExtraValue(v);
+  };
+  return { pickup: val(ids.pickup), dropoff: val(ids.dropoff), ids };
+};
+
 export const LEAD_STATUSES = ["New", "Contacted", "Warm", "Hot", "Quoted", "Booked", "Lost", "Cold"];
 export const HOME_SIZES = ["Studio/1BR", "2BR", "3BR", "4BR+", "Labor-only (no truck)"];
 export const LEAD_SOURCES = ["Meta Ad", "Google Business Profile", "Referral", "Repeat Customer", "Walk-in/Other", "Website — Direct"];

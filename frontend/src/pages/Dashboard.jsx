@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } from "recharts";
 import { Truck, AlertTriangle, Mail, PartyPopper, X } from "lucide-react";
@@ -9,8 +9,9 @@ import { WorkCalendar } from "@/components/WorkCalendar";
 import { CrewStatusCard } from "@/components/CrewStatusCard";
 import { CreditPromptsCard } from "@/components/team/CreditPromptsCard";
 import { AiOpsPanel } from "@/components/AiOpsPanel";
-import { LF, PF, TF, IF, SF, f, LEAD_STATUS_COLORS, LEAD_STATUSES, needsFollowUp } from "@/lib/fields";
+import { LF, PF, TF, SF, f, LEAD_STATUS_COLORS, LEAD_STATUSES, needsFollowUp } from "@/lib/fields";
 import { fmtMoney, fmtDate, minutesSince, ageLabel, todayISO, isOverdue, gmailCompose } from "@/lib/format";
+import { moneySummaryApi } from "@/lib/api";
 
 const num = (v) => Number(v) || 0;
 
@@ -26,16 +27,20 @@ const lastWeekendISO = () => {
 };
 
 export default function Dashboard() {
-  const { loadTable, records, recentPaid, dismissRecentPaid } = useApp();
+  const { loadTable, records, tableState, recentPaid, dismissRecentPaid } = useApp();
+  const [money, setMoney] = useState(null);
   useEffect(() => {
-    ["leads", "projects", "tasks", "invoices", "subscriptions"].forEach((t) => loadTable(t));
+    ["leads", "projects", "tasks", "subscriptions"].forEach((t) => loadTable(t));
+    moneySummaryApi()
+      .then(setMoney)
+      .catch(() => setMoney({ booked_total: 0, collected_total: 0, outstanding_total: 0 }));
   }, [loadTable]);
 
   const leads = records("leads");
   const projects = records("projects");
   const tasks = records("tasks");
-  const invoices = records("invoices");
   const subs = records("subscriptions");
+  const subsLoading = tableState("subscriptions").loading && !subs.length;
 
   const newLeads = leads.filter((l) => f(l, LF.status) === "New");
   const oldestNewMins = newLeads.length ? Math.max(...newLeads.map((l) => minutesSince(l.createdTime))) : 0;
@@ -43,11 +48,13 @@ export default function Dashboard() {
   const openLeads = leads.filter((l) => !["Lost", "Cold", "Booked"].includes(f(l, LF.status)));
   const callbacks = leads.filter(needsFollowUp);
   const pipeline = openLeads.reduce((s, l) => s + num(f(l, LF.quote)), 0);
-  const activeProjects = projects.filter((p) => f(p, PF.status) !== "Cancelled");
-  const booked = activeProjects.reduce((s, p) => s + (num(f(p, PF.finalRevenue)) || num(f(p, PF.quote))), 0);
-  const collected = invoices.filter((i) => f(i, IF.status) === "Paid").reduce((s, i) => s + num(f(i, IF.amount)), 0);
-  const outstanding = invoices.filter((i) => ["Sent", "Overdue"].includes(f(i, IF.status))).reduce((s, i) => s + num(f(i, IF.amount)), 0);
+  /* THE MONEY — one source of truth: Square (/api/money/summary). */
+  const booked = money?.booked_total || 0;
+  const collected = money?.collected_total || 0;
+  const outstanding = money?.outstanding_total || 0;
   const burn = subs.filter((s) => f(s, SF.status) === "Active").reduce((sum, s) => sum + num(f(s, SF.monthlyCost)), 0);
+  const moneyReady = money !== null;
+  const $ = (v) => (moneyReady ? fmtMoney(v) : "—");
 
   const statusData = LEAD_STATUSES.map((st) => ({
     name: st,
@@ -87,8 +94,8 @@ export default function Dashboard() {
         : ["- No jobs on the books last weekend."]),
       `Weekend revenue: ${fmtMoney(weekendRev)}`,
       "",
-      "MONEY:",
-      `- Collected (paid invoices): ${fmtMoney(collected)}`,
+      "MONEY (from Square):",
+      `- Collected (paid Square invoices): ${fmtMoney(collected)}`,
       `- Still owed to us: ${fmtMoney(outstanding)}`,
       "",
       "LEADS:",
@@ -168,19 +175,19 @@ export default function Dashboard() {
       <SectionTitle action={<Link to="/invoices" className="text-[12.5px] font-semibold text-primary transition-colors hover:text-accent-ink">Invoices</Link>}>
         The money
       </SectionTitle>
-      <div className="surface mb-7 grid grid-cols-2 gap-y-6 gap-x-4 p-4 sm:p-5 lg:grid-cols-4">
-        <Figure testId="kpi-booked" size="lg" label="Booked revenue" value={fmtMoney(booked)} sub="Jobs on the books" isPrivate />
-        <Figure testId="kpi-collected" size="lg" label="Collected" value={fmtMoney(collected)} sub="Paid invoices" isPrivate />
+      <div className="surface mb-7 grid grid-cols-2 gap-y-6 gap-x-4 p-4 sm:p-5 lg:grid-cols-4" data-testid="money-card">
+        <Figure testId="kpi-booked" size="lg" label="Booked revenue" value={$(booked)} sub="Deposit-backed jobs (Square)" isPrivate />
+        <Figure testId="kpi-collected" size="lg" label="Collected" value={$(collected)} sub="Paid Square invoices" isPrivate />
         <Figure
           testId="kpi-outstanding"
           size="lg"
           label="Owed to us"
-          value={fmtMoney(outstanding)}
-          sub="Sent + overdue invoices"
-          tone={outstanding > 0 ? "alert" : "default"}
+          value={$(outstanding)}
+          sub="Balances still due (Square)"
+          tone={moneyReady && outstanding > 0 ? "alert" : "default"}
           isPrivate
         />
-        <Figure testId="kpi-burn" size="lg" label="Monthly burn" value={fmtMoney(burn)} sub="Active subscriptions" isPrivate />
+        <Figure testId="kpi-burn" size="lg" label="Monthly burn" value={subsLoading ? "—" : fmtMoney(burn)} sub="Active subscriptions" isPrivate />
       </div>
 
       <SectionTitle action={<Link to="/leads" className="text-[12.5px] font-semibold text-primary transition-colors hover:text-accent-ink">All leads</Link>}>

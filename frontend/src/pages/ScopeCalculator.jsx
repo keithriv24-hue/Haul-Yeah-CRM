@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { Save, RotateCcw, FolderOpen, X, PencilRuler, Ban } from "lucide-react";
@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { PageTitle } from "@/components/Bits";
+import { useApp } from "@/context/AppContext";
+import { LF, f, leadAccess } from "@/lib/fields";
 import { apiErrorMessage, getScopeApi, getScopeAccessApi, getScopePricingValuesApi, listScopesApi, saveScopeApi } from "@/lib/api";
 import {
   TIERS, TRUCK_CF, TRUCK_LBS, ROOMS, ITEMS, PACKING, ACCESS, MATERIALS, NON_TRANSPORT,
@@ -76,6 +78,16 @@ export default function ScopeCalculator() {
   const [saving, setSaving] = useState(false);
   const [tier, setTier] = useState(null);
 
+  /* Lead context — access info from the Tally form + package prefill from home size */
+  const { loadTable, loadSchema, records, schemas } = useApp();
+  useEffect(() => {
+    if (!leadId) return;
+    loadTable("leads");
+    loadSchema("leads");
+  }, [leadId, loadTable, loadSchema]);
+  const lead = leadId ? records("leads").find((x) => x.id === leadId) : null;
+  const access = lead ? leadAccess(lead, schemas.leads) : null;
+
   useEffect(() => {
     getScopeAccessApi().then(({ tier: t }) => {
       setTier(t || "none");
@@ -109,15 +121,14 @@ export default function ScopeCalculator() {
   const { r, bandLo, bandHi, spread, finalTotal, deposit, inc } = out;
 
   const gate = stateGate(pickupState, dropoffState, P || {});
-  const customQuote = r.zone.custom;
 
   const surveyDone = surveyComplete || video.received; // a received video counts as a completed survey
 
   useEffect(() => {
-    if ((!surveyDone || customQuote || gate.blocked) && mode === "final") setMode("range");
-  }, [surveyDone, mode, customQuote, gate.blocked]);
+    if ((!surveyDone || gate.blocked) && mode === "final") setMode("range");
+  }, [surveyDone, mode, gate.blocked]);
 
-  const finalMode = mode === "final" && surveyDone && !customQuote && !gate.blocked;
+  const finalMode = mode === "final" && surveyDone && !gate.blocked;
 
   /* tier gates — UI mirrors of the backend enforcement, never the other way round */
   const isOwner = tier === "owner";
@@ -141,6 +152,19 @@ export default function ScopeCalculator() {
     setCrewOverride(Number(P?.[def.crewKey]) || null);
     setHoursOverride(Number(P?.[def.hoursKey]) || null);
   };
+
+  /* Quote pre-fill: seed the package (and job type) from the lead's home size, once. */
+  const leadPrefilled = useRef(false);
+  /* eslint-disable react-hooks/exhaustive-deps */
+  useEffect(() => {
+    if (!lead || !P || refineId || leadPrefilled.current) return;
+    leadPrefilled.current = true;
+    const size = f(lead, LF.homeSize);
+    if (size === "Labor-only (no truck)") { setJobType("labor"); return; }
+    const map = { "Studio/1BR": "studio", "2BR": "br2", "3BR": "br3", "4BR+": "br4" };
+    if (map[size] && !pkg) applyPkg(map[size]);
+  }, [lead, P]);
+  /* eslint-enable react-hooks/exhaustive-deps */
 
   const applyInputs = (doc) => {
     const i = doc.inputs || {};
@@ -192,11 +216,11 @@ export default function ScopeCalculator() {
           cf: r.cf, lbs: r.lbs, trucks: r.trucks, crew: r.crew, crewRec: r.crewRec,
           onsiteHours: Math.round(r.onsite * 10) / 10,
           billMH: Math.round(r.billMH * 100) / 100, schedMH: Math.round(r.schedMH * 100) / 100,
-          zone: r.zone.zone, distFee: customQuote ? null : r.distBill, customQuote,
-          bandLo: customQuote ? null : bandLo, bandHi: customQuote ? null : bandHi,
+          distFee: r.distBill, mileageExtra: r.mileage.extra,
+          bandLo, bandHi,
           finalTotal: finalMode ? finalTotal : null,
           deposit: finalMode ? Math.round(deposit * 100) / 100 : null,
-          mode: customQuote ? "custom" : finalMode ? "final" : "range", jobType,
+          mode: finalMode ? "final" : "range", jobType,
         },
         survey_complete: surveyComplete,
         video: { link: video.link, received: video.received, received_date: video.date },
@@ -251,6 +275,15 @@ export default function ScopeCalculator() {
             <strong className="text-destructive">We don't take this move — {gate.badStates.join(" / ")} is out of our service area.</strong>{" "}
             We move within {gate.allowed.join(", ")} only (no interstate authority). Politely decline — no quote, no referral, no "let me check."
           </span>
+        </div>
+      )}
+
+      {access && (access.pickup || access.dropoff) && (
+        <div data-testid="scope-lead-access" className="mb-4 flex flex-wrap gap-x-6 gap-y-1 rounded-lg border border-info/40 bg-info/10 px-4 py-2.5 text-[12.5px] text-primary">
+          <span className="font-bold">Lead access:</span>
+          {access.pickup && <span data-testid="scope-lead-access-pickup">Pickup — {access.pickup}</span>}
+          {access.dropoff && <span data-testid="scope-lead-access-dropoff">Drop-off — {access.dropoff}</span>}
+          <span className="basis-full text-[11px] text-faint">Set the stairs / elevator / carry inputs below to match.</span>
         </div>
       )}
 
@@ -323,7 +356,7 @@ export default function ScopeCalculator() {
             </button>
           </div>
           {showBuild && (
-          <p className="text-[10.5px] text-faint mt-1">Trip fee {jobType === "labor" ? moneyCents(P.tripFeeLabor) : moneyCents(P.tripFeeTruck)} · floor {jobType === "labor" ? money(P.floorLabor) : money(P.floorTruck)} · min {jobType === "labor" ? P.minHoursLabor : P.minHoursTruck} hrs</p>
+          <p className="text-[10.5px] text-faint mt-1">Trip fee {jobType === "labor" ? moneyCents(P.tripFeeLabor) : moneyCents(P.tripFeeTruck)} (first {Number(P.mileageFreeMiles) || 20} mi included) · floor {jobType === "labor" ? money(P.floorLabor) : money(P.floorTruck)} · min {jobType === "labor" ? P.minHoursLabor : P.minHoursTruck} hrs</p>
           )}
         </div>
 
@@ -359,8 +392,10 @@ export default function ScopeCalculator() {
               {STATE_OPTIONS.map((s) => <option key={s} value={s}>{s === dropoffState ? `to ${s}` : s}</option>)}
             </select>
           </div>
-          <p data-testid="scope-zone-note" className={`text-[10.5px] mt-1 ${customQuote ? "text-warning font-bold" : "text-faint"}`}>
-            Zone {r.zone.zone} — {r.zone.label}{showBuild && !customQuote && r.distBill > 0 ? ` · +${money(r.distBill)}` : ""}
+          <p data-testid="scope-mileage-note" className="text-[10.5px] mt-1 text-faint">
+            {r.mileage.extra > 0
+              ? `Mileage — ${r.mileage.extra} mi beyond the first ${r.mileage.free}${showBuild ? ` × ${moneyCents(P.mileageRatePerMile)}/mi · +${money(r.distBill)}` : ""}`
+              : `First ${r.mileage.free} miles included in the trip fee`}
           </p>
         </div>
 
@@ -382,11 +417,11 @@ export default function ScopeCalculator() {
               className={`px-4 min-h-[44px] text-xs font-bold rounded ${!finalMode ? "bg-accent text-accent-foreground" : "bg-surface-sunk text-faint"}`}>
               Range
             </button>
-            <button data-testid="scope-mode-final" aria-pressed={finalMode} disabled={!surveyDone || customQuote || gate.blocked}
-              onClick={() => surveyDone && !customQuote && !gate.blocked && setMode("final")}
-              title={customQuote ? "Over-distance jobs are quoted individually" : surveyDone ? "" : "Locked until the survey is complete or a video survey is received"}
+            <button data-testid="scope-mode-final" aria-pressed={finalMode} disabled={!surveyDone || gate.blocked}
+              onClick={() => surveyDone && !gate.blocked && setMode("final")}
+              title={surveyDone ? "" : "Locked until the survey is complete or a video survey is received"}
               className={`px-4 min-h-[44px] text-xs font-bold rounded disabled:opacity-40 disabled:cursor-not-allowed ${finalMode ? "bg-success text-white" : "bg-surface-sunk text-faint"}`}>
-              Final {surveyDone && !customQuote && !gate.blocked ? "" : "🔒"}
+              Final {surveyDone && !gate.blocked ? "" : "🔒"}
             </button>
           </div>
         </div>
@@ -656,14 +691,6 @@ export default function ScopeCalculator() {
               decline politely and move to the next lead. Nothing to price, nothing to save.
             </p>
           </div>
-          ) : customQuote ? (
-          <div className="surface p-4 border-warning/50" data-testid="scope-custom-quote-block">
-            <Eyebrow className="text-warning">Custom quote required — over {Number(P.zone3MaxMiles) || 60} miles</Eyebrow>
-            <p className="text-[12.5px] text-primary leading-relaxed">
-              This distance is outside the flat zones, so the calculator won't put a number on it.
-              Save the scope and the owner prices it individually — drive time, fuel, and the day it eats.
-            </p>
-          </div>
           ) : (
           <div className="surface p-4">
             <Eyebrow className={finalMode ? "text-success" : "text-accent-ink"}>
@@ -708,7 +735,7 @@ export default function ScopeCalculator() {
             <Eyebrow className="mt-3.5">Price build</Eyebrow>
             <Stat label={`Labor · ${r.billMH.toFixed(1)} mh × ${moneyCents(P.manHourRate)}`} value={money(r.labor)} />
             <Stat label={`Trip fee (${jobType === "labor" ? "labor only" : "truck"}) × ${r.trucks}`} value={money(r.travel)} />
-            {r.distBill > 0 && <Stat label={`Distance — zone ${r.zone.zone} (${r.zone.label})`} value={money(r.distBill)} />}
+            {r.distBill > 0 && <Stat label={`Mileage — ${r.mileage.extra} mi beyond the first ${r.mileage.free} × ${moneyCents(P.mileageRatePerMile)}/mi`} value={money(r.distBill)} />}
             {r.accBill > 0 && <Stat label="Stairs / carries / stops" value={money(r.accBill)} />}
             {r.itemBill > 0 && <Stat label="Specialty handling" value={money(r.itemBill)} />}
             {r.matBill > 0 && <Stat label="Materials" value={money(r.matBill)} />}

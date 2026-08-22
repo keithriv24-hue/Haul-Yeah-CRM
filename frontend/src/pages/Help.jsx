@@ -67,8 +67,8 @@ export default function Help() {
         <h2 className="font-display font-bold text-lg mb-3">Pricing cheat sheet (v2.0 — current values)</h2>
         <ul className="text-sm space-y-1.5 text-white/85">
           <li>{fmtMoney(rates.manHourRate)} per man-hour, flat for every crew size</li>
-          <li>Trip fee: {fmtMoney(rates.tripFeeTruck)} truck · {fmtMoney(rates.tripFeeLabor)} labor-only (covers the first {rates.zone1MaxMiles} miles)</li>
-          <li>Distance one-way: 0–{rates.zone1MaxMiles} mi included · {Number(rates.zone1MaxMiles) + 1}–{rates.zone2MaxMiles} mi +{fmtMoney(rates.zone2Fee)} · {Number(rates.zone2MaxMiles) + 1}–{rates.zone3MaxMiles} mi +{fmtMoney(rates.zone3Fee)} · over {rates.zone3MaxMiles} = quote individually</li>
+          <li>Trip fee: {fmtMoney(rates.tripFeeTruck)} truck · {fmtMoney(rates.tripFeeLabor)} labor-only (covers the first {rates.mileageFreeMiles} miles)</li>
+          <li>Mileage one-way: first {rates.mileageFreeMiles} mi included · every mile after that +{fmtMoney(rates.mileageRatePerMile)}/mi</li>
           <li>Stairs: {fmtMoney(rates.stairFlightFee)} per flight, pickup AND drop-off counted separately</li>
           <li>Long carry over 50 ft: {fmtMoney(rates.longCarryFee)} per location · Disassembly: {fmtMoney(rates.disassemblyFee)} per major piece</li>
           <li>Piano: upright {fmtMoney(rates.surchargeUprightPiano)} / grand {fmtMoney(rates.surchargeGrandPiano)} · Pool table (slate) {fmtMoney(rates.surchargePoolTable)}</li>

@@ -90,8 +90,8 @@ export const SURCHARGE_CHECKLIST = {
   title: "Cheat sheet (Pricing v2.0)",
   items: [
     "Trip fee — $125 truck / $75 labor-only (covers first 20 miles)",
-    "Distance one-way — 0–20 mi included · 21–40 mi +$150 · 41–60 mi +$300 · over 60 mi = owner quotes it individually",
-    "Stairs — $80 per flight, pickup AND drop-off counted separately",
+    "Mileage one-way — first 20 mi included · $0.85 per mile after that",
+    "Stairs — $85 per flight, pickup AND drop-off counted separately",
     "Long carry over 50 ft — $100 per location",
     "Disassembly / reassembly — $100 per major piece",
     "Piano — upright $500 / grand $800 (photos for grand)",
@@ -120,7 +120,7 @@ export const RED_FLAGS = {
 
 export const NO_ADDRESS_RESPONSE = {
   title: "No-address response",
-  say: "No problem — give me the two towns and I'll place it in a distance zone. Under 20 miles is included, 21 to 40 adds $150, 41 to 60 adds $300. We can lock your date now and tighten the number once you have the address.",
+  say: "No problem — give me the two towns and I'll get the mileage. The first 20 miles are included; after that it's just 85 cents a mile one-way. We can lock your date now and tighten the number once you have the address.",
 };
 
 export const SCRIPT_EXAMPLES = {
@@ -138,7 +138,7 @@ export const SCRIPT_EXAMPLES = {
       label: "Stairs objection — itemize, don't discount",
       lines: [
         "CUSTOMER: \u201cThat's more than the other guys quoted.\u201d",
-        "REP: \u201cI hear you. Here's the build: $480 of that is the stairs — three flights at your place and three at the new one, $80 a flight. Take the stairs out and we're right where they are. The difference is we showed you the number before move day, not after.\u201d",
+        "REP: \u201cI hear you. Here's the build: $510 of that is the stairs — three flights at your place and three at the new one, $85 a flight. Take the stairs out and we're right where they are. The difference is we showed you the number before move day, not after.\u201d",
       ],
     },
     {

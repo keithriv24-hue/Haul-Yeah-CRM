@@ -59,12 +59,11 @@ export default function AuthGate({ children }) {
 
   const submit = async (e) => {
     e.preventDefault();
-    if (!password) return;
+    if (!password || !username.trim()) return;
     setBusy(true);
     setError("");
     try {
-      const body = username.trim() ? { email: username.trim(), password } : { password };
-      const d = await loginApi(body);
+      const d = await loginApi({ email: username.trim(), password });
       localStorage.setItem("hy_token", d.token);
       localStorage.setItem("hy_role", d.role);
       localStorage.setItem("hy_can_switch", d.can_switch ? "1" : "0");
@@ -154,11 +153,11 @@ export default function AuthGate({ children }) {
             </button>
           </div>
           {error && <p data-testid="login-error" className="text-sm text-destructive mb-3">{error}</p>}
-          <Button data-testid="login-submit-button" type="submit" disabled={busy || !password} className="w-full gap-2 bg-accent hover:bg-accent-press">
+          <Button data-testid="login-submit-button" type="submit" disabled={busy || !password || !username.trim()} className="w-full gap-2 bg-accent hover:bg-accent-press">
             <LogIn className="w-4 h-4" /> {busy ? "Checking…" : "Sign in"}
           </Button>
           <p className="text-[11px] text-faint mt-4">
-            Crew and sales sign in with their email. Old shared passwords still work — leave the top box empty.
+            Everyone signs in with their own account — shared passwords are retired. Forgot yours? Ask the owner for a reset.
           </p>
         </form>
       </Shell>

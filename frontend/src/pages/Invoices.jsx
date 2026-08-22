@@ -11,6 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { InstructionBanner, PageTitle, Private, Money, KpiCard, EmptyState, LoadingRows, SearchBar, searchMatch } from "@/components/Bits";
 import { IF, CF, LF, f, INVOICE_STATUSES, PAYMENT_METHODS, STATUS_PILL } from "@/lib/fields";
 import { fmtDate, fmtMoney, todayISO, smsLink, payNudgeSmsBody } from "@/lib/format";
+import { moneySummaryApi } from "@/lib/api";
 
 const blank = { number: "", customer: "", amount: "", status: "Draft", issueDate: todayISO(), dueDate: "", payMethod: "Square", notes: "" };
 const num = (v) => Number(v) || 0;
@@ -21,11 +22,15 @@ export default function Invoices() {
   const [form, setForm] = useState(blank);
   const [saving, setSaving] = useState(false);
   const [query, setQuery] = useState("");
+  const [money, setMoney] = useState(null);
 
   useEffect(() => {
     loadTable("invoices");
     loadTable("contacts");
     loadTable("leads");
+    moneySummaryApi()
+      .then(setMoney)
+      .catch(() => setMoney({ collected_total: 0, outstanding_total: 0 }));
   }, [loadTable]);
 
   const phoneForCustomer = (name) => {
@@ -45,6 +50,7 @@ export default function Invoices() {
   const paid = allInvoices.filter((i) => f(i, IF.status) === "Paid").reduce((s, i) => s + num(f(i, IF.amount)), 0);
   const sent = allInvoices.filter((i) => f(i, IF.status) === "Sent").reduce((s, i) => s + num(f(i, IF.amount)), 0);
   const overdue = allInvoices.filter((i) => f(i, IF.status) === "Overdue").reduce((s, i) => s + num(f(i, IF.amount)), 0);
+  const ledgerLoading = loading && !allInvoices.length;
 
   const markPaid = (inv) => {
     updateRecord("invoices", inv.id, { [IF.status]: "Paid" })
@@ -91,11 +97,16 @@ export default function Invoices() {
       />
       <InstructionBanner>Send bills and mark them paid the moment money lands. Overdue rows need a follow-up call.</InstructionBanner>
 
-      <div className="grid grid-cols-3 gap-4 mb-6">
-        <KpiCard testId="kpi-invoices-paid" label="Paid" value={fmtMoney(paid)} />
-        <KpiCard testId="kpi-invoices-sent" label="Sent (waiting)" value={fmtMoney(sent)} />
-        <KpiCard testId="kpi-invoices-overdue" label="Overdue" value={fmtMoney(overdue)} alert={overdue > 0} />
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-2">
+        <KpiCard testId="kpi-invoices-paid" label="Collected (Square)" value={money ? fmtMoney(money.collected_total) : "—"} />
+        <KpiCard testId="kpi-invoices-outstanding" label="Owed to us (Square)" value={money ? fmtMoney(money.outstanding_total) : "—"} alert={(money?.outstanding_total || 0) > 0} />
+        <KpiCard testId="kpi-invoices-sent" label="Sent (manual ledger)" value={ledgerLoading ? "—" : fmtMoney(sent)} />
+        <KpiCard testId="kpi-invoices-overdue" label="Overdue (manual ledger)" value={ledgerLoading ? "—" : fmtMoney(overdue)} alert={overdue > 0} />
       </div>
+      <p className="text-[11.5px] text-faint mb-5" data-testid="invoices-source-note">
+        Money numbers come from Square — the single source of truth. The table below is the manual Airtable ledger
+        ({ledgerLoading ? "—" : fmtMoney(paid)} marked paid there).
+      </p>
 
       <div className="mb-4">
         <SearchBar value={query} onChange={setQuery} placeholder="Search invoice #, customer…" testId="invoices-search-input" />

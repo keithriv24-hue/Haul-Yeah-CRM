@@ -7,7 +7,7 @@ BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://haul-yeah-staging.pr
 
 def _login(username, password, switch_role=None):
     s = requests.Session()
-    r = s.post(f"{BASE_URL}/api/auth/login", json={"username": username, "password": password})
+    r = s.post(f"{BASE_URL}/api/auth/login", json={"email": username, "password": password})
     assert r.status_code == 200, f"login failed for {username}: {r.status_code} {r.text[:200]}"
     token = r.json().get("token")
     if token:
@@ -29,11 +29,15 @@ def test_rates_owner_200_and_45_plus_keys():
     for k in ["manHourRate", "cushionPercent", "depositPercent", "roundingIncrement",
               "tripFeeTruck", "tripFeeLabor", "floorTruck", "floorLabor",
               "stairFlightFee", "longCarryFee", "disassemblyFee",
-              "minHoursTruck", "minHoursLabor"]:
+              "minHoursTruck", "minHoursLabor",
+              "mileageFreeMiles", "mileageRatePerMile"]:
         assert k in values, f"missing key {k}"
+    assert "zone1Fee" not in values, "zone flat fees should be retired"
     assert values["manHourRate"] == 65
     assert values["cushionPercent"] == 10
-    assert values["stairFlightFee"] == 80
+    assert values["stairFlightFee"] == 85
+    assert values["mileageFreeMiles"] == 20
+    assert values["mileageRatePerMile"] == 0.85
 
 
 def test_rates_sales_403():

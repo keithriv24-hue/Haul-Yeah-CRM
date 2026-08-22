@@ -1,4 +1,4 @@
-"""Auth tests for Haul Yeah CRM — single owner password + JWT.
+"""Auth tests for Haul Yeah CRM — per-user accounts + JWT (shared passwords retired 2026-06).
 
 IMPORTANT: brute-force lockout triggers at 5 wrong tries from one IP → 15-minute
 lockout. This test file makes at MOST 1 wrong-password attempt to stay well
@@ -10,7 +10,7 @@ import time
 import jwt
 import pytest
 import requests
-from test_config import EMPLOYEE_LEGACY_PASSWORD, OWNER_PASSWORD, SALES_LEGACY_PASSWORD
+from test_config import GHOST_PASSWORD, OWNER_EMAIL, OWNER_PASSWORD
 
 BASE_URL = os.environ["REACT_APP_BACKEND_URL"].rstrip("/") if os.environ.get("REACT_APP_BACKEND_URL") else None
 if not BASE_URL:
@@ -26,7 +26,8 @@ CORRECT_PW = OWNER_PASSWORD
 
 @pytest.fixture(scope="module")
 def token():
-    r = requests.post(f"{BASE_URL}/api/auth/login", json={"password": CORRECT_PW}, timeout=15)
+    r = requests.post(f"{BASE_URL}/api/auth/login",
+                      json={"email": OWNER_EMAIL, "password": CORRECT_PW}, timeout=15)
     assert r.status_code == 200, f"login failed: {r.status_code} {r.text}"
     data = r.json()
     assert "token" in data
@@ -38,16 +39,24 @@ def token():
 class TestLogin:
     def test_login_wrong_password_returns_401(self):
         """ONE wrong-password call only; expects 401 + specific detail."""
-        r = requests.post(f"{BASE_URL}/api/auth/login", json={"password": "definitely-not-right"}, timeout=15)
+        r = requests.post(f"{BASE_URL}/api/auth/login",
+                          json={"email": OWNER_EMAIL, "password": "definitely-not-right"}, timeout=15)
         assert r.status_code == 401, f"expected 401, got {r.status_code}: {r.text}"
         body = r.json()
-        assert body.get("detail") == "Wrong password. Try again.", body
+        assert body.get("detail") == "Wrong email or password. Try again.", body
+
+    def test_login_without_email_is_retired(self):
+        """Shared-password logins (password only, no email) are gone for good."""
+        r = requests.post(f"{BASE_URL}/api/auth/login", json={"password": CORRECT_PW}, timeout=15)
+        assert r.status_code == 401, f"expected 401, got {r.status_code}: {r.text}"
+        assert "retired" in r.json().get("detail", "").lower()
 
     def test_login_correct_password_returns_jwt(self, token):
         # Decode without verification to inspect claims
         claims = jwt.decode(token, options={"verify_signature": False})
-        assert claims.get("sub") == "owner"
+        assert claims.get("role") == "owner"
         assert claims.get("type") == "access"
+        assert claims.get("uid")
         assert "exp" in claims
         # 30 day expiry expected — allow generous window
         remaining = claims["exp"] - int(time.time())
@@ -62,9 +71,8 @@ class TestLogin:
         assert r.status_code == 422
 
     def test_login_empty_password_string_returns_401(self):
-        """empty string is valid pydantic but must not equal APP_PASSWORD."""
+        """empty string is valid pydantic but shared logins are retired."""
         r = requests.post(f"{BASE_URL}/api/auth/login", json={"password": ""}, timeout=15)
-        # Note: could legitimately be 401 or 422 depending on validation
         assert r.status_code in (401, 422), f"got {r.status_code}: {r.text}"
 
 
@@ -189,82 +197,83 @@ class TestProtectedRoutes:
         assert detail.get("error") == "unknown_table"
 
 
-# --- Roles ---
-SALES_PW = SALES_LEGACY_PASSWORD
-EMPLOYEE_PW = EMPLOYEE_LEGACY_PASSWORD
+# --- Roles (via ghost POV accounts — shared role passwords are retired) ---
 
 
-def _login(pw):
-    r = requests.post(f"{BASE_URL}/api/auth/login", json={"password": pw}, timeout=15)
+def _login(email, pw):
+    r = requests.post(f"{BASE_URL}/api/auth/login", json={"email": email, "password": pw}, timeout=15)
     assert r.status_code == 200, r.text
     return r.json()
 
 
 class TestRoles:
     def test_sales_login_returns_sales_role(self):
-        data = _login(SALES_PW)
+        data = _login("testsalesadmin", GHOST_PASSWORD)
         assert data["role"] == "sales"
         claims = jwt.decode(data["token"], options={"verify_signature": False})
         assert claims["role"] == "sales"
 
-    def test_employee_login_returns_employee_role(self):
-        data = _login(EMPLOYEE_PW)
-        assert data["role"] == "employee"
+    def test_crew_login_returns_crew_role(self):
+        data = _login("testcrewadmin", GHOST_PASSWORD)
+        assert data["role"] == "crew"
 
     def test_owner_login_returns_owner_role(self):
-        data = _login(CORRECT_PW)
+        data = _login(OWNER_EMAIL, CORRECT_PW)
         assert data["role"] == "owner"
 
     def test_sales_blocked_from_money_tables(self):
-        tok = _login(SALES_PW)["token"]
+        tok = _login("testsalesadmin", GHOST_PASSWORD)["token"]
         for t in ("projects", "invoices", "subscriptions", "contacts"):
             r = requests.get(f"{BASE_URL}/api/tables/{t}", headers={"Authorization": f"Bearer {tok}"}, timeout=15)
             assert r.status_code == 403, f"{t}: expected 403, got {r.status_code}"
             assert r.json().get("detail") == "Your role can't open this."
 
-    def test_employee_blocked_from_other_tables(self):
-        tok = _login(EMPLOYEE_PW)["token"]
+    def test_crew_blocked_from_other_tables(self):
+        tok = _login("testcrewadmin", GHOST_PASSWORD)["token"]
         for t in ("leads", "invoices", "subscriptions", "contacts"):
             r = requests.get(f"{BASE_URL}/api/tables/{t}", headers={"Authorization": f"Bearer {tok}"}, timeout=15)
             assert r.status_code == 403, f"{t}: expected 403, got {r.status_code}"
 
     def test_sales_can_reach_leads_route(self):
-        tok = _login(SALES_PW)["token"]
+        tok = _login("testsalesadmin", GHOST_PASSWORD)["token"]
         r = requests.get(f"{BASE_URL}/api/tables/leads", headers={"Authorization": f"Bearer {tok}"}, timeout=15)
         assert r.status_code in (200, 503), f"got {r.status_code}"
 
     def test_employee_can_reach_projects_and_tasks(self):
-        tok = _login(EMPLOYEE_PW)["token"]
+        owner = _login(OWNER_EMAIL, CORRECT_PW)["token"]
+        r = requests.post(f"{BASE_URL}/api/auth/switch-role", json={"role": "employee"},
+                          headers={"Authorization": f"Bearer {owner}"}, timeout=15)
+        assert r.status_code == 200, r.text
+        tok = r.json()["token"]
         for t in ("projects", "tasks"):
             r = requests.get(f"{BASE_URL}/api/tables/{t}", headers={"Authorization": f"Bearer {tok}"}, timeout=15)
             assert r.status_code in (200, 503), f"{t}: got {r.status_code}"
 
     def test_airtable_verify_is_owner_only(self):
-        tok = _login(SALES_PW)["token"]
+        tok = _login("testsalesadmin", GHOST_PASSWORD)["token"]
         r = requests.get(f"{BASE_URL}/api/airtable/verify", headers={"Authorization": f"Bearer {tok}"}, timeout=15)
         assert r.status_code == 403
 
     def test_delete_is_owner_only(self):
-        for pw in (SALES_PW, EMPLOYEE_PW):
-            tok = _login(pw)["token"]
-            table = "leads" if pw == SALES_PW else "tasks"
+        for email, table in (("testsalesadmin", "leads"), ("testcrewadmin", "tasks")):
+            tok = _login(email, GHOST_PASSWORD)["token"]
             r = requests.delete(f"{BASE_URL}/api/tables/{table}/recFAKE123", headers={"Authorization": f"Bearer {tok}"}, timeout=15)
             assert r.status_code == 403, f"expected 403, got {r.status_code}"
             assert r.json().get("detail") == "Only the owner can delete records."
 
     def test_owner_delete_passes_role_check(self):
-        tok = _login(CORRECT_PW)["token"]
+        tok = _login(OWNER_EMAIL, CORRECT_PW)["token"]
         r = requests.delete(f"{BASE_URL}/api/tables/leads/recFAKE123", headers={"Authorization": f"Bearer {tok}"}, timeout=15)
         assert r.status_code in (404, 422, 503), f"got {r.status_code}"
 
     def test_business_settings_put_is_owner_only(self):
-        tok = _login(SALES_PW)["token"]
+        tok = _login("testsalesadmin", GHOST_PASSWORD)["token"]
         r = requests.put(f"{BASE_URL}/api/settings/business", json={"reviewLink": "https://x.test"},
                          headers={"Authorization": f"Bearer {tok}"}, timeout=15)
         assert r.status_code == 403
 
     def test_business_settings_roundtrip_for_owner(self):
-        tok = _login(CORRECT_PW)["token"]
+        tok = _login(OWNER_EMAIL, CORRECT_PW)["token"]
         h = {"Authorization": f"Bearer {tok}"}
         r = requests.put(f"{BASE_URL}/api/settings/business", json={"reviewLink": " https://g.page/r/test/review "}, headers=h, timeout=15)
         assert r.status_code == 200
@@ -275,14 +284,14 @@ class TestRoles:
         requests.put(f"{BASE_URL}/api/settings/business", json={"reviewLink": ""}, headers=h, timeout=15)
 
     def test_square_invoice_is_owner_only(self):
-        for pw in (SALES_PW, EMPLOYEE_PW):
-            tok = _login(pw)["token"]
+        for email in ("testsalesadmin", "testcrewadmin"):
+            tok = _login(email, GHOST_PASSWORD)["token"]
             r = requests.post(f"{BASE_URL}/api/square/invoice", json={"name": "T", "email": "t@t.com", "amount": 100},
                               headers={"Authorization": f"Bearer {tok}"}, timeout=15)
             assert r.status_code == 403
 
     def test_square_invoice_validation(self):
-        tok = _login(CORRECT_PW)["token"]
+        tok = _login(OWNER_EMAIL, CORRECT_PW)["token"]
         h = {"Authorization": f"Bearer {tok}"}
         r = requests.post(f"{BASE_URL}/api/square/invoice", json={"name": "T", "email": "t@t.com", "amount": 0}, headers=h, timeout=15)
         assert r.status_code == 422
@@ -290,7 +299,7 @@ class TestRoles:
         assert r.status_code == 422
 
     def test_square_status_reports_config(self):
-        tok = _login(CORRECT_PW)["token"]
+        tok = _login(OWNER_EMAIL, CORRECT_PW)["token"]
         r = requests.get(f"{BASE_URL}/api/square/status", headers={"Authorization": f"Bearer {tok}"}, timeout=15)
         assert r.status_code == 200
         body = r.json()
@@ -299,7 +308,7 @@ class TestRoles:
 
 class TestRoleSwitch:
     def test_owner_can_switch_to_sales_and_back(self):
-        owner = _login(CORRECT_PW)
+        owner = _login(OWNER_EMAIL, CORRECT_PW)
         assert owner["can_switch"] == True
         r = requests.post(f"{BASE_URL}/api/auth/switch-role", json={"role": "sales"},
                           headers={"Authorization": f"Bearer {owner['token']}"}, timeout=15)
@@ -316,23 +325,23 @@ class TestRoleSwitch:
         assert back.json()["role"] == "owner"
 
     def test_real_sales_token_cannot_switch(self):
-        data = _login(SALES_PW)
+        data = _login("testsalesadmin", GHOST_PASSWORD)
         assert data.get("can_switch") == False
         r = requests.post(f"{BASE_URL}/api/auth/switch-role", json={"role": "owner"},
                           headers={"Authorization": f"Bearer {data['token']}"}, timeout=15)
         assert r.status_code == 403
 
-    def test_real_employee_token_cannot_switch(self):
-        data = _login(EMPLOYEE_PW)
+    def test_real_crew_token_cannot_switch(self):
+        data = _login("testcrewadmin", GHOST_PASSWORD)
         r = requests.post(f"{BASE_URL}/api/auth/switch-role", json={"role": "owner"},
                           headers={"Authorization": f"Bearer {data['token']}"}, timeout=15)
         assert r.status_code == 403
 
     def test_switch_to_unknown_role_rejected(self):
-        owner = _login(CORRECT_PW)
+        owner = _login(OWNER_EMAIL, CORRECT_PW)
         r = requests.post(f"{BASE_URL}/api/auth/switch-role", json={"role": "admin"},
                           headers={"Authorization": f"Bearer {owner['token']}"}, timeout=15)
-        assert r.status_code == 422
+        assert r.status_code in (403, 422)
 
 
 class TestSchema:
@@ -341,13 +350,13 @@ class TestSchema:
         assert r.status_code == 401
 
     def test_schema_role_gating(self):
-        sales = _login(SALES_PW)["token"]
+        sales = _login("testsalesadmin", GHOST_PASSWORD)["token"]
         r = requests.get(f"{BASE_URL}/api/schema/leads", headers={"Authorization": f"Bearer {sales}"}, timeout=15)
         assert r.status_code in (200, 503)
         r = requests.get(f"{BASE_URL}/api/schema/projects", headers={"Authorization": f"Bearer {sales}"}, timeout=15)
         assert r.status_code == 403
 
     def test_schema_unknown_table(self):
-        owner = _login(CORRECT_PW)["token"]
+        owner = _login(OWNER_EMAIL, CORRECT_PW)["token"]
         r = requests.get(f"{BASE_URL}/api/schema/nope", headers={"Authorization": f"Bearer {owner}"}, timeout=15)
         assert r.status_code == 404

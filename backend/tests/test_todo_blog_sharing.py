@@ -26,7 +26,7 @@ import pytest
 import requests
 from pymongo import MongoClient
 from dotenv import load_dotenv
-from test_config import CREW1_PASSWORD, OWNER_EMAIL, OWNER_PASSWORD, SALES_LEGACY_PASSWORD as SALES_LEGACY_PW
+from test_config import CREW1_PASSWORD, GHOST_PASSWORD, OWNER_EMAIL, OWNER_PASSWORD
 
 # Load env vars from frontend and backend .env files so pytest picks up
 # REACT_APP_BACKEND_URL, MONGO_URL, DB_NAME regardless of shell env.
@@ -37,7 +37,6 @@ BASE_URL = os.environ["REACT_APP_BACKEND_URL"].rstrip("/")
 
 OWNER_USERNAME = OWNER_EMAIL
 OWNER_PASSWORD = OWNER_PASSWORD
-SALES_LEGACY_PASSWORD = SALES_LEGACY_PW
 CREW1_EMAIL = "qa.crew1@haulyeah.test"
 CREW1_PASSWORD = CREW1_PASSWORD
 
@@ -61,8 +60,8 @@ def owner_headers(owner_token):
 
 @pytest.fixture(scope="module")
 def sales_headers():
-    # Legacy shared-password sales login (no email, password only)
-    r = _login({"password": SALES_LEGACY_PASSWORD})
+    # shared sales password retired — ghost sales POV account instead
+    r = _login({"email": "testsalesadmin", "password": GHOST_PASSWORD})
     assert r.status_code == 200, r.text
     assert r.json()["role"] == "sales"
     return {"Authorization": f"Bearer {r.json()['token']}"}

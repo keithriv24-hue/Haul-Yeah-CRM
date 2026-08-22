@@ -61,10 +61,8 @@ def get_base_id() -> str:
 JWT_ALGORITHM = "HS256"
 _login_attempts: Dict[str, Dict[str, float]] = {}
 
-ROLES = ("owner", "sales", "employee")
 SWITCH_ROLES = ("owner", "sales", "employee", "marketing")
 ALL_ROLES = ("owner", "sales", "employee", "crew", "marketing")
-ROLE_ENV = {"owner": "APP_PASSWORD", "sales": "SALES_PASSWORD", "employee": "EMPLOYEE_PASSWORD"}
 ROLE_TABLES = {
     "owner": set(TABLES),
     "sales": {"leads", "tasks", "blog"},
@@ -323,12 +321,10 @@ DEFAULT_RATES = {
     "tripFeeTruck": 125.0, "tripFeeLabor": 75.0,
     "floorTruck": 650.0, "floorLabor": 375.0,
     "minHoursTruck": 3.0, "minHoursLabor": 2.0,
-    # distance zones (one-way miles; beyond zone 3 = quote individually)
-    "zone1MaxMiles": 20.0, "zone1Fee": 0.0,
-    "zone2MaxMiles": 40.0, "zone2Fee": 150.0,
-    "zone3MaxMiles": 60.0, "zone3Fee": 300.0,
+    # mileage (one-way; the first N miles ride free in the trip fee, then per-mile)
+    "mileageFreeMiles": 20.0, "mileageRatePerMile": 0.85,
     # access & handling (flat, never volume-scaled)
-    "stairFlightFee": 80.0, "longCarryFee": 100.0, "disassemblyFee": 100.0, "extraStopFee": 125.0,
+    "stairFlightFee": 85.0, "longCarryFee": 100.0, "disassemblyFee": 100.0, "extraStopFee": 125.0,
     # specialty surcharges
     "surchargeUprightPiano": 500.0, "surchargeGrandPiano": 800.0, "surchargePoolTable": 600.0,
     "surchargeSafeT1": 200.0, "surchargeSafeT2": 500.0, "surchargeSafeT3": 800.0,
@@ -349,7 +345,7 @@ RATE_STRING_KEYS = {"serviceStates": "NJ"}
 # they receive never contains the cushion itself yet prices out identically
 CUSHION_FOLDED_KEYS = (
     "manHourRate", "tripFeeTruck", "tripFeeLabor",
-    "zone1Fee", "zone2Fee", "zone3Fee",
+    "mileageRatePerMile",
     "stairFlightFee", "longCarryFee", "disassemblyFee", "extraStopFee",
     "surchargeUprightPiano", "surchargeGrandPiano", "surchargePoolTable",
     "surchargeSafeT1", "surchargeSafeT2", "surchargeSafeT3",
@@ -393,22 +389,6 @@ async def _login_user_account(payload: LoginPayload, email: str, lock_key: str,
     }
 
 
-def _login_shared_password(payload: LoginPayload, lock_key: str,
-                           fail: Callable[[str], None]) -> Dict[str, Any]:
-    if not any(os.environ.get(v) for v in ROLE_ENV.values()):
-        raise HTTPException(status_code=503, detail="No login passwords are set on the server.")
-    role = None
-    for r in ROLES:
-        expected = os.environ.get(ROLE_ENV[r], "")
-        if expected and hmac.compare_digest(payload.password, expected):
-            role = r
-            break
-    if role is None:
-        fail("Wrong password. Try again.")
-    _login_attempts.pop(lock_key, None)
-    return {"token": make_token(role), "role": role, "can_switch": role == "owner", "user": None}
-
-
 @auth_router.post("/login")
 async def login(payload: LoginPayload, request: Request) -> Dict[str, Any]:
     ip = request.client.host if request.client else "unknown"
@@ -427,9 +407,10 @@ async def login(payload: LoginPayload, request: Request) -> Dict[str, Any]:
         raise HTTPException(status_code=401, detail=msg)
 
     email = (payload.email or "").strip().lower()
-    if email:
-        return await _login_user_account(payload, email, lock_key, fail)
-    return _login_shared_password(payload, lock_key, fail)
+    if not email:
+        raise HTTPException(status_code=401,
+                            detail="Shared passwords are retired. Sign in with your own username or email and password.")
+    return await _login_user_account(payload, email, lock_key, fail)
 
 
 class SwitchPayload(BaseModel):
@@ -522,6 +503,16 @@ async def get_rates_values() -> Dict[str, Any]:
         await mongo_db.settings.update_one(
             {"_id": "calculator_rates"},
             {"$set": {"pricing_v2": stored, "pricing_v2_updated_at": {}}}, upsert=True)
+    if "mileageRatePerMile" not in stored:
+        # 2026-06 migration: zone flat fees → per-mile mileage, stairs $80 → $85
+        stored["mileageRatePerMile"] = DEFAULT_RATES["mileageRatePerMile"]
+        stored["mileageFreeMiles"] = float(stored.get("zone1MaxMiles") or DEFAULT_RATES["mileageFreeMiles"])
+        if float(stored.get("stairFlightFee") or 0) == 80.0:
+            stored["stairFlightFee"] = 85.0
+        for k in ("zone1MaxMiles", "zone1Fee", "zone2MaxMiles", "zone2Fee", "zone3MaxMiles", "zone3Fee"):
+            stored.pop(k, None)
+        await mongo_db.settings.update_one(
+            {"_id": "calculator_rates"}, {"$set": {"pricing_v2": stored}}, upsert=True)
     out: Dict[str, Any] = {**DEFAULT_RATES, **RATE_STRING_KEYS}
     out.update({k: v for k, v in stored.items() if k in DEFAULT_RATES or k in RATE_STRING_KEYS})
     return out
@@ -1233,16 +1224,94 @@ def _job_doc_from_invoice(inv: Dict[str, Any], lead: Dict[str, Any], integration
     }
 
 
+# ------- Airtable Projects mirror (deposit-paid jobs sync to the Day Sheet / Crew Report)
+
+PROJECT_LEAD_LINK_FIELD = "fldiN7fny2dKI2r2V"
+
+
+def _project_fields_for_job(job: Dict[str, Any]) -> Dict[str, Any]:
+    name = (job.get("customer") or {}).get("name") or "Job"
+    fields: Dict[str, Any] = {
+        PROJECT_NAME_FIELD: f"{name} — {job.get('job_date') or 'date TBD'}",
+        PROJECT_STATUS_FIELD: "Scheduled",
+    }
+    if job.get("job_date"):
+        fields[PROJECT_DATE_FIELD] = job["job_date"]
+    try:
+        if job.get("quote_total"):
+            fields[PROJECT_QUOTE_FIELD] = float(job["quote_total"])
+        dep = (job.get("deposit_paid") or {}).get("amount")
+        if dep:
+            fields[PROJECT_DEPOSIT_FIELD] = float(dep)
+    except (TypeError, ValueError):
+        pass
+    if job.get("pickup_address"):
+        fields[PROJECT_FROM_FIELD] = job["pickup_address"]
+    if job.get("dropoff_address"):
+        fields[PROJECT_TO_FIELD] = job["dropoff_address"]
+    if job.get("lead_id"):
+        fields[PROJECT_LEAD_LINK_FIELD] = [job["lead_id"]]
+    return fields
+
+
+async def sync_project_for_job(job: Dict[str, Any]) -> None:
+    """Upsert the Airtable Projects record for a deposit-paid job so it lands on the Day Sheet."""
+    if not job:
+        return
+    try:
+        rec_id = job.get("project_record_id")
+        existing = None
+        if rec_id:
+            try:
+                existing = await airtable_request("GET", TABLES["projects"], path=f"/{rec_id}",
+                                                  params={"returnFieldsByFieldId": "true"})
+            except HTTPException as exc:
+                if exc.status_code == 404:
+                    rec_id, existing = None, None
+                else:
+                    raise
+        if not rec_id and job.get("lead_id"):
+            data = await airtable_request("GET", TABLES["projects"],
+                                          params={"returnFieldsByFieldId": "true", "pageSize": 100})
+            for rec in data.get("records", []):
+                if job["lead_id"] in ((rec.get("fields") or {}).get(PROJECT_LEAD_LINK_FIELD) or []):
+                    rec_id, existing = rec["id"], rec
+                    break
+        fields = _project_fields_for_job(job)
+        if rec_id:
+            cur = (existing or {}).get("fields") or {}
+            cur_status = cur.get(PROJECT_STATUS_FIELD)
+            if cur_status and cur_status not in ("Pending Deposit", "Scheduled"):
+                fields.pop(PROJECT_STATUS_FIELD, None)  # never downgrade an in-progress/completed job
+            fields.pop(PROJECT_NAME_FIELD, None)  # never rename an existing project
+            body = {"records": [{"id": rec_id, "fields": fields}], "typecast": True}
+            await airtable_request("PATCH", TABLES["projects"], json_body=body)
+        else:
+            body = {"records": [{"fields": fields}], "typecast": True}
+            data = await airtable_request("POST", TABLES["projects"], json_body=body)
+            rec_id = ((data.get("records") or [{}])[0]).get("id")
+        if rec_id:
+            await mongo_db.jobs.update_one({"_id": job["_id"]}, {"$set": {
+                "project_record_id": rec_id, "project_synced_date": job.get("job_date")}})
+    except HTTPException as exc:
+        logger.warning("Projects sync skipped for job %s: %s", job.get("invoice_number"), exc.detail)
+    except Exception as exc:
+        logger.warning("Projects sync failed for job %s: %s", job.get("invoice_number"), exc)
+
+
 async def ensure_job_for_deposit(inv: Dict[str, Any], mark_full: bool = False, notify_owner: bool = True) -> None:
     paid_at = inv.get("paid_at") or now_iso()
     existing = await mongo_db.jobs.find_one({"deposit_invoice_id": inv["invoice_id"]})
     if existing:
         await _sync_existing_deposit_job(existing, inv, mark_full, paid_at)
+        if not existing.get("project_record_id") or existing.get("project_synced_date") != existing.get("job_date"):
+            await sync_project_for_job(existing)
         return
     lead = await fetch_lead_details(inv.get("lead_id"))
     integrations = await get_integrations()
     job = _job_doc_from_invoice(inv, lead, integrations, paid_at, mark_full)
     await mongo_db.jobs.insert_one(job)
+    await sync_project_for_job(job)
     if notify_owner:
         who = job["customer"]["name"] or "the customer"
         await notify(None, "owner", "New job — deposit paid",
@@ -1637,6 +1706,8 @@ async def patch_job(job_id: str, payload: JobPatchPayload,
         job.update(updates)
         await _notify_new_crew_members(job, job_id, new_crew_ids)
         await audit(p, "updated job assignment", f"job {job.get('invoice_number')}", {"fields": list(updates.keys())})
+        if "job_date" in updates:
+            await sync_project_for_job(job)
     return _job_out(job)
 
 
@@ -7686,6 +7757,83 @@ async def meta_refresh(request: Request):
 
 # ------- ai operations brief (phase F — panel on existing owner dashboard)
 
+SQUARE_OPEN_INVOICE_STATUSES = ("UNPAID", "PARTIALLY_PAID", "SCHEDULED", "PAYMENT_PENDING")
+
+
+async def _money_summary() -> Dict[str, Any]:
+    """ONE source of truth for money: Square. Every money card reads this."""
+    today = _et_today()
+    collected_total = revenue_today = open_invoices_total = 0.0
+    paid_by_lead: Dict[str, float] = {}
+    open_by_lead: Dict[str, float] = {}
+    async for inv in mongo_db.square_invoices.find(
+            {}, {"_id": 0, "amount": 1, "status": 1, "lead_id": 1, "paid_at": 1}):
+        amt = float(inv.get("amount") or 0)
+        if inv.get("status") == "PAID":
+            collected_total += amt
+            if inv.get("lead_id"):
+                paid_by_lead[inv["lead_id"]] = paid_by_lead.get(inv["lead_id"], 0.0) + amt
+            if inv.get("paid_at"):
+                try:
+                    d_et = datetime.fromisoformat(str(inv["paid_at"]).replace("Z", "+00:00")).astimezone(
+                        ZoneInfo("America/New_York")).date().isoformat()
+                    if d_et == today:
+                        revenue_today += amt
+                except ValueError:
+                    pass
+        elif inv.get("status") in SQUARE_OPEN_INVOICE_STATUSES:
+            open_invoices_total += amt
+            if inv.get("lead_id"):
+                open_by_lead[inv["lead_id"]] = open_by_lead.get(inv["lead_id"], 0.0) + amt
+    booked_total = outstanding_total = 0.0
+    jobs_count = 0
+    unpaid_jobs: List[str] = []
+    job_leads: set = set()
+    async for j in mongo_db.jobs.find({"deposit_paid.status": "paid"}):
+        jobs_count += 1
+        if j.get("lead_id"):
+            job_leads.add(j["lead_id"])
+        try:
+            quote = float(j.get("quote_total") or 0)
+        except (TypeError, ValueError):
+            quote = 0.0
+        try:
+            deposit = float((j.get("deposit_paid") or {}).get("amount") or 0)
+        except (TypeError, ValueError):
+            deposit = 0.0
+        booked_total += quote or deposit
+        if (j.get("paid_in_full") or {}).get("status") == "paid" or not quote:
+            continue
+        paid_against = paid_by_lead.get(j.get("lead_id") or "", 0.0) or deposit
+        rem = max(0.0, quote - paid_against)
+        if rem > 0:
+            outstanding_total += rem
+            unpaid_jobs.append(
+                f"Job #{j.get('invoice_number')} ({(j.get('customer') or {}).get('name', '?')}): ${rem:,.0f} due")
+    # open Square invoices for leads with no job yet (not double-counted above)
+    for lead_id, amt in open_by_lead.items():
+        if lead_id not in job_leads:
+            outstanding_total += amt
+    async for i in mongo_db.square_invoices.find(
+            {"status": {"$in": list(SQUARE_OPEN_INVOICE_STATUSES)}, "lead_id": None},
+            {"_id": 0, "amount": 1}):
+        outstanding_total += float(i.get("amount") or 0)
+    return {
+        "source": "square",
+        "booked_total": round(booked_total, 2),
+        "jobs_count": jobs_count,
+        "collected_total": round(collected_total, 2),
+        "outstanding_total": round(outstanding_total, 2),
+        "unpaid_jobs": unpaid_jobs[:10],
+        "revenue_today": round(revenue_today, 2),
+    }
+
+
+@api_router.get("/money/summary")
+async def money_summary(p: Dict[str, Any] = Depends(require_owner)) -> Dict[str, Any]:
+    return await _money_summary()
+
+
 async def _ops_facts() -> Dict[str, Any]:
     today = _et_today()
     now_et = datetime.now(ZoneInfo("America/New_York"))
@@ -7717,17 +7865,9 @@ async def _ops_facts() -> Dict[str, Any]:
                     late_risk.append(f"{a.get('job_name')} arrives {a['arrival_time']} and nobody is clocked in yet")
             except ValueError:
                 pass
-    # revenue today
-    revenue_today = 0.0
-    for inv in await mongo_db.square_invoices.find(
-            {"status": "PAID", "paid_at": {"$ne": None}}, {"_id": 0, "amount": 1, "paid_at": 1}).to_list(1000):
-        try:
-            d_et = datetime.fromisoformat(str(inv["paid_at"]).replace("Z", "+00:00")).astimezone(
-                ZoneInfo("America/New_York")).date().isoformat()
-        except ValueError:
-            continue
-        if d_et == today:
-            revenue_today += inv.get("amount") or 0
+    # money — same Square-backed summary every dashboard uses
+    money = await _money_summary()
+    revenue_today = money["revenue_today"]
     # crews working + unscheduled + overtime
     clocked, unscheduled = [], []
     for e in open_entries:
@@ -7763,17 +7903,6 @@ async def _ops_facts() -> Dict[str, Any]:
             if st in ("expired", "soon"):
                 expired_docs.append(f"{t['name']} {label} {'EXPIRED' if st == 'expired' else 'expires soon'}")
     open_damage = await mongo_db.truck_damage.count_documents({"resolved": {"$ne": True}})
-    # outstanding balances
-    unpaid, outstanding_total = [], 0.0
-    async for j in mongo_db.jobs.find({"deposit_paid.status": "paid", "paid_in_full.status": {"$ne": "paid"},
-                                       "quote_total": {"$ne": None}}):
-        try:
-            rem = max(0.0, float(j["quote_total"]) - float((j.get("deposit_paid") or {}).get("amount") or 0))
-        except (TypeError, ValueError):
-            continue
-        if rem > 0:
-            outstanding_total += rem
-            unpaid.append(f"Job #{j.get('invoice_number')} ({(j.get('customer') or {}).get('name', '?')}): ${rem:,.0f} due")
     # schedule conflicts (today + tomorrow)
     conflicts = []
     for day in (today, tomorrow):
@@ -7809,7 +7938,10 @@ async def _ops_facts() -> Dict[str, Any]:
         "fleet": {"needs_attention": fleet_attention, "in_shop": fleet_shop,
                   "maintenance_due": reminders_due, "document_warnings": expired_docs,
                   "open_damage_reports": open_damage},
-        "money": {"outstanding_balance_total": round(outstanding_total, 2), "unpaid_jobs": unpaid[:10]},
+        "money": {"outstanding_balance_total": money["outstanding_total"],
+                  "unpaid_jobs": money["unpaid_jobs"],
+                  "collected_total": money["collected_total"],
+                  "booked_total": money["booked_total"]},
         "schedule_conflicts": conflicts,
         "overtime_warnings": overtime,
         "late_job_risk": late_risk,
@@ -7865,6 +7997,66 @@ async def ai_ops_brief(refresh: int = 0, p: Dict[str, Any] = Depends(require_own
 
 # ------- startup seeding
 
+async def _merge_user_pair(keep: Dict[str, Any], dup: Dict[str, Any]) -> None:
+    kid, did = keep["_id"], dup["_id"]
+    for coll in ("time_entries", "job_credits", "availability", "points_ledger", "rewards", "notifications"):
+        await mongo_db[coll].update_many({"user_id": did}, {"$set": {"user_id": kid}})
+    async for a in mongo_db.assignments.find({"crew.user_id": did}):
+        crew = a.get("crew") or []
+        if any(c.get("user_id") == kid for c in crew):
+            crew = [c for c in crew if c.get("user_id") != did]
+        else:
+            for c in crew:
+                if c.get("user_id") == did:
+                    c["user_id"] = kid
+                    c["name"] = keep.get("name") or c.get("name")
+        await mongo_db.assignments.update_one({"_id": a["_id"]}, {"$set": {"crew": crew}})
+    async for ub in mongo_db.user_badges.find({"user_id": did}):
+        new_id = f"{kid}:{ub.get('badge_id')}"
+        if not await mongo_db.user_badges.find_one({"_id": new_id}):
+            await mongo_db.user_badges.insert_one({**ub, "_id": new_id, "user_id": kid})
+        await mongo_db.user_badges.delete_one({"_id": ub["_id"]})
+    inc = {}
+    if dup.get("haul_points"):
+        inc["haul_points"] = int(dup["haul_points"])
+    if dup.get("haul_points_lifetime"):
+        inc["haul_points_lifetime"] = int(dup["haul_points_lifetime"])
+    if inc:
+        await mongo_db.users.update_one({"_id": kid}, {"$inc": inc})
+    await mongo_db.users.delete_one({"_id": did})
+    logger.info("Merged duplicate user '%s' (%s) into '%s' (%s)", dup.get("name"), did, keep.get("name"), kid)
+
+
+async def _dup_weight(u: Dict[str, Any]) -> Tuple[int, str]:
+    activity = (await mongo_db.job_credits.count_documents({"user_id": u["_id"]})
+                + await mongo_db.time_entries.count_documents({"user_id": u["_id"]}))
+    return (activity, u.get("created_at") or "9999")
+
+
+async def dedupe_crew_users() -> None:
+    """Data hygiene: collapse known duplicate crew accounts (exact + spelling variants)."""
+    groups = (
+        (("javante brown",), None),
+        (("junior saintil", "junior santil"), "Junior Saintil"),
+    )
+    for names, canonical in groups:
+        pattern = "|".join(re.escape(n) for n in names)
+        rx = re.compile(rf"^\s*(?:{pattern})\s*$", re.IGNORECASE)
+        users = await mongo_db.users.find({"name": rx, "ghost": {"$ne": True}}).to_list(20)
+        if not users:
+            continue
+        if len(users) > 1:
+            weighted = [(await _dup_weight(u), u) for u in users]
+            weighted.sort(key=lambda w: (-w[0][0], w[0][1]))
+            keep = weighted[0][1]
+            for _, dup in weighted[1:]:
+                await _merge_user_pair(keep, dup)
+        else:
+            keep = users[0]
+        if canonical and keep.get("name") != canonical:
+            await mongo_db.users.update_one({"_id": keep["_id"]}, {"$set": {"name": canonical}})
+
+
 @app.on_event("startup")
 async def seed_on_startup():
     try:
@@ -7903,6 +8095,7 @@ async def seed_on_startup():
         if await mongo_db.trucks.count_documents({}) == 0:
             for i in range(1, 6):
                 await mongo_db.trucks.insert_one({"_id": str(uuid4()), "name": f"Truck {i}", "plate": "", "active": True})
+        await dedupe_crew_users()
         await seed_team_module()
     except Exception as exc:
         logger.error("Startup seeding failed: %s", exc)

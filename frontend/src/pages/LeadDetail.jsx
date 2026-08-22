@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import {
   Phone, Mail, Calculator, CreditCard, Truck, MapPin, CalendarDays, CalendarPlus, Home, Lightbulb,
   Package, StickyNote, Search, MessageSquare, ArrowLeft, History, Pencil, Save, X, FileText, Undo2, BellRing,
+  Building2, DoorOpen,
 } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { useAuth } from "@/components/AuthGate";
@@ -18,14 +19,14 @@ import SquareInvoiceModal from "@/components/SquareInvoiceModal";
 import { AddNoteDialog } from "@/pages/Leads";
 import { CommissionCard } from "@/components/CommissionCard";
 import { LeadScopesCard } from "@/components/LeadScopesCard";
-import { LF, f, LEAD_STATUSES, STATUS_PILL, nextStepHint, KNOWN_LEAD_FIELD_IDS, formatExtraValue, needsFollowUp, quietDays, HOME_SIZES } from "@/lib/fields";
+import { LF, f, LEAD_STATUSES, STATUS_PILL, nextStepHint, KNOWN_LEAD_FIELD_IDS, formatExtraValue, needsFollowUp, quietDays, HOME_SIZES, isLegacyLeadField, leadAccess } from "@/lib/fields";
 import { fmtDate, gmailCompose, gmailSearch, calendarTemplate, smsLink, winBackSmsBody, payNudgeSmsBody } from "@/lib/format";
 import { quoteSmsBody } from "@/lib/quote";
 import { depositFromQuote } from "@/lib/pricing";
 import { bookLeadAsJob } from "@/lib/leadActions";
 
-const InfoRow = ({ icon: Icon, label, children, isPrivate = true }) => (
-  <div className="flex items-start gap-2 text-sm">
+const InfoRow = ({ icon: Icon, label, children, isPrivate = true, testId }) => (
+  <div className="flex items-start gap-2 text-sm" data-testid={testId}>
     <Icon className="w-4 h-4 text-faint mt-0.5 shrink-0" />
     <span className="text-faint shrink-0">{label}:</span>
     {isPrivate ? <Private className="min-w-0 break-words font-medium text-primary">{children}</Private> : <span className="min-w-0 break-words font-medium text-primary">{children}</span>}
@@ -82,8 +83,10 @@ export default function LeadDetail() {
     updateRecord("leads", lead.id, { [LF.notes]: old ? `${old}\n${line}` : line }).catch(() => {});
   };
 
+  const access = leadAccess(lead, schemas.leads);
   const extras = (schemas.leads || [])
-    .filter((fd) => !KNOWN_LEAD_FIELD_IDS.has(fd.id))
+    .filter((fd) => !KNOWN_LEAD_FIELD_IDS.has(fd.id) && !isLegacyLeadField(fd.name)
+      && fd.id !== access.ids.pickup && fd.id !== access.ids.dropoff)
     .map((fd) => ({ ...fd, display: formatExtraValue(f(lead, fd.id)) }))
     .filter((x) => f(lead, x.id) !== undefined && f(lead, x.id) !== null && x.display !== "");
 
@@ -226,6 +229,12 @@ export default function LeadDetail() {
                 <InfoRow icon={CalendarDays} label="Move date" isPrivate={false}>{fmtDate(f(lead, LF.moveDate))}</InfoRow>
                 <InfoRow icon={Home} label="Home size" isPrivate={false}>{f(lead, LF.homeSize) || "Size TBD"}</InfoRow>
                 <InfoRow icon={MapPin} label="Route">{f(lead, LF.from) || "?"} → {f(lead, LF.to) || "?"}</InfoRow>
+                {access.pickup && (
+                  <InfoRow icon={Building2} label="Pickup access" isPrivate={false} testId="lead-detail-pickup-access">{access.pickup}</InfoRow>
+                )}
+                {access.dropoff && (
+                  <InfoRow icon={DoorOpen} label="Drop-off access" isPrivate={false} testId="lead-detail-dropoff-access">{access.dropoff}</InfoRow>
+                )}
                 {(f(lead, LF.specialty) || []).length > 0 && (
                   <InfoRow icon={Package} label="Specialty" isPrivate={false}>{(f(lead, LF.specialty) || []).join(", ")}</InfoRow>
                 )}

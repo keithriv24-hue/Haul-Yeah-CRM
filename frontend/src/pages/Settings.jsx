@@ -32,13 +32,9 @@ const PRICING_GROUPS = [
     { key: "minHoursTruck", label: "Minimum hours — truck", max: 24 },
     { key: "minHoursLabor", label: "Minimum hours — labor only", max: 24 },
   ] },
-  { title: "Distance zones (one-way miles)", note: "Past zone 3 the calculator refuses to price it — those jobs are quoted individually.", fields: [
-    { key: "zone1MaxMiles", label: "Zone 1 — up to (mi)" },
-    { key: "zone1Fee", label: "Zone 1 fee ($)" },
-    { key: "zone2MaxMiles", label: "Zone 2 — up to (mi)" },
-    { key: "zone2Fee", label: "Zone 2 fee ($)" },
-    { key: "zone3MaxMiles", label: "Zone 3 — up to (mi)" },
-    { key: "zone3Fee", label: "Zone 3 fee ($)" },
+  { title: "Mileage (one-way miles)", note: "Every trip includes the free miles in the trip fee; each extra mile bills at the per-mile rate.", fields: [
+    { key: "mileageFreeMiles", label: "Free miles included (one-way)", max: 500 },
+    { key: "mileageRatePerMile", label: "Rate per extra mile ($)", max: 100 },
   ] },
   { title: "Stairs, carries & handling (flat fees)", fields: [
     { key: "stairFlightFee", label: "Stairs — per flight, each end ($)" },

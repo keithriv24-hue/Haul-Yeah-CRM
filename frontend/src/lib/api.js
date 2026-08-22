@@ -40,6 +40,7 @@ export const saveBusinessApi = (b) => axios.put(`${API}/settings/business`, b).t
 export const getSquareStatusApi = () => axios.get(`${API}/square/status`).then((r) => r.data);
 export const sendSquareInvoiceApi = (payload) => axios.post(`${API}/square/invoice`, payload).then((r) => r.data);
 export const listSquareInvoicesApi = () => axios.get(`${API}/square/invoices`).then((r) => r.data.invoices);
+export const moneySummaryApi = () => axios.get(`${API}/money/summary`).then((r) => r.data);
 export const getSchemaApi = (table) => axios.get(`${API}/schema/${table}`).then((r) => r.data);
 
 export const getHealth = () => axios.get(`${API}/health`).then((r) => r.data);

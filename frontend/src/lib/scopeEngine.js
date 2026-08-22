@@ -162,7 +162,7 @@ export const STATE_OPTIONS = ["NJ", "NY", "PA", "DE", "CT", "Other"];
 export const NO_PRICING = {
   manHourRate: 0, cushionPercent: 0, depositPercent: 0, roundingIncrement: 25, manHoursPer100CuFt: 2.1,
   tripFeeTruck: 0, tripFeeLabor: 0, floorTruck: 0, floorLabor: 0, minHoursTruck: 3, minHoursLabor: 2,
-  zone1MaxMiles: 20, zone1Fee: 0, zone2MaxMiles: 40, zone2Fee: 0, zone3MaxMiles: 60, zone3Fee: 0,
+  mileageFreeMiles: 20, mileageRatePerMile: 0,
   stairFlightFee: 0, longCarryFee: 0, disassemblyFee: 0, extraStopFee: 0,
   surchargeUprightPiano: 0, surchargeGrandPiano: 0, surchargePoolTable: 0,
   surchargeSafeT1: 0, surchargeSafeT2: 0, surchargeSafeT3: 0,
@@ -181,14 +181,16 @@ export const materialPrice = (def, P) => num(P?.[def.priceKey]);
 
 export const roundUpTo = (n, inc) => Math.ceil(n / Math.max(1, inc) - 1e-9) * Math.max(1, inc);
 
-/* Distance zones — one-way miles. Beyond the last zone the job is quoted individually. */
-export function zoneInfo(miles, P) {
+/* Mileage — one-way miles. The first `mileageFreeMiles` ride free in the trip fee;
+   every mile after that bills at `mileageRatePerMile`. */
+export function mileageInfo(miles, P) {
   const m = Math.max(0, num(miles));
-  const z1 = num(P?.zone1MaxMiles, 20), z2 = num(P?.zone2MaxMiles, 40), z3 = num(P?.zone3MaxMiles, 60);
-  if (m <= z1) return { zone: 1, fee: num(P?.zone1Fee), custom: false, label: `0–${z1} mi — included` };
-  if (m <= z2) return { zone: 2, fee: num(P?.zone2Fee), custom: false, label: `${z1 + 1}–${z2} mi` };
-  if (m <= z3) return { zone: 3, fee: num(P?.zone3Fee), custom: false, label: `${z2 + 1}–${z3} mi` };
-  return { zone: 4, fee: 0, custom: true, label: `over ${z3} mi — quote individually` };
+  const free = num(P?.mileageFreeMiles, 20);
+  const rate = num(P?.mileageRatePerMile);
+  const extra = Math.max(0, Math.round((m - free) * 10) / 10);
+  const fee = Math.round(extra * rate * 100) / 100;
+  return { miles: m, free, rate, extra, fee,
+    label: extra > 0 ? `${extra} mi beyond the first ${free}` : `first ${free} mi included` };
 }
 
 /* Out-of-state guard — we quote NJ-to-NJ only. Any other state = refuse. */
@@ -266,15 +268,15 @@ export function computeScope(inputs, P, shift = 0) {
   const manHourRate = num(P?.manHourRate);
   const tripFee = jobType === "labor" ? num(P?.tripFeeLabor) : num(P?.tripFeeTruck);
   const priceFloor = jobType === "labor" ? num(P?.floorLabor) : num(P?.floorTruck);
-  const zone = zoneInfo(miles, P);
-  const distBill = zone.custom ? 0 : zone.fee;
+  const mileage = mileageInfo(miles, P);
+  const distBill = mileage.fee;
   const labor = billMH * manHourRate;                                             // 1 flat man-hour rate
   const travel = tripFee * trucks;                                                // 2 trip fee
   const sub = labor + travel + distBill + accBill + itemBillTotal + matBill;      // 3 subtotal
   const cushioned = sub * (1 + num(P?.cushionPercent) / 100);                     // 4 cushion (never itemized)
   const total = Math.max(cushioned, priceFloor);                                  // 5 price floor (round-up at output)
 
-  return { cf, lbs, trucks, sc, volMH, itemMH, accMH, accBill, itemBill: itemBillTotal, matBill, distBill, zone,
+  return { cf, lbs, trucks, sc, volMH, itemMH, accMH, accBill, itemBill: itemBillTotal, matBill, distBill, mileage,
     billMH, schedMH, crew, crewRec, onsite, onsiteRec, labor, travel, sub, cushioned, total,
     beds, bedsEff, priceFloor, floorMH, hardFloorApplied };
 }

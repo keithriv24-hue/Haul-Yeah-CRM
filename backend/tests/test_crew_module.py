@@ -105,15 +105,14 @@ class TestAuth:
         assert d["user"]["email"].lower() == OWNER_EMAIL.lower()
         assert d["user"].get("must_change_password") == False
 
-    def test_owner_legacy_login_blank_username(self):
+    def test_owner_legacy_login_blank_username_retired(self):
         r = requests.post(f"{BASE_URL}/api/auth/login", json={"password": LEGACY_OWNER_PASSWORD}, timeout=15)
-        assert r.status_code == 200
-        assert r.json()["role"] == "owner"
+        assert r.status_code == 401
+        assert "retired" in r.json().get("detail", "").lower()
 
-    def test_sales_legacy_login_blank_username(self):
+    def test_sales_legacy_login_blank_username_retired(self):
         r = requests.post(f"{BASE_URL}/api/auth/login", json={"password": SALES_LEGACY_PASSWORD}, timeout=15)
-        assert r.status_code == 200
-        assert r.json()["role"] == "sales"
+        assert r.status_code == 401
 
     def test_crew1_no_force_change(self):
         r = _login(CREW1_EMAIL, CREW1_PASSWORD)

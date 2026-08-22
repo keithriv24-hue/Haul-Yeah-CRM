@@ -24,7 +24,7 @@ TOKEN = QA_TRACK_TOKEN
 def owner():
     s = requests.Session()
     r = s.post(f"{BASE}/api/auth/login",
-               json={"username": "HaulYeahAdmin", "password": OWNER_PASSWORD})
+               json={"email": "HaulYeahAdmin", "password": OWNER_PASSWORD})
     assert r.status_code == 200, r.text
     tok = r.json().get("access_token") or r.json().get("token")
     s.headers["Authorization"] = f"Bearer {tok}"
@@ -204,7 +204,7 @@ def test_owner_portal_uploads_forbidden_for_crew():
     # exposed in preview — verify with (a) no auth -> 401 and (b) sales-switched token -> 403.
     ow = requests.Session()
     lr = ow.post(f"{BASE}/api/auth/login",
-                 json={"username": "HaulYeahAdmin", "password": OWNER_PASSWORD}).json()
+                 json={"email": "HaulYeahAdmin", "password": OWNER_PASSWORD}).json()
     ow.headers["Authorization"] = f"Bearer {lr.get('access_token') or lr.get('token')}"
     jobs = ow.get(f"{BASE}/api/jobs").json().get("jobs", [])
     jid = next(j["id"] for j in jobs if j.get("invoice_number") == "QA-1001")

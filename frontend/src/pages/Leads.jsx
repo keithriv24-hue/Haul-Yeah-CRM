@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
-import { Phone, Mail, Calculator, CreditCard, Truck, Plus, MapPin, CalendarDays, CalendarPlus, Home, Lightbulb, Package, StickyNote, Search, MessageSquare, ChevronRight, FileText, Undo2, BellRing } from "lucide-react";
+import { Phone, Mail, Calculator, CreditCard, Truck, Plus, MapPin, CalendarDays, CalendarPlus, Home, Lightbulb, Package, StickyNote, Search, MessageSquare, ChevronRight, FileText, Undo2, BellRing, Building2, DoorOpen } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { useAuth } from "@/components/AuthGate";
 import { Button } from "@/components/ui/button";
@@ -14,7 +14,7 @@ import QuotePdfModal from "@/components/QuotePdfModal";
 import DepositModal from "@/components/DepositModal";
 import LeadModal from "@/components/LeadModal";
 import SquareInvoiceModal from "@/components/SquareInvoiceModal";
-import { LF, f, LEAD_STATUSES, nextStepHint, KNOWN_LEAD_FIELD_IDS, formatExtraValue, needsFollowUp, quietDays } from "@/lib/fields";
+import { LF, f, LEAD_STATUSES, nextStepHint, KNOWN_LEAD_FIELD_IDS, formatExtraValue, needsFollowUp, quietDays, isLegacyLeadField, leadAccess } from "@/lib/fields";
 import { fmtDate, gmailCompose, gmailSearch, calendarTemplate, smsLink, winBackSmsBody, payNudgeSmsBody } from "@/lib/format";
 import { quoteSmsBody } from "@/lib/quote";
 import { depositFromQuote } from "@/lib/pricing";
@@ -75,8 +75,10 @@ const LeadCard = ({ lead, onQuote, onDeposit, onNote, onInvoice, onPdf }) => {
   const latestInvoice = isOwner ? invoicesForLead(lead.id)[0] : null;
   const unpaidInvoice = latestInvoice && ["UNPAID", "PARTIALLY_PAID", "SCHEDULED"].includes(latestInvoice.status) ? latestInvoice : null;
 
+  const access = leadAccess(lead, schemas.leads);
   const extras = (schemas.leads || [])
-    .filter((fd) => !KNOWN_LEAD_FIELD_IDS.has(fd.id))
+    .filter((fd) => !KNOWN_LEAD_FIELD_IDS.has(fd.id) && !isLegacyLeadField(fd.name)
+      && fd.id !== access.ids.pickup && fd.id !== access.ids.dropoff)
     .map((fd) => ({ ...fd, display: formatExtraValue(f(lead, fd.id)) }))
     .filter((x) => f(lead, x.id) !== undefined && f(lead, x.id) !== null && x.display !== "");
   const status = f(lead, LF.status) || "New";
@@ -216,6 +218,22 @@ const LeadCard = ({ lead, onQuote, onDeposit, onNote, onInvoice, onPdf }) => {
             </span>
           )}
         </div>
+        {(access.pickup || access.dropoff) && (
+          <div data-testid="lead-access-info" className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12.5px] text-ink-2">
+            {access.pickup && (
+              <span className="inline-flex items-center gap-1 min-w-0">
+                <Building2 className="w-3.5 h-3.5 text-faint shrink-0" aria-hidden="true" />
+                <span className="truncate">Pickup: {access.pickup}</span>
+              </span>
+            )}
+            {access.dropoff && (
+              <span className="inline-flex items-center gap-1 min-w-0">
+                <DoorOpen className="w-3.5 h-3.5 text-faint shrink-0" aria-hidden="true" />
+                <span className="truncate">Drop-off: {access.dropoff}</span>
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       {/* --- money + status ------------------------------------------- */}

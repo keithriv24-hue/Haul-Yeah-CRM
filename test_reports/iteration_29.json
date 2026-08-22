@@ -1,0 +1,22 @@
+{
+  "summary": "Iteration 29 verification of the 8-point fix list (shared-password retirement, /api/money/summary single source of truth, mileage pricing 0.85/mi with 20-mi free, $85 stairs, ops-brain money sync, role gating, frontend KPIs on Dashboard/Partner/Invoices, scope calculator mileage note). Backend: 15/15 pytest checks pass. Frontend: login gating correct (button disabled until both fields filled, shared-password retirement copy visible), Dashboard THE MONEY card, Partner KPIs and Invoices KPIs all render values matching /api/money/summary (Booked $1,588 / Collected $388 / Owed $900 / Burn $0). Ops chip 'Owed to us $900' visible. Scope calculator mileage note updates correctly at 15/30/70 mi with $0.85/mi copy and no custom-quote fallback. Leads and Day Sheet pages render without JS errors in preview (Airtable key missing shown as expected banner).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iteration29_review.py",
+    "/app/test_reports/pytest/iteration29.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is very large (>7700 lines per file map); consider extracting money/ops/rate modules for maintainability.",
+    "GET /api/money/summary is the single source of truth — good; ensure any future dashboards continue to use it (do not fetch Square directly)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "HaulYeahAdmin / HaulYeah2026! (owner); testsalesadmin / testcrewadmin same password (ghost POV)",
+  "seed_data_creation": "None. Used existing QA seed (2 jobs, QA-1001).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "New pytest file at /app/backend/tests/test_iteration29_review.py covers login retirement, money/summary role gating & shape, ops-facts money reflection, rates (stair=85, mileageFreeMiles=20, mileageRatePerMile=0.85, no zone fees), scope pricing folded for ghost sales, and owner-table 403 for sales/crew. Use it as regression next round. Preview lacks AIRTABLE_API_KEY and Square keys — Airtable table endpoints return 503 and ledger table shows empty state; that is expected. Do NOT retry wrong passwords more than once (lockout after 5). Money numbers currently: booked $1,588 / collected $388 / outstanding $900.",
+  "rca of the issue": "N/A — no bugs found in this iteration."
+}

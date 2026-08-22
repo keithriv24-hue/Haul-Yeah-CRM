@@ -65,12 +65,11 @@ class TestLogin:
         # do not spam — single negative attempt
         assert r.status_code == 401
 
-    def test_legacy_blank_username_owner_password(self):
-        # Legacy behavior: blank email + shared owner env password -> owner/sales role
+    def test_legacy_blank_username_retired(self):
+        # Shared-password login retired (2026-08): blank email must 401
         r = requests.post(f"{API}/auth/login", json={"email": "", "password": OWNER_P})
-        assert r.status_code == 200, r.text
-        d = r.json()
-        assert d.get("role") in ("owner", "sales", "admin"), d
+        assert r.status_code == 401, r.text
+        assert "retired" in r.json().get("detail", "").lower()
 
     def test_auth_me(self, owner_token):
         r = requests.get(f"{API}/auth/me", headers=_h(owner_token))

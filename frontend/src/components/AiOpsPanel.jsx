@@ -73,7 +73,7 @@ export const AiOpsPanel = () => {
           <Chip testId="ops-chip-behind" icon={Clock3} label="Behind / at risk" value={f.jobs_today.behind.length + f.late_job_risk.length}
             alert={f.jobs_today.behind.length + f.late_job_risk.length > 0} to="/dispatch" />
           <Chip testId="ops-chip-fleet" icon={AlertTriangle} label="Fleet flags" value={fleetFlags} alert={fleetFlags > 0} to="/fleet" />
-          <Chip testId="ops-chip-outstanding" icon={DollarSign} label="Owed to you" value={fmtMoney(f.money.outstanding_balance_total)}
+          <Chip testId="ops-chip-outstanding" icon={DollarSign} label="Owed to us" value={fmtMoney(f.money.outstanding_balance_total)}
             alert={f.money.outstanding_balance_total > 0} to="/jobs" />
           <Chip testId="ops-chip-conflicts" icon={CalendarX2} label="Conflicts" value={f.schedule_conflicts.length}
             alert={f.schedule_conflicts.length > 0} to="/dispatch" />
