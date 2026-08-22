@@ -8,6 +8,7 @@ import { MemberAvatar } from "@/components/team/MemberAvatar";
 import { BadgeMedallion, RARITY_CHIP, TEAM_CHIP } from "@/components/team/BadgeMedallion";
 import { EditProfileDialog } from "@/components/team/EditProfileDialog";
 import { PinPicker } from "@/components/team/PinPicker";
+import { RewardsWallet } from "@/components/team/RewardsWallet";
 import { memberDetailApi, listChallengesApi } from "@/lib/api";
 import { fmtDate } from "@/lib/format";
 
@@ -172,6 +173,10 @@ export default function MemberProfile() {
             <p className="text-[11px] text-faint mt-1.5">Only {detail.is_self ? "you" : "they"} and the owner can see these numbers.</p>
           )}
         </div>
+      )}
+
+      {detail.can_see_numbers && detail.teams.length > 0 && (
+        <RewardsWallet userId={detail.id} isSelf={detail.is_self} />
       )}
 
       {detail.is_self && myChallenges.length > 0 && (

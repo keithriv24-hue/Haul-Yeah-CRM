@@ -1,5 +1,5 @@
 import React from "react";
-import { Trophy, CalendarDays, Gift, UserCheck } from "lucide-react";
+import { Trophy, CalendarDays, Gift, UserCheck, Users } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { TEAM_CHIP } from "@/components/team/BadgeMedallion";
 import { fmtDate } from "@/lib/format";
@@ -9,20 +9,47 @@ const daysLeft = (end) => {
   return diff;
 };
 
+/* One reward object can carry several parts (Pricing of parts stays owner-side). */
+export const rewardLabel = (reward) => {
+  const r = reward || {};
+  const parts = [];
+  if (r.badge_id) parts.push(`${r.badge_name || "a"} badge`);
+  if (r.title) parts.push(`\u201c${r.title}\u201d title`);
+  if (r.amount > 0) parts.push(`$${Math.round(r.amount)} bonus`);
+  if (r.points > 0) parts.push(`${r.points} Haul Points`);
+  if (r.label && !["cash", "points"].includes(r.kind)) parts.push(r.label);
+  if (!parts.length) parts.push(r.kind === "title" ? "a title" : "a badge");
+  return parts.join(" + ");
+};
+
+const TYPE_LABEL = { individual: "everyone can win", competition: "one winner", team: "team goal" };
+const ELIG_LABEL = { driver: "Drivers only", helper: "Helpers only", dual: "Dual role" };
+
 export const ChallengeCard = ({ ch, me, children }) => {
   const left = daysLeft(ch.end);
-  const rewardLabel = ch.reward?.kind === "title" ? `“${ch.reward.title}” title` : "a badge";
+  const mine = me ? (ch.progress || []).find((r) => r.user_id === me) : null;
+  const myPct = mine && ch.target ? Math.min(100, Math.round((mine.value / ch.target) * 100)) : null;
   return (
     <div data-testid="challenge-card" className="surface p-4">
       <div className="flex flex-wrap items-center gap-2 mb-1">
         <h3 className="font-display font-bold text-primary">{ch.name}</h3>
         <Badge variant="outline" className={`text-[10px] capitalize ${TEAM_CHIP[ch.team] || ""}`}>{ch.team}</Badge>
         <Badge variant="outline" className="text-[10px] capitalize bg-surface-sunk text-ink-2 border-border-strong">
-          {ch.type === "individual" ? "everyone can win" : "one winner"}
+          {TYPE_LABEL[ch.type] || ch.type}
         </Badge>
+        {ELIG_LABEL[ch.eligible_roles] && (
+          <Badge data-testid="challenge-eligibility-chip" variant="outline" className="text-[10px] bg-info/10 text-info border-info/30 gap-1">
+            <Users className="w-3 h-3" /> {ELIG_LABEL[ch.eligible_roles]}
+          </Badge>
+        )}
         {ch.metric === "owner_verified" && (
           <Badge variant="outline" className="text-[10px] bg-warning/10 text-warning border-warning/30 gap-1">
             <UserCheck className="w-3 h-3" /> owner-verified
+          </Badge>
+        )}
+        {ch.created_by === "ai-agent" && (
+          <Badge data-testid="challenge-ai-chip" variant="outline" className="text-[10px] bg-accent/10 text-accent-ink border-accent/30">
+            agent pick
           </Badge>
         )}
       </div>
@@ -34,7 +61,14 @@ export const ChallengeCard = ({ ch, me, children }) => {
             {left > 0 ? `${left} day${left === 1 ? "" : "s"} left` : "ends today"}
           </span>
         )}
-        <span className="inline-flex items-center gap-1"><Gift className="w-3.5 h-3.5 text-accent-ink" />Reward: {rewardLabel}</span>
+        <span data-testid="challenge-reward-label" className="inline-flex items-center gap-1 font-semibold text-ink-2">
+          <Gift className="w-3.5 h-3.5 text-accent-ink" />{rewardLabel(ch.reward)}
+        </span>
+        {myPct !== null && ch.status === "active" && (
+          <span data-testid="challenge-my-pct" className={`font-bold ${myPct >= 100 ? "text-success" : "text-accent-ink"}`}>
+            {myPct}% complete
+          </span>
+        )}
       </div>
 
       {ch.status === "needs_verify" && (
@@ -55,15 +89,15 @@ export const ChallengeCard = ({ ch, me, children }) => {
         </div>
       )}
 
-      {ch.type === "individual" && ch.target ? (
+      {ch.type !== "competition" && ch.target ? (
         <div className="space-y-1.5">
           {(ch.progress || []).map((r) => {
             const pct = Math.min(100, Math.round((r.value / ch.target) * 100));
-            const mine = me && r.user_id === me;
+            const isMine = me && r.user_id === me;
             return (
-              <div key={r.user_id} data-testid="challenge-progress-row" className={`rounded-md px-2 py-1.5 ${mine ? "bg-accent/10 border border-accent/25" : ""}`}>
+              <div key={r.user_id} data-testid="challenge-progress-row" className={`rounded-md px-2 py-1.5 ${isMine ? "bg-accent/10 border border-accent/25" : ""}`}>
                 <div className="flex items-center justify-between text-xs mb-0.5">
-                  <span className={`font-semibold ${mine ? "text-accent-ink" : "text-primary"}`}>{r.name}{mine ? " (you)" : ""}</span>
+                  <span className={`font-semibold ${isMine ? "text-accent-ink" : "text-primary"}`}>{r.name}{isMine ? " (you)" : ""}</span>
                   <span className="text-faint font-mono">{r.value}/{ch.target}</span>
                 </div>
                 <div className="h-1.5 bg-surface-sunk rounded-full overflow-hidden">
@@ -76,11 +110,11 @@ export const ChallengeCard = ({ ch, me, children }) => {
       ) : (
         <div className="space-y-1">
           {(ch.progress || []).map((r, i) => {
-            const mine = me && r.user_id === me;
+            const isMine = me && r.user_id === me;
             return (
-              <div key={r.user_id} data-testid="challenge-leader-row" className={`flex items-center gap-2 text-sm rounded-md px-2 py-1 ${mine ? "bg-accent/10 border border-accent/25" : ""}`}>
+              <div key={r.user_id} data-testid="challenge-leader-row" className={`flex items-center gap-2 text-sm rounded-md px-2 py-1 ${isMine ? "bg-accent/10 border border-accent/25" : ""}`}>
                 <span className={`w-5 text-center font-bold ${i === 0 && r.value > 0 ? "text-warning" : "text-faint"}`}>{i + 1}</span>
-                <span className={`flex-1 truncate ${mine ? "font-semibold text-accent-ink" : "text-primary"}`}>{r.name}{mine ? " (you)" : ""}</span>
+                <span className={`flex-1 truncate ${isMine ? "font-semibold text-accent-ink" : "text-primary"}`}>{r.name}{isMine ? " (you)" : ""}</span>
                 <span className="font-mono text-ink-2">{r.value}</span>
               </div>
             );

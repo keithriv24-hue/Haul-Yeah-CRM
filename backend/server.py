@@ -4683,7 +4683,7 @@ def teams_for_roles(roles: Optional[List[str]]) -> List[str]:
 def _badge_out(b: Dict[str, Any], extra: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     out = {"id": b["_id"], "track": b["track"], "name": b["name"], "description": b.get("description", ""),
            "rarity": b.get("rarity", "bronze"), "icon": b.get("icon", "Medal"), "auto": b.get("auto"),
-           "active": b.get("active", True)}
+           "active": b.get("active", True), "unlock_reward": b.get("unlock_reward")}
     if extra:
         out.update(extra)
     return out
@@ -4735,6 +4735,15 @@ async def award_badge(user: Dict[str, Any], badge: Dict[str, Any], by: str) -> b
                  f"\u201c{badge['name']}\u201d ({badge.get('rarity', 'bronze').title()}) is yours \u2014 {badge.get('description', '')}",
                  "badge", {"badge_id": badge["_id"]})
     await audit({"name": by, "user_id": None}, "awarded badge", f"{badge['name']} \u2192 {user.get('name', '')}")
+    ur = badge.get("unlock_reward") or {}
+    if (ur.get("points") or 0) > 0 or (ur.get("amount") or 0) > 0:
+        await create_reward(
+            user=user, team=badge.get("track") or "crew", source="badge",
+            reward_type="cash" if (ur.get("amount") or 0) > 0 else "points",
+            name=f"{badge['name']} milestone reward",
+            amount=ur.get("amount") or 0, points=ur.get("points") or 0,
+            reason=f"Unlocked the \u201c{badge['name']}\u201d badge",
+            badge=badge)
     return True
 
 
@@ -5016,6 +5025,8 @@ class BadgePayload(BaseModel):
     icon: str = "Medal"
     auto_metric: Optional[str] = None
     auto_threshold: Optional[int] = None
+    unlock_points: Optional[int] = None
+    unlock_amount: Optional[float] = None
 
 
 class BadgePatchPayload(BaseModel):
@@ -5026,6 +5037,13 @@ class BadgePatchPayload(BaseModel):
     active: Optional[bool] = None
     auto_metric: Optional[str] = None
     auto_threshold: Optional[int] = None
+    unlock_points: Optional[int] = None
+    unlock_amount: Optional[float] = None
+
+
+def _unlock_reward_from(points: Optional[int], amount: Optional[float]) -> Optional[Dict[str, Any]]:
+    pts, amt = max(0, int(points or 0)), max(0.0, float(amount or 0))
+    return {"points": pts, "amount": round(amt, 2)} if (pts or amt) else None
 
 
 @api_router.get("/badges")
@@ -5049,6 +5067,7 @@ async def create_badge(payload: BadgePayload, p: Dict[str, Any] = Depends(requir
     doc = {"_id": str(uuid4()), "track": payload.track, "name": payload.name.strip(),
            "description": payload.description.strip(), "rarity": payload.rarity, "icon": payload.icon or "Medal",
            "auto": auto, "active": True, "seeded": False, "sort": ((last or {}).get("sort") or 0) + 1,
+           "unlock_reward": _unlock_reward_from(payload.unlock_points, payload.unlock_amount),
            "created_at": now_iso()}
     await mongo_db.badges.insert_one(doc)
     await audit(p, "created a badge", f"{doc['name']} ({payload.track}, {payload.rarity})")
@@ -5080,6 +5099,8 @@ async def patch_badge(badge_id: str, payload: BadgePatchPayload, p: Dict[str, An
             updates["auto"] = {"metric": payload.auto_metric, "threshold": int(payload.auto_threshold)}
         else:
             raise HTTPException(status_code=422, detail="Auto-unlock needs a valid metric and a count of 1 or more.")
+    if payload.unlock_points is not None or payload.unlock_amount is not None:
+        updates["unlock_reward"] = _unlock_reward_from(payload.unlock_points, payload.unlock_amount)
     if updates:
         await mongo_db.badges.update_one({"_id": badge_id}, {"$set": updates})
         await audit(p, "edited a badge", b["name"], {"changes": list(updates.keys())})
@@ -5267,15 +5288,22 @@ class ChallengePayload(BaseModel):
     reward_kind: str
     reward_badge_id: Optional[str] = None
     reward_title: Optional[str] = None
+    reward_amount: Optional[float] = None
+    reward_points: Optional[int] = None
+    reward_label: Optional[str] = None
+    eligible_roles: str = "all"
 
 
 async def challenge_progress(ch: Dict[str, Any]) -> List[Dict[str, Any]]:
     members = await _active_members(ch["team"])
+    elig = ch.get("eligible_roles") or "all"
     if ch.get("metric") == "job_credits":
         docs = await mongo_db.job_credits.find(
             {"team": ch["team"], "date": {"$gte": ch["start"], "$lte": ch["end"]}}).to_list(5000)
         counts: Dict[str, int] = {}
         for d in docs:
+            if ch["team"] == "crew" and elig in ("driver", "helper") and d.get("role_tag") != elig:
+                continue
             counts[d["user_id"]] = counts.get(d["user_id"], 0) + 1
     else:
         counts = {k: int(v) for k, v in (ch.get("verified") or {}).items()}
@@ -5290,15 +5318,39 @@ async def _award_challenge(ch: Dict[str, Any], winners: List[str], rows: List[Di
         u = await mongo_db.users.find_one({"_id": uid})
         if not u:
             continue
-        if reward.get("kind") == "badge" and reward.get("badge_id"):
+        won_bits: List[str] = []
+        if reward.get("badge_id"):
             b = await mongo_db.badges.find_one({"_id": reward["badge_id"]})
             if b:
                 await award_badge(u, b, by=f"challenge: {ch['name']}")
-        elif reward.get("kind") == "title" and reward.get("title"):
+                won_bits.append(f"the \u201c{b['name']}\u201d badge")
+        if reward.get("title"):
             await mongo_db.users.update_one({"_id": uid}, {"$addToSet": {"titles": reward["title"]}})
-            await notify(uid, None, "You earned a title!",
-                         f"You won \u201c{ch['name']}\u201d \u2014 the \u201c{reward['title']}\u201d title is on your profile now.",
-                         "challenge")
+            won_bits.append(f"the \u201c{reward['title']}\u201d title")
+        amount = float(reward.get("amount") or 0)
+        points = int(reward.get("points") or 0)
+        if amount > 0 or points > 0:
+            rtype = reward.get("kind") if reward.get("kind") in REWARD_TYPES else ("cash" if amount > 0 else "points")
+            await create_reward(
+                user=u, team=ch["team"], source="challenge", reward_type=rtype,
+                name=reward.get("label") or f"{ch['name']} reward",
+                amount=amount, points=points,
+                reason=f"Won the \u201c{ch['name']}\u201d challenge", challenge=ch)
+            if amount > 0:
+                won_bits.append(f"a ${amount:g} reward (pending owner approval)")
+            if points > 0:
+                won_bits.append(f"{points} Haul Points (pending owner approval)")
+        elif reward.get("label"):
+            await create_reward(
+                user=u, team=ch["team"], source="challenge",
+                reward_type=reward.get("kind") if reward.get("kind") in REWARD_TYPES else "custom",
+                name=reward["label"], amount=0, points=0,
+                reason=f"Won the \u201c{ch['name']}\u201d challenge", challenge=ch)
+            won_bits.append(f"{reward['label']} (pending owner approval)")
+        if won_bits:
+            await notify(uid, None, "\U0001F3C6 Challenge complete!",
+                         f"You won \u201c{ch['name']}\u201d \u2014 you earned {', '.join(won_bits)}.",
+                         "challenge", {"challenge_id": ch["_id"], "celebrate": True})
     await mongo_db.challenges.update_one(
         {"_id": ch["_id"]},
         {"$set": {"status": "awarded" if winners else "ended", "winners": winners, "final": rows,
@@ -5317,7 +5369,7 @@ async def finalize_due_challenges():
                          f"\u201c{ch['name']}\u201d just ended. Confirm the winner(s) in Team HQ \u2192 Challenges before the reward goes out.",
                          "challenge", {"challenge_id": ch["_id"]})
             continue
-        if ch.get("type") == "individual":
+        if ch.get("type") in ("individual", "team"):
             target = ch.get("target") or 0
             winners = [r["user_id"] for r in rows if target and r["value"] >= target]
         else:
@@ -5331,6 +5383,8 @@ def _challenge_out(ch: Dict[str, Any], rows: List[Dict[str, Any]]) -> Dict[str, 
     return {"id": ch["_id"], "name": ch["name"], "description": ch.get("description", ""),
             "team": ch["team"], "type": ch["type"], "metric": ch["metric"], "target": ch.get("target"),
             "start": ch["start"], "end": ch["end"], "reward": ch.get("reward", {}),
+            "eligible_roles": ch.get("eligible_roles") or "all",
+            "created_by": ch.get("created_by"), "ai": ch.get("ai"),
             "status": ch.get("status", "active"),
             "winners": [{"user_id": w, "name": name_map.get(w, "")} for w in ch.get("winners", [])],
             "progress": rows}
@@ -5352,41 +5406,86 @@ async def list_challenges(request: Request):
     return {"challenges": out, "me": p.get("user_id"), "is_owner": p["role"] == "owner"}
 
 
-def _validate_challenge(payload: ChallengePayload) -> Dict[str, Any]:
+CHALLENGE_REWARD_KINDS = ("badge", "title", "cash", "gift_card", "points", "merch", "meal", "custom", "combo")
+
+
+async def _validate_challenge(payload: ChallengePayload) -> Dict[str, Any]:
     if payload.team not in TEAMS:
         raise HTTPException(status_code=422, detail="Team must be crew or sales.")
-    if payload.type not in ("individual", "competition"):
-        raise HTTPException(status_code=422, detail="Type must be individual or competition.")
+    if payload.type not in ("individual", "competition", "team"):
+        raise HTTPException(status_code=422, detail="Type must be individual, competition, or team.")
     if payload.metric not in ("job_credits", "owner_verified"):
         raise HTTPException(status_code=422, detail="Metric must be job_credits or owner_verified.")
-    if payload.type == "individual" and (not payload.target or payload.target < 1):
-        raise HTTPException(status_code=422, detail="Individual challenges need a goal count of 1 or more.")
+    if payload.type in ("individual", "team") and (not payload.target or payload.target < 1):
+        raise HTTPException(status_code=422, detail="Individual and team challenges need a goal count of 1 or more.")
     if not payload.start or not payload.end or payload.end < payload.start:
         raise HTTPException(status_code=422, detail="Check the start and end dates.")
-    if payload.reward_kind == "badge" and not payload.reward_badge_id:
+    if payload.eligible_roles not in ("all", "driver", "helper", "dual"):
+        raise HTTPException(status_code=422, detail="Eligibility must be all, driver, helper, or dual.")
+    if payload.team == "sales" and payload.eligible_roles != "all":
+        raise HTTPException(status_code=422, detail="Sales challenges are open to the whole sales team.")
+    kind = payload.reward_kind
+    if kind not in CHALLENGE_REWARD_KINDS:
+        raise HTTPException(status_code=422, detail="That reward type doesn't exist.")
+    amount = round(max(0.0, float(payload.reward_amount or 0)), 2)
+    points = max(0, int(payload.reward_points or 0))
+    label = (payload.reward_label or "").strip()[:120]
+    badge_id = payload.reward_badge_id if kind in ("badge", "combo") else None
+    title = (payload.reward_title or "").strip() if kind in ("title", "combo") else ""
+    if kind == "badge" and not badge_id:
         raise HTTPException(status_code=422, detail="Pick the badge to give out.")
-    if payload.reward_kind == "title" and not (payload.reward_title or "").strip():
+    if kind == "title" and not title:
         raise HTTPException(status_code=422, detail="Type the title to give out.")
-    if payload.reward_kind not in ("badge", "title"):
-        raise HTTPException(status_code=422, detail="Reward must be a badge or a title.")
-    reward = {"kind": payload.reward_kind}
-    if payload.reward_kind == "badge":
-        reward["badge_id"] = payload.reward_badge_id
-    else:
-        reward["title"] = payload.reward_title.strip()
+    if kind in ("cash",) and amount <= 0:
+        raise HTTPException(status_code=422, detail="Cash rewards need a dollar amount.")
+    if kind == "points" and points <= 0:
+        raise HTTPException(status_code=422, detail="Point rewards need a Haul Points amount.")
+    if kind in ("gift_card", "merch", "meal", "custom") and not label and amount <= 0 and points <= 0:
+        raise HTTPException(status_code=422, detail="Describe the reward (and give it a value if it has one).")
+    if kind == "combo" and not (badge_id or title or amount > 0 or points > 0 or label):
+        raise HTTPException(status_code=422, detail="A combo reward needs at least one part.")
+    cfg = await get_rewards_config()
+    if kind not in ("badge", "title"):
+        base_kind = "cash" if kind == "combo" and amount > 0 else kind
+        if base_kind in ("cash", "gift_card", "points", "merch", "meal", "custom") and base_kind not in (cfg.get("enabledRewardTypes") or []):
+            raise HTTPException(status_code=422, detail=f"{base_kind.replace('_', ' ').title()} rewards are turned off in Reward settings.")
+    value = amount + points / max(1.0, float(cfg.get("pointsPerDollar") or 10))
+    if value > float(cfg.get("maxSingleReward") or 0) > 0:
+        raise HTTPException(status_code=422,
+                            detail=f"That reward is worth ${value:.0f} \u2014 over your ${cfg['maxSingleReward']:g} single-reward cap (Reward settings).")
+    reward: Dict[str, Any] = {"kind": kind}
+    if badge_id:
+        b = await mongo_db.badges.find_one({"_id": badge_id})
+        if not b:
+            raise HTTPException(status_code=422, detail="That badge doesn't exist.")
+        reward["badge_id"] = badge_id
+        reward["badge_name"] = b["name"]
+    if title:
+        reward["title"] = title
+    if amount > 0:
+        reward["amount"] = amount
+    if points > 0:
+        reward["points"] = points
+    if label:
+        reward["label"] = label
     return reward
 
 
 @api_router.post("/challenges")
 async def create_challenge(payload: ChallengePayload, p: Dict[str, Any] = Depends(require_owner)):
-    reward = _validate_challenge(payload)
+    reward = await _validate_challenge(payload)
     doc = {"_id": str(uuid4()), "name": payload.name.strip(), "description": payload.description.strip(),
            "team": payload.team, "type": payload.type, "metric": payload.metric,
-           "target": payload.target if payload.type == "individual" else None,
+           "target": payload.target if payload.type in ("individual", "team") else None,
            "start": payload.start, "end": payload.end, "reward": reward, "status": "active",
+           "eligible_roles": payload.eligible_roles,
            "verified": {}, "winners": [], "created_by": p.get("name"), "created_at": now_iso()}
     await mongo_db.challenges.insert_one(doc)
     await audit(p, "created a challenge", f"{doc['name']} ({payload.team}, {payload.type})")
+    for m in await _active_members(payload.team):
+        await notify(m["_id"], None, "New challenge just dropped",
+                     f"\u201c{doc['name']}\u201d is live for the {payload.team} team \u2014 check the Challenges page.",
+                     "challenge", {"challenge_id": doc["_id"]})
     return _challenge_out(doc, await challenge_progress(doc))
 
 
@@ -5397,13 +5496,14 @@ async def patch_challenge(challenge_id: str, payload: ChallengePayload, p: Dict[
         raise HTTPException(status_code=404, detail="No such challenge.")
     if ch.get("status") == "awarded":
         raise HTTPException(status_code=422, detail="That challenge already paid out \u2014 make a new one instead.")
-    reward = _validate_challenge(payload)
+    reward = await _validate_challenge(payload)
     await mongo_db.challenges.update_one(
         {"_id": challenge_id},
         {"$set": {"name": payload.name.strip(), "description": payload.description.strip(),
                   "team": payload.team, "type": payload.type, "metric": payload.metric,
-                  "target": payload.target if payload.type == "individual" else None,
-                  "start": payload.start, "end": payload.end, "reward": reward}})
+                  "target": payload.target if payload.type in ("individual", "team") else None,
+                  "start": payload.start, "end": payload.end, "reward": reward,
+                  "eligible_roles": payload.eligible_roles}})
     await audit(p, "edited a challenge", payload.name.strip())
     fresh = await mongo_db.challenges.find_one({"_id": challenge_id})
     return _challenge_out(fresh, await challenge_progress(fresh))
@@ -5474,6 +5574,19 @@ async def crew_comparison(p: Dict[str, Any] = Depends(require_owner)):
     return {"rows": rows}
 
 
+BADGE_UNLOCK_SEEDS = {
+    "truck-boss": {"points": 250, "amount": 0},
+    "haul-of-famer": {"points": 500, "amount": 0},
+    "two-way-player": {"points": 500, "amount": 0},
+    "five-star-shoutout": {"points": 250, "amount": 0},
+    "road-captain": {"points": 250, "amount": 0},
+    "deal-dozen": {"points": 250, "amount": 0},
+    "quarter-club": {"points": 500, "amount": 0},
+    "deposit-locksmith": {"points": 250, "amount": 0},
+    "comeback-kid": {"points": 250, "amount": 0},
+}
+
+
 async def seed_team_module():
     for i, (slug, track, name, desc, rarity, icon, metric, thr) in enumerate(BADGE_SEEDS):
         await mongo_db.badges.update_one(
@@ -5482,6 +5595,16 @@ async def seed_team_module():
                               "icon": icon, "auto": ({"metric": metric, "threshold": thr} if metric else None),
                               "active": True, "seeded": True, "sort": i, "created_at": now_iso()}},
             upsert=True)
+    for slug, ur in BADGE_UNLOCK_SEEDS.items():
+        await mongo_db.badges.update_one({"_id": slug, "unlock_reward": {"$exists": False}},
+                                         {"$set": {"unlock_reward": ur}})
+    if await mongo_db.reward_catalog.count_documents({}) == 0:
+        for slug, name, pts, value, kind in CATALOG_SEEDS:
+            await mongo_db.reward_catalog.update_one(
+                {"_id": slug},
+                {"$setOnInsert": {"_id": slug, "name": name, "points_cost": pts, "value": value, "kind": kind,
+                                  "active": True, "created_at": now_iso()}},
+                upsert=True)
     for u in await mongo_db.users.find({"profile_task": {"$exists": False}}).to_list(300):
         prof = u.get("member_profile") or {}
         done = any((prof.get(k) or "").strip() for k in MEMBER_PROFILE_FIELDS)
@@ -5518,6 +5641,1023 @@ async def seed_team_module():
         for s in seeds:
             await mongo_db.challenges.insert_one({"_id": str(uuid4()), **s, "status": "active", "verified": {},
                                                   "winners": [], "created_by": "seed", "created_at": now_iso()})
+
+
+# ================================================================ rewards engine (Haul Points, reward records, budgets)
+
+REWARD_TYPES = ("cash", "gift_card", "points", "merch", "meal", "custom", "redemption")
+REWARD_STATUSES = ("pending", "approved", "fulfilled", "denied", "voided")
+
+DEFAULT_REWARDS_CONFIG = {
+    "pointsPerDollar": 10.0,            # 10 Haul Points = $1
+    "crewMonthlyBudget": 300.0,
+    "salesMonthlyBudget": 400.0,
+    "maxSingleReward": 250.0,
+    "enabledRewardTypes": ["points", "cash", "gift_card", "merch", "meal", "custom"],
+    "aiEnabled": True,
+    "aiMonthlyGeneration": True,
+    "aiAutoPublish": False,
+    "aiRequireApproval": True,
+    "aiCrewChallengesPerMonth": 2,
+    "aiSalesChallengesPerMonth": 2,
+    "aiDifficulty": "moderate",
+    "aiMaxRewardPerChallenge": 100.0,
+    "aiCrewMonthlyBudget": 200.0,
+    "aiSalesMonthlyBudget": 250.0,
+    "aiAllowCompetition": True,
+    "aiAllowTeamChallenges": True,
+    "aiAllowPoints": True,
+    "aiAllowCash": True,
+    "aiAllowGiftCards": True,
+}
+
+
+async def get_rewards_config() -> Dict[str, Any]:
+    doc = await mongo_db.settings.find_one({"_id": "rewards_config"}) or {}
+    stored = doc.get("values") or {}
+    out = dict(DEFAULT_REWARDS_CONFIG)
+    for k, v in stored.items():
+        if k in out:
+            out[k] = v
+    return out
+
+
+@api_router.get("/rewards/config")
+async def rewards_config(p: Dict[str, Any] = Depends(require_owner)):
+    return await get_rewards_config()
+
+
+@api_router.put("/rewards/config")
+async def save_rewards_config(payload: Dict[str, Any] = Body(...), p: Dict[str, Any] = Depends(require_owner)):
+    current = await get_rewards_config()
+    values = dict(current)
+    for k, v in payload.items():
+        if k not in DEFAULT_REWARDS_CONFIG:
+            continue
+        default = DEFAULT_REWARDS_CONFIG[k]
+        if isinstance(default, bool):
+            values[k] = bool(v)
+        elif isinstance(default, list):
+            values[k] = [x for x in (v or []) if x in REWARD_TYPES]
+        elif isinstance(default, str):
+            values[k] = str(v or default)[:40]
+        else:
+            try:
+                n = float(v)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=422, detail=f"'{k}' must be a number.")
+            if n < 0:
+                raise HTTPException(status_code=422, detail="Reward settings can't be negative.")
+            values[k] = int(n) if isinstance(default, int) else n
+    if values["pointsPerDollar"] < 1:
+        raise HTTPException(status_code=422, detail="Points per dollar must be at least 1.")
+    await mongo_db.settings.update_one({"_id": "rewards_config"},
+                                       {"$set": {"values": values, "updated_at": now_iso()}}, upsert=True)
+    await audit(p, "changed reward settings", "")
+    return values
+
+
+def reward_dollar_value(amount: float, points: int, cfg: Dict[str, Any]) -> float:
+    return round(float(amount or 0) + int(points or 0) / max(1.0, float(cfg.get("pointsPerDollar") or 10)), 2)
+
+
+def _reward_out(r: Dict[str, Any]) -> Dict[str, Any]:
+    return {k: r.get(k) for k in (
+        "user_id", "user_name", "team", "challenge_id", "challenge_name", "badge_id", "badge_name",
+        "reward_type", "reward_name", "amount", "points", "earned_at", "reason", "status",
+        "approved_by", "approved_at", "fulfilled_by", "fulfilled_at", "payroll_required",
+        "payroll_period", "notes", "void_reason", "source", "created_at", "updated_at")} | {"id": r["_id"]}
+
+
+async def create_reward(user: Dict[str, Any], team: str, source: str, reward_type: str, name: str,
+                        amount: float = 0, points: int = 0, reason: str = "",
+                        challenge: Optional[Dict[str, Any]] = None, badge: Optional[Dict[str, Any]] = None,
+                        status: str = "pending", payroll_required: Optional[bool] = None) -> Dict[str, Any]:
+    if payroll_required is None:
+        payroll_required = reward_type in ("cash", "gift_card") and float(amount or 0) > 0
+    doc = {"_id": str(uuid4()), "user_id": user["_id"], "user_name": user.get("name", ""),
+           "team": team if team in TEAMS else "crew",
+           "challenge_id": (challenge or {}).get("_id"), "challenge_name": (challenge or {}).get("name"),
+           "badge_id": (badge or {}).get("_id"), "badge_name": (badge or {}).get("name"),
+           "reward_type": reward_type if reward_type in REWARD_TYPES else "custom",
+           "reward_name": (name or "Reward").strip()[:140],
+           "amount": round(float(amount or 0), 2), "points": int(points or 0),
+           "earned_at": now_iso(), "reason": (reason or "").strip()[:300], "status": status,
+           "approved_by": None, "approved_at": None, "fulfilled_by": None, "fulfilled_at": None,
+           "payroll_required": bool(payroll_required), "payroll_period": _et_today()[:7],
+           "notes": "", "void_reason": "", "source": source,
+           "created_at": now_iso(), "updated_at": now_iso()}
+    await mongo_db.rewards.insert_one(doc)
+    if status == "pending":
+        await notify(user["_id"], None, "You earned a reward!",
+                     f"{doc['reward_name']} \u2014 {reason or 'nice work'}. It's waiting on the owner's approval.",
+                     "reward", {"reward_id": doc["_id"]})
+    return doc
+
+
+async def credit_points(user_id: str, delta: int, reason: str, reward_id: Optional[str], actor_name: str) -> int:
+    u = await mongo_db.users.find_one({"_id": user_id})
+    if not u:
+        raise HTTPException(status_code=404, detail="No such member.")
+    balance = int(u.get("haul_points") or 0) + int(delta)
+    if balance < 0:
+        raise HTTPException(status_code=422, detail="Not enough Haul Points for that.")
+    lifetime = int(u.get("haul_points_lifetime") or 0) + (int(delta) if delta > 0 else 0)
+    await mongo_db.users.update_one({"_id": user_id},
+                                    {"$set": {"haul_points": balance, "haul_points_lifetime": lifetime}})
+    await mongo_db.points_ledger.insert_one({"_id": str(uuid4()), "user_id": user_id, "delta": int(delta),
+                                             "balance_after": balance, "reason": (reason or "")[:200],
+                                             "reward_id": reward_id, "actor": actor_name, "created_at": now_iso()})
+    if delta > 0:
+        await notify(user_id, None, f"+{delta} Haul Points",
+                     f"{reason or 'Points added'}. Your balance is now {balance}.", "reward")
+    return balance
+
+
+@api_router.get("/rewards")
+async def list_rewards(status: Optional[str] = None, month: Optional[str] = None, user_id: Optional[str] = None,
+                       p: Dict[str, Any] = Depends(require_owner)):
+    q: Dict[str, Any] = {}
+    if status in REWARD_STATUSES:
+        q["status"] = status
+    if month:
+        q["earned_at"] = {"$regex": f"^{month[:7]}"}
+    if user_id:
+        q["user_id"] = user_id
+    docs = await mongo_db.rewards.find(q).sort("earned_at", -1).to_list(400)
+    return {"rewards": [_reward_out(r) for r in docs]}
+
+
+class RewardActionPayload(BaseModel):
+    reason: str = ""
+    notes: str = ""
+
+
+@api_router.post("/rewards/{reward_id}/approve")
+async def approve_reward(reward_id: str, p: Dict[str, Any] = Depends(require_owner)):
+    r = await mongo_db.rewards.find_one({"_id": reward_id})
+    if not r:
+        raise HTTPException(status_code=404, detail="No such reward.")
+    if r["status"] != "pending":
+        raise HTTPException(status_code=422, detail="Only pending rewards can be approved \u2014 this one already moved on.")
+    if r["reward_type"] == "redemption":
+        await credit_points(r["user_id"], -int(r.get("points") or 0),
+                            f"Redeemed: {r['reward_name']}", reward_id, p.get("name") or "owner")
+    elif int(r.get("points") or 0) > 0:
+        await credit_points(r["user_id"], int(r["points"]),
+                            r.get("reason") or r["reward_name"], reward_id, p.get("name") or "owner")
+    await mongo_db.rewards.update_one({"_id": reward_id},
+                                      {"$set": {"status": "approved", "approved_by": p.get("name"),
+                                                "approved_at": now_iso(), "updated_at": now_iso()}})
+    await notify(r["user_id"], None, "Reward approved \u2705",
+                 f"{r['reward_name']} was approved" + (" \u2014 you'll get it shortly." if r["reward_type"] != "points" else "."),
+                 "reward", {"reward_id": reward_id})
+    await audit(p, "approved a reward", f"{r['reward_name']} \u2192 {r.get('user_name', '')}")
+    fresh = await mongo_db.rewards.find_one({"_id": reward_id})
+    return _reward_out(fresh)
+
+
+@api_router.post("/rewards/{reward_id}/fulfill")
+async def fulfill_reward(reward_id: str, payload: RewardActionPayload = Body(default=RewardActionPayload()),
+                         p: Dict[str, Any] = Depends(require_owner)):
+    r = await mongo_db.rewards.find_one({"_id": reward_id})
+    if not r:
+        raise HTTPException(status_code=404, detail="No such reward.")
+    if r["status"] != "approved":
+        raise HTTPException(status_code=422, detail="Approve it first \u2014 rewards can only be fulfilled once, after approval.")
+    await mongo_db.rewards.update_one({"_id": reward_id},
+                                      {"$set": {"status": "fulfilled", "fulfilled_by": p.get("name"),
+                                                "fulfilled_at": now_iso(), "notes": (payload.notes or "").strip()[:300],
+                                                "updated_at": now_iso()}})
+    await notify(r["user_id"], None, "Reward delivered \U0001F389",
+                 f"{r['reward_name']} is done and on your record.", "reward", {"reward_id": reward_id})
+    await audit(p, "fulfilled a reward", f"{r['reward_name']} \u2192 {r.get('user_name', '')}")
+    fresh = await mongo_db.rewards.find_one({"_id": reward_id})
+    return _reward_out(fresh)
+
+
+@api_router.post("/rewards/{reward_id}/deny")
+async def deny_reward(reward_id: str, payload: RewardActionPayload = Body(default=RewardActionPayload()),
+                      p: Dict[str, Any] = Depends(require_owner)):
+    r = await mongo_db.rewards.find_one({"_id": reward_id})
+    if not r:
+        raise HTTPException(status_code=404, detail="No such reward.")
+    if r["status"] != "pending":
+        raise HTTPException(status_code=422, detail="Only pending rewards can be denied.")
+    await mongo_db.rewards.update_one({"_id": reward_id},
+                                      {"$set": {"status": "denied", "void_reason": (payload.reason or "").strip()[:300],
+                                                "updated_at": now_iso()}})
+    await audit(p, "denied a reward", f"{r['reward_name']} \u2192 {r.get('user_name', '')}")
+    return {"ok": True}
+
+
+@api_router.post("/rewards/{reward_id}/void")
+async def void_reward(reward_id: str, payload: RewardActionPayload = Body(default=RewardActionPayload()),
+                      p: Dict[str, Any] = Depends(require_owner)):
+    r = await mongo_db.rewards.find_one({"_id": reward_id})
+    if not r:
+        raise HTTPException(status_code=404, detail="No such reward.")
+    if r["status"] not in ("pending", "approved", "fulfilled"):
+        raise HTTPException(status_code=422, detail="That reward is already closed out.")
+    if r["status"] in ("approved", "fulfilled"):
+        if r["reward_type"] == "redemption" and int(r.get("points") or 0) > 0:
+            await credit_points(r["user_id"], int(r["points"]), f"Refund: {r['reward_name']} voided",
+                                reward_id, p.get("name") or "owner")
+        elif int(r.get("points") or 0) > 0:
+            await credit_points(r["user_id"], -int(r["points"]), f"Reversed: {r['reward_name']} voided",
+                                reward_id, p.get("name") or "owner")
+    await mongo_db.rewards.update_one({"_id": reward_id},
+                                      {"$set": {"status": "voided", "void_reason": (payload.reason or "").strip()[:300],
+                                                "updated_at": now_iso()}})
+    await audit(p, "voided a reward", f"{r['reward_name']} \u2192 {r.get('user_name', '')}")
+    return {"ok": True}
+
+
+@api_router.get("/rewards/summary")
+async def rewards_summary(month: Optional[str] = None, p: Dict[str, Any] = Depends(require_owner)):
+    cfg = await get_rewards_config()
+    m = (month or _et_today())[:7]
+    docs = await mongo_db.rewards.find({"earned_at": {"$regex": f"^{m}"}}).to_list(2000)
+    live = [r for r in docs if r["status"] in ("pending", "approved", "fulfilled")]
+    committed = {"crew": 0.0, "sales": 0.0}
+    totals = {"cash": 0.0, "gift_card": 0.0, "points_issued": 0, "points_redeemed": 0, "other": 0.0, "total_value": 0.0}
+    counts = {s: 0 for s in REWARD_STATUSES}
+    for r in docs:
+        counts[r["status"]] = counts.get(r["status"], 0) + 1
+    for r in live:
+        if r["reward_type"] == "redemption":
+            if r["status"] in ("approved", "fulfilled"):
+                totals["points_redeemed"] += int(r.get("points") or 0)
+            continue
+        v = reward_dollar_value(r.get("amount") or 0, r.get("points") or 0, cfg)
+        committed[r.get("team") or "crew"] = committed.get(r.get("team") or "crew", 0) + v
+        totals["total_value"] += v
+        if r["reward_type"] == "cash":
+            totals["cash"] += float(r.get("amount") or 0)
+        elif r["reward_type"] == "gift_card":
+            totals["gift_card"] += float(r.get("amount") or 0)
+        else:
+            totals["other"] += float(r.get("amount") or 0)
+        if r["status"] in ("approved", "fulfilled"):
+            totals["points_issued"] += int(r.get("points") or 0)
+    ai_spent = {"crew": 0.0, "sales": 0.0}
+    ai_chs = await mongo_db.challenges.find({"created_by": "ai-agent", "start": {"$regex": f"^{m}"}}).to_list(100)
+    for ch in ai_chs:
+        ai_spent[ch["team"]] = ai_spent.get(ch["team"], 0) + float(ch.get("estimated_cost") or 0)
+    return {"month": m, "counts": counts,
+            "totals": {k: round(v, 2) if isinstance(v, float) else v for k, v in totals.items()},
+            "budgets": {
+                "crew": {"budget": cfg["crewMonthlyBudget"], "committed": round(committed["crew"], 2),
+                         "remaining": round(cfg["crewMonthlyBudget"] - committed["crew"], 2)},
+                "sales": {"budget": cfg["salesMonthlyBudget"], "committed": round(committed["sales"], 2),
+                          "remaining": round(cfg["salesMonthlyBudget"] - committed["sales"], 2)}},
+            "ai_budgets": {
+                "crew": {"budget": cfg["aiCrewMonthlyBudget"], "committed": round(ai_spent["crew"], 2)},
+                "sales": {"budget": cfg["aiSalesMonthlyBudget"], "committed": round(ai_spent["sales"], 2)}}}
+
+
+@api_router.get("/rewards/payroll")
+async def rewards_payroll_csv(month: Optional[str] = None, p: Dict[str, Any] = Depends(require_owner)):
+    import csv
+    import io
+    m = (month or _et_today())[:7]
+    docs = await mongo_db.rewards.find({"payroll_required": True, "status": {"$in": ["approved", "fulfilled"]},
+                                        "payroll_period": m}).sort("earned_at", 1).to_list(1000)
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["Employee", "Reward", "Type", "Amount", "Points", "Date earned", "Date approved",
+                "Payroll period", "Challenge", "Reward ID"])
+    for r in docs:
+        w.writerow([r.get("user_name", ""), r.get("reward_name", ""), r.get("reward_type", ""),
+                    f"{float(r.get('amount') or 0):.2f}", r.get("points") or 0,
+                    (r.get("earned_at") or "")[:10], (r.get("approved_at") or "")[:10],
+                    r.get("payroll_period", ""), r.get("challenge_name") or "", r["_id"]])
+    await audit(p, "exported the rewards payroll CSV", m)
+    return Response(content=buf.getvalue(), media_type="text/csv",
+                    headers={"Content-Disposition": f"attachment; filename=rewards-payroll-{m}.csv"})
+
+
+# ------- reward catalog & redemption
+
+CATALOG_SEEDS = [
+    ("amazon-25", "$25 Amazon gift card", 250, 25.0, "gift_card"),
+    ("gas-25", "$25 gas gift card", 250, 25.0, "gift_card"),
+    ("restaurant-25", "$25 restaurant gift card", 250, 25.0, "gift_card"),
+    ("visa-50", "$50 Visa gift card", 500, 50.0, "gift_card"),
+    ("amazon-50", "$50 Amazon gift card", 500, 50.0, "gift_card"),
+    ("merch-50", "Haul Yeah merch package", 500, 50.0, "merch"),
+    ("lunch-team", "Lunch on the company", 500, 50.0, "meal"),
+    ("gift-100", "$100 gift card (your pick)", 1000, 100.0, "gift_card"),
+    ("payroll-100", "$100 payroll bonus", 1000, 100.0, "cash"),
+]
+
+
+def _catalog_out(c: Dict[str, Any]) -> Dict[str, Any]:
+    return {"id": c["_id"], "name": c["name"], "points_cost": c["points_cost"], "value": c.get("value") or 0,
+            "kind": c.get("kind", "custom"), "active": c.get("active", True)}
+
+
+@api_router.get("/rewards/catalog")
+async def rewards_catalog(request: Request):
+    p = await current_principal(request)
+    docs = await mongo_db.reward_catalog.find({}).sort("points_cost", 1).to_list(100)
+    balance = 0
+    if p.get("user_id"):
+        u = await mongo_db.users.find_one({"_id": p["user_id"]}, {"haul_points": 1})
+        balance = int((u or {}).get("haul_points") or 0)
+    items = [_catalog_out(c) for c in docs if c.get("active", True) or p["role"] == "owner"]
+    return {"items": items, "balance": balance, "is_owner": p["role"] == "owner"}
+
+
+class CatalogPayload(BaseModel):
+    name: str
+    points_cost: int
+    value: float = 0
+    kind: str = "gift_card"
+    active: bool = True
+
+
+@api_router.post("/rewards/catalog")
+async def create_catalog_item(payload: CatalogPayload, p: Dict[str, Any] = Depends(require_owner)):
+    if payload.points_cost < 1 or not payload.name.strip():
+        raise HTTPException(status_code=422, detail="Give it a name and a points cost of 1 or more.")
+    doc = {"_id": str(uuid4()), "name": payload.name.strip()[:120], "points_cost": int(payload.points_cost),
+           "value": round(max(0.0, payload.value), 2), "kind": payload.kind if payload.kind in REWARD_TYPES else "custom",
+           "active": bool(payload.active), "created_at": now_iso()}
+    await mongo_db.reward_catalog.insert_one(doc)
+    await audit(p, "added a catalog reward", doc["name"])
+    return _catalog_out(doc)
+
+
+@api_router.patch("/rewards/catalog/{item_id}")
+async def patch_catalog_item(item_id: str, payload: CatalogPayload, p: Dict[str, Any] = Depends(require_owner)):
+    c = await mongo_db.reward_catalog.find_one({"_id": item_id})
+    if not c:
+        raise HTTPException(status_code=404, detail="No such catalog reward.")
+    await mongo_db.reward_catalog.update_one(
+        {"_id": item_id},
+        {"$set": {"name": payload.name.strip()[:120] or c["name"], "points_cost": max(1, int(payload.points_cost)),
+                  "value": round(max(0.0, payload.value), 2),
+                  "kind": payload.kind if payload.kind in REWARD_TYPES else c.get("kind", "custom"),
+                  "active": bool(payload.active)}})
+    await audit(p, "edited a catalog reward", payload.name.strip())
+    fresh = await mongo_db.reward_catalog.find_one({"_id": item_id})
+    return _catalog_out(fresh)
+
+
+class RedeemPayload(BaseModel):
+    catalog_id: str
+
+
+@api_router.post("/rewards/redeem")
+async def redeem_points(payload: RedeemPayload, request: Request):
+    p = await current_principal(request)
+    if not p.get("user_id"):
+        raise HTTPException(status_code=403, detail="Only user accounts can redeem points.")
+    item = await mongo_db.reward_catalog.find_one({"_id": payload.catalog_id, "active": True})
+    if not item:
+        raise HTTPException(status_code=404, detail="That reward isn't available.")
+    u = await mongo_db.users.find_one({"_id": p["user_id"]})
+    pending = await mongo_db.rewards.find({"user_id": p["user_id"], "reward_type": "redemption",
+                                           "status": "pending"}).to_list(50)
+    held = sum(int(r.get("points") or 0) for r in pending)
+    available = int(u.get("haul_points") or 0) - held
+    if available < item["points_cost"]:
+        raise HTTPException(status_code=422,
+                            detail=f"You need {item['points_cost']} available points \u2014 you have {max(0, available)} (pending requests hold points too).")
+    team = (teams_for_roles(u.get("roles") or [u.get("role")]) or ["crew"])[0]
+    doc = await create_reward(user=u, team=team, source="redemption", reward_type="redemption",
+                              name=item["name"], amount=item.get("value") or 0, points=item["points_cost"],
+                              reason="Haul Points redemption request",
+                              payroll_required=item.get("kind") == "cash", status="pending")
+    await notify(None, "owner", "Redemption request",
+                 f"{u.get('name', 'Someone')} wants to redeem {item['points_cost']} Haul Points for \u201c{item['name']}\u201d. Review it in Team HQ \u2192 Rewards.",
+                 "reward", {"reward_id": doc["_id"]})
+    await audit(p, "requested a redemption", item["name"])
+    return _reward_out(doc)
+
+
+@api_router.get("/rewards/wallet")
+async def rewards_wallet(request: Request, user_id: Optional[str] = None):
+    p = await current_principal(request)
+    target = user_id or p.get("user_id")
+    if not target:
+        raise HTTPException(status_code=403, detail="Only user accounts have a rewards wallet.")
+    if target != p.get("user_id") and p["role"] != "owner":
+        raise HTTPException(status_code=403, detail="Reward history is private \u2014 you can only see your own.")
+    u = await mongo_db.users.find_one({"_id": target})
+    if not u:
+        raise HTTPException(status_code=404, detail="No such member.")
+    rewards = await mongo_db.rewards.find({"user_id": target}).sort("earned_at", -1).to_list(200)
+    ledger = await mongo_db.points_ledger.find({"user_id": target}).sort("created_at", -1).to_list(50)
+    live = [r for r in rewards if r["status"] in ("pending", "approved", "fulfilled")]
+    cash_earned = sum(float(r.get("amount") or 0) for r in live
+                      if r["reward_type"] == "cash" and r["status"] == "fulfilled")
+    gift_earned = sum(float(r.get("amount") or 0) for r in live
+                      if r["reward_type"] == "gift_card" and r["status"] == "fulfilled")
+    pending_pts = sum(int(r.get("points") or 0) for r in rewards
+                      if r["status"] == "pending" and r["reward_type"] != "redemption")
+    held_pts = sum(int(r.get("points") or 0) for r in rewards
+                   if r["status"] == "pending" and r["reward_type"] == "redemption")
+    return {"user_id": target, "name": u.get("name", ""),
+            "balance": int(u.get("haul_points") or 0), "lifetime": int(u.get("haul_points_lifetime") or 0),
+            "pending_points": pending_pts, "held_points": held_pts,
+            "cash_earned": round(cash_earned, 2), "gift_cards_earned": round(gift_earned, 2),
+            "pending_count": sum(1 for r in rewards if r["status"] == "pending"),
+            "rewards": [_reward_out(r) for r in rewards],
+            "ledger": [{"delta": d["delta"], "balance_after": d["balance_after"], "reason": d.get("reason", ""),
+                        "created_at": d["created_at"]} for d in ledger]}
+
+
+class RecognitionPayload(BaseModel):
+    user_id: str
+    reason: str
+    points: int = 0
+    amount: float = 0
+    badge_id: str = ""
+    title: str = ""
+    reward_name: str = ""
+
+
+@api_router.post("/rewards/recognition")
+async def give_recognition(payload: RecognitionPayload, p: Dict[str, Any] = Depends(require_owner)):
+    if not (payload.reason or "").strip():
+        raise HTTPException(status_code=422, detail="Say why \u2014 the reason goes on the record.")
+    u = await mongo_db.users.find_one({"_id": payload.user_id})
+    if not u:
+        raise HTTPException(status_code=404, detail="No such member.")
+    cfg = await get_rewards_config()
+    given: List[str] = []
+    if payload.badge_id:
+        b = await mongo_db.badges.find_one({"_id": payload.badge_id})
+        if not b:
+            raise HTTPException(status_code=404, detail="No such badge.")
+        if await award_badge(u, b, by=p.get("name") or "owner"):
+            given.append(f"the \u201c{b['name']}\u201d badge")
+    if (payload.title or "").strip():
+        await mongo_db.users.update_one({"_id": payload.user_id}, {"$addToSet": {"titles": payload.title.strip()[:60]}})
+        given.append(f"the \u201c{payload.title.strip()}\u201d title")
+    points, amount = max(0, int(payload.points or 0)), round(max(0.0, float(payload.amount or 0)), 2)
+    if points or amount:
+        if reward_dollar_value(amount, points, cfg) > float(cfg["maxSingleReward"]):
+            raise HTTPException(status_code=422,
+                                detail=f"That's over your ${cfg['maxSingleReward']:g} single-reward cap (Reward settings).")
+        team = (teams_for_roles(u.get("roles") or [u.get("role")]) or ["crew"])[0]
+        r = await create_reward(user=u, team=team, source="recognition",
+                                reward_type="cash" if amount > 0 else "points",
+                                name=(payload.reward_name or "").strip() or "Owner recognition",
+                                amount=amount, points=points, reason=payload.reason.strip(), status="approved")
+        await mongo_db.rewards.update_one({"_id": r["_id"]},
+                                          {"$set": {"approved_by": p.get("name"), "approved_at": now_iso()}})
+        if points:
+            await credit_points(payload.user_id, points, payload.reason.strip(), r["_id"], p.get("name") or "owner")
+            given.append(f"{points} Haul Points")
+        if amount:
+            given.append(f"a ${amount:g} spot bonus")
+    if not given:
+        raise HTTPException(status_code=422, detail="Pick at least one thing to give \u2014 a badge, title, points, or bonus.")
+    await notify(payload.user_id, None, "\U0001F31F The owner recognized you",
+                 f"\u201c{payload.reason.strip()}\u201d \u2014 you earned {', '.join(given)}.", "reward")
+    await audit(p, "gave recognition", f"{u.get('name', '')} \u2014 {', '.join(given)} ({payload.reason.strip()[:80]})")
+    return {"ok": True, "given": given}
+
+
+# ================================================================ AI challenge agent
+
+AGENT_BANNED = re.compile(
+    r"fastest|quickest|speed[- ]?run|shortest (?:job|time)|fewest breaks|skip(?:ping)? break|most hours|"
+    r"overtime|off the clock|injur|no damage|without (?:a )?damage|hide|hiding|conceal|heaviest|"
+    r"work(?:ing)? sick|no sick|fewest (?:reported )?(?:injuries|claims)|overcharg|inflat|upsell past|fake",
+    re.IGNORECASE)
+
+AGENT_CATEGORIES = {
+    "crew": ["customer_service", "safety", "quality", "reliability", "teamwork", "leadership",
+             "job_volume", "skill_development", "documentation"],
+    "sales": ["closes", "revenue", "deposits", "conversion", "follow_up", "revived_leads",
+              "consistency", "crm_quality"],
+}
+
+# target_rule: (baseline_key, multiplier, minimum). baseline keys come from _agent_baselines().
+CHALLENGE_TEMPLATES = [
+    {"key": "customer-hero", "team": "crew", "name": "Customer Hero", "category": "customer_service",
+     "metric": "owner_verified", "type": "individual", "eligible_roles": "all", "target_rule": ("fixed", 0, 3),
+     "reward": {"kind": "points", "points": 500},
+     "desc": "Get {target} verified positive customer mentions this period \u2014 reviews, texts, or direct shout-outs. The owner confirms each one."},
+    {"key": "safety-scout", "team": "crew", "name": "Safety Scout", "category": "safety",
+     "metric": "owner_verified", "type": "individual", "eligible_roles": "all", "target_rule": ("fixed", 0, 1),
+     "reward": {"kind": "points", "points": 250},
+     "desc": "Report a legitimate hazard or near-miss, or land an approved safety improvement. One award per period \u2014 honest reporting never costs anyone a reward."},
+    {"key": "ready-to-roll", "team": "crew", "name": "Ready to Roll", "category": "quality",
+     "metric": "owner_verified", "type": "individual", "eligible_roles": "all", "target_rule": ("jobs_pm", 0.8, 3),
+     "reward": {"kind": "points", "points": 250},
+     "desc": "Complete the full pre-job prep and truck check on {target} jobs this period. The owner confirms the count."},
+    {"key": "road-captain-month", "team": "crew", "name": "Road Captain of the Month", "category": "leadership",
+     "metric": "owner_verified", "type": "competition", "eligible_roles": "driver", "target_rule": None,
+     "reward": {"kind": "cash", "amount": 75},
+     "desc": "Drivers only. Best combination of completed jobs, clean documentation, reliability and customer feedback. The owner picks the winner \u2014 driving safely always beats driving fast."},
+    {"key": "crew-mvp", "team": "crew", "name": "Crew MVP", "category": "teamwork",
+     "metric": "owner_verified", "type": "competition", "eligible_roles": "all", "target_rule": None,
+     "reward": {"kind": "cash", "amount": 100},
+     "desc": "Balanced score across job credits, customer recognition, reliability, documentation and teamwork. The owner confirms the winner."},
+    {"key": "team-player", "team": "crew", "name": "Team Player", "category": "teamwork",
+     "metric": "owner_verified", "type": "individual", "eligible_roles": "all", "target_rule": ("fixed", 0, 1),
+     "reward": {"kind": "points", "points": 250},
+     "desc": "Step up for a teammate when it matters \u2014 covering a shift, helping another crew, coaching a new hire. Owner-awarded, not farmable."},
+    {"key": "perfect-prep", "team": "crew", "name": "Perfect Prep Team Challenge", "category": "documentation",
+     "metric": "owner_verified", "type": "team", "eligible_roles": "all", "target_rule": ("jobs_pm", 0.6, 2),
+     "reward": {"kind": "points", "points": 250},
+     "desc": "Every eligible crew member completes required prep and job documentation on {target} jobs this period \u2014 everyone who does earns the reward."},
+    {"key": "full-house", "team": "crew", "name": "Full House", "category": "job_volume",
+     "metric": "job_credits", "type": "individual", "eligible_roles": "all", "target_rule": ("jobs_pm", 1.15, 3),
+     "reward": {"kind": "combo", "badge_id": "workhorse", "badge_name": "Workhorse", "points": 250},
+     "desc": "Complete {target} quality jobs this month. Verified misconduct can disqualify a win \u2014 honestly reporting an issue never does."},
+    {"key": "deposit-sprint", "team": "sales", "name": "Weekly Deposit Sprint", "category": "deposits",
+     "metric": "owner_verified", "type": "individual", "eligible_roles": "all", "target_rule": ("closes_pw", 1.0, 2),
+     "reward": {"kind": "cash", "amount": 40}, "duration": "week",
+     "desc": "Lock {target} valid deposits this week. Refunded or cancelled deposits don't count."},
+    {"key": "consistency-king", "team": "sales", "name": "Consistency King", "category": "consistency",
+     "metric": "owner_verified", "type": "individual", "eligible_roles": "all", "target_rule": ("fixed", 0, 4),
+     "reward": {"kind": "cash", "amount": 75},
+     "desc": "Hit the weekly minimum every single week this month \u2014 {target} qualifying weeks. Steady beats one big spike."},
+    {"key": "comeback-challenge", "team": "sales", "name": "Comeback Challenge", "category": "revived_leads",
+     "metric": "owner_verified", "type": "individual", "eligible_roles": "all", "target_rule": ("fixed", 0, 1),
+     "reward": {"kind": "points", "points": 250},
+     "desc": "Revive a legitimately Lost lead and close it. The owner verifies the revival was real."},
+    {"key": "sales-champion", "team": "sales", "name": "Monthly Sales Champion", "category": "closes",
+     "metric": "owner_verified", "type": "competition", "eligible_roles": "all", "target_rule": None,
+     "reward": {"kind": "cash", "amount": 100},
+     "desc": "Most valid, collected closes this month wins \u2014 with a minimum floor so a single tiny deal can't take it. Refunds and cancellations don't count."},
+    {"key": "revenue-milestone", "team": "sales", "name": "Revenue Milestone", "category": "revenue",
+     "metric": "owner_verified", "type": "individual", "eligible_roles": "all", "target_rule": ("closes_pm", 1.0, 3),
+     "reward": {"kind": "cash", "amount": 50},
+     "desc": "Reach {target} valid collected closes this month. The owner sets the matching revenue tiers from real history \u2014 goal, stretch, elite."},
+    {"key": "deal-drive", "team": "sales", "name": "Deal Drive", "category": "closes",
+     "metric": "job_credits", "type": "individual", "eligible_roles": "all", "target_rule": ("closes_pm", 1.1, 2),
+     "reward": {"kind": "points", "points": 250},
+     "desc": "Close {target} moves this month \u2014 tracked automatically from your close credits."},
+]
+
+
+async def _agent_baselines(team: str) -> Dict[str, Any]:
+    today = datetime.strptime(_et_today(), "%Y-%m-%d").date()
+    out: Dict[str, Any] = {"team": team}
+    members = await _active_members(team)
+    out["active_members"] = len(members)
+    for days in (30, 60, 90):
+        since = (today - timedelta(days=days)).isoformat()
+        docs = await mongo_db.job_credits.find({"team": team, "date": {"$gte": since}}).to_list(5000)
+        out[f"credits_{days}d"] = len(docs)
+        if team == "crew" and days == 90:
+            out["driver_credits_90d"] = sum(1 for d in docs if d.get("role_tag") == "driver")
+            out["helper_credits_90d"] = sum(1 for d in docs if d.get("role_tag") == "helper")
+    n = max(1, out["active_members"])
+    monthly_total = out["credits_90d"] / 3.0
+    out["per_member_monthly"] = round(monthly_total / n, 2)
+    out["jobs_pm"] = out["per_member_monthly"]
+    out["closes_pm"] = out["per_member_monthly"]
+    out["closes_pw"] = round(out["per_member_monthly"] / 4.3, 2)
+    return out
+
+
+def _template_target(t: Dict[str, Any], base: Dict[str, Any]) -> Optional[int]:
+    rule = t.get("target_rule")
+    if rule is None:
+        return None
+    key, mult, floor = rule
+    if key == "fixed":
+        return int(floor)
+    raw = float(base.get(key) or 0) * float(mult)
+    return max(int(floor), int(math.ceil(raw)))
+
+
+async def _recent_challenge_fingerprints(months: int = 6) -> Dict[str, Any]:
+    since = (datetime.strptime(_et_today(), "%Y-%m-%d").date() - timedelta(days=months * 31)).isoformat()
+    docs = await mongo_db.challenges.find({"start": {"$gte": since}}).to_list(300)
+    drafts = await mongo_db.challenge_drafts.find({"status": "draft", "created_at": {"$gte": since}}).to_list(100)
+    keys = {d.get("template_key") for d in docs + drafts if d.get("template_key")}
+    cats = {}
+    for d in docs:
+        if d.get("category"):
+            cats.setdefault(d["team"], set()).add(d["category"])
+    names = [d["name"].strip().lower() for d in docs + drafts]
+    return {"keys": keys, "categories": {k: v for k, v in cats.items()}, "names": names}
+
+
+async def _ai_month_spend(team: str, month: str) -> float:
+    chs = await mongo_db.challenges.find({"created_by": "ai-agent", "team": team,
+                                          "start": {"$regex": f"^{month}"}}).to_list(100)
+    return sum(float(c.get("estimated_cost") or 0) for c in chs)
+
+
+async def _guard_draft(d: Dict[str, Any], cfg: Dict[str, Any], base: Dict[str, Any],
+                       recent: Dict[str, Any]) -> Optional[str]:
+    """Returns a rejection reason, or None if the draft is safe to save."""
+    if d["team"] not in TEAMS:
+        return "unknown team"
+    if d["metric"] not in ("job_credits", "owner_verified"):
+        return "metric isn't tracked by the CRM"
+    if d["type"] not in ("individual", "competition", "team"):
+        return "unknown challenge type"
+    if d["type"] == "competition" and not cfg["aiAllowCompetition"]:
+        return "competition challenges are turned off"
+    if d["type"] == "team" and not cfg["aiAllowTeamChallenges"]:
+        return "team challenges are turned off"
+    if d["type"] in ("individual", "team") and (not d.get("target") or int(d["target"]) < 1):
+        return "missing a valid target"
+    if AGENT_BANNED.search(f"{d['name']} {d['description']}"):
+        return "failed the safety check (speed/injury/damage/overwork language)"
+    if d.get("eligible_roles") not in ("all", "driver", "helper", "dual"):
+        return "invalid eligibility"
+    r = d.get("reward") or {}
+    amount, points = float(r.get("amount") or 0), int(r.get("points") or 0)
+    if amount > 0 and not cfg["aiAllowCash"]:
+        return "cash rewards are turned off for the agent"
+    if points > 0 and not cfg["aiAllowPoints"]:
+        return "point rewards are turned off for the agent"
+    if r.get("kind") == "gift_card" and not cfg["aiAllowGiftCards"]:
+        return "gift card rewards are turned off for the agent"
+    value = reward_dollar_value(amount, points, cfg)
+    if value > float(cfg["aiMaxRewardPerChallenge"]):
+        return f"reward (${value:.0f}) is over the agent's per-challenge cap (${cfg['aiMaxRewardPerChallenge']:g})"
+    if value > float(cfg["maxSingleReward"]):
+        return f"reward (${value:.0f}) is over the single-reward cap"
+    winners = 1 if d["type"] == "competition" else max(1, base.get("active_members") or 1)
+    d["estimated_winners"] = winners
+    d["estimated_cost"] = round(value * winners, 2)
+    month = d["start"][:7]
+    ai_budget = float(cfg["aiCrewMonthlyBudget"] if d["team"] == "crew" else cfg["aiSalesMonthlyBudget"])
+    spent = await _ai_month_spend(d["team"], month)
+    if d["estimated_cost"] + spent > ai_budget:
+        return f"potential reward budget exceeded (${d['estimated_cost'] + spent:.0f} vs ${ai_budget:g} AI budget)"
+    if d.get("template_key") and d["template_key"] in recent["keys"]:
+        return "too similar to a recent challenge (same template)"
+    if d["name"].strip().lower() in recent["names"]:
+        return "duplicate name from the last 6 months"
+    if d["metric"] == "job_credits" and d.get("target"):
+        cap = max(3.0, float(base.get("jobs_pm") or 0) * 2.5)
+        if base.get("credits_90d", 0) >= 6 and int(d["target"]) > cap:
+            return f"target {d['target']} is unrealistic vs history (cap ~{int(cap)})"
+    if d["end"] <= d["start"]:
+        return "bad dates"
+    try:
+        span = (datetime.strptime(d["end"], "%Y-%m-%d") - datetime.strptime(d["start"], "%Y-%m-%d")).days
+    except ValueError:
+        return "bad dates"
+    if span > 62:
+        return "challenge runs too long"
+    return None
+
+
+def _month_window() -> Dict[str, str]:
+    today = datetime.strptime(_et_today(), "%Y-%m-%d").date()
+    start = today.replace(day=1)
+    end = datetime.strptime(_next_month(_et_today()[:7]) + "-01", "%Y-%m-%d").date() - timedelta(days=1)
+    return {"start": start.isoformat(), "end": end.isoformat()}
+
+
+def _week_window() -> Dict[str, str]:
+    today = datetime.strptime(_et_today(), "%Y-%m-%d").date()
+    start = today - timedelta(days=today.weekday())
+    return {"start": start.isoformat(), "end": (start + timedelta(days=6)).isoformat()}
+
+
+def _draft_from_template(t: Dict[str, Any], base: Dict[str, Any], why: str) -> Dict[str, Any]:
+    win = _week_window() if t.get("duration") == "week" else _month_window()
+    target = _template_target(t, base)
+    return {"team": t["team"], "name": t["name"], "category": t["category"], "template_key": t["key"],
+            "eligible_roles": t.get("eligible_roles", "all"), "type": t["type"], "metric": t["metric"],
+            "target": target, "baseline": base.get("per_member_monthly"),
+            "start": win["start"], "end": win["end"],
+            "description": t["desc"].format(target=target or ""),
+            "reward": dict(t["reward"]), "why": why,
+            "difficulty": "moderate", "confidence": 0.8,
+            "verification": "auto" if t["metric"] == "job_credits" else "owner"}
+
+
+async def _fallback_drafts(team: str, count: int, base: Dict[str, Any], recent: Dict[str, Any]) -> List[Dict[str, Any]]:
+    pool = [t for t in CHALLENGE_TEMPLATES if t["team"] == team and t["key"] not in recent["keys"]]
+    used_cats = recent["categories"].get(team, set())
+    pool.sort(key=lambda t: (t["category"] in used_cats, t["key"]))
+    month_num = int(_et_today()[5:7])
+    pool = pool[month_num % max(1, len(pool)):] + pool[:month_num % max(1, len(pool))]
+    return [_draft_from_template(t, base, f"Deterministic pick \u2014 the {t['category'].replace('_', ' ')} category hasn't run recently.")
+            for t in pool[:count]]
+
+
+async def _llm_drafts(team: str, count: int, base: Dict[str, Any], recent: Dict[str, Any],
+                      cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
+    from emergentintegrations.llm.chat import LlmChat, UserMessage
+    menu = [{k: t[k] for k in ("key", "name", "category", "metric", "type", "eligible_roles")}
+            for t in CHALLENGE_TEMPLATES if t["team"] == team]
+    payload = {
+        "team": team, "how_many": count, "difficulty": cfg["aiDifficulty"],
+        "history": {k: v for k, v in base.items() if k != "team"},
+        "recently_used_template_keys": sorted(recent["keys"]),
+        "recently_used_categories": sorted(recent["categories"].get(team, set())),
+        "template_menu": menu,
+        "reward_rules": {
+            "max_dollar_value_per_winner": min(cfg["aiMaxRewardPerChallenge"], cfg["maxSingleReward"]),
+            "points_per_dollar": cfg["pointsPerDollar"],
+            "cash_allowed": cfg["aiAllowCash"], "points_allowed": cfg["aiAllowPoints"],
+            "gift_cards_allowed": cfg["aiAllowGiftCards"],
+        },
+        "month_window": _month_window(), "week_window": _week_window(),
+    }
+    chat = LlmChat(
+        api_key=os.environ.get("EMERGENT_LLM_KEY", "").strip(),
+        session_id=f"challenge-agent-{uuid4().hex[:8]}",
+        system_message=(
+            "You design employee challenges for Haul Yeah Moving, a small weekend moving company. "
+            "Crew base pay and sales commissions already exist \u2014 these are supplemental incentives. "
+            "HARD RULES: never reward speed, rushing, most hours, skipping breaks, working sick, hiding damage "
+            "or injuries, overcharging, inflating quotes, or anything unsafe. Reward quality, reliability, "
+            "customer service, safety participation, teamwork, documentation, valid collected sales. "
+            "Targets MUST be grounded in the history numbers provided \u2014 attainable but slightly challenging; "
+            "never impossible, never automatic. Only two metrics exist: 'job_credits' (auto-tracked counts) and "
+            "'owner_verified' (the owner confirms manually) \u2014 never invent metrics. Prefer templates from the menu; "
+            "avoid recently used keys/categories for variety. "
+            "Respond with STRICT JSON only: {\"challenges\":[{\"template_key\":str|null,\"name\":str,"
+            "\"description\":str,\"why\":str,\"category\":str,\"eligible_roles\":\"all|driver|helper|dual\","
+            "\"type\":\"individual|competition|team\",\"metric\":\"job_credits|owner_verified\",\"target\":int|null,"
+            "\"start\":\"YYYY-MM-DD\",\"end\":\"YYYY-MM-DD\",\"reward\":{\"kind\":\"cash|points|gift_card\","
+            "\"amount\":number,\"points\":int},\"difficulty\":\"easy|moderate|stretch\",\"confidence\":0..1}]} "
+            "No markdown, no prose."
+        ),
+    ).with_model("openai", "gpt-5.4")
+    resp = await chat.send_message(UserMessage(text=json.dumps(payload, default=str)))
+    text = str(resp).strip()
+    if text.startswith("```"):
+        text = text.strip("`")
+        text = text[4:] if text[:4].lower() == "json" else text
+    data = json.loads(text)
+    out = []
+    for c in (data.get("challenges") or [])[:count]:
+        tmpl = next((t for t in CHALLENGE_TEMPLATES if t["key"] == c.get("template_key") and t["team"] == team), None)
+        reward = c.get("reward") or {}
+        d = {"team": team, "name": str(c.get("name") or "")[:80].strip(),
+             "description": str(c.get("description") or "")[:400].strip(),
+             "why": str(c.get("why") or "")[:300].strip(),
+             "category": c.get("category") if c.get("category") in AGENT_CATEGORIES[team] else (tmpl or {}).get("category", "quality"),
+             "template_key": (tmpl or {}).get("key"),
+             "eligible_roles": c.get("eligible_roles") if c.get("eligible_roles") in ("all", "driver", "helper", "dual") else "all",
+             "type": c.get("type"), "metric": c.get("metric"),
+             "target": int(c["target"]) if c.get("target") else None,
+             "baseline": base.get("per_member_monthly"),
+             "start": str(c.get("start") or "")[:10], "end": str(c.get("end") or "")[:10],
+             "reward": {"kind": reward.get("kind") if reward.get("kind") in ("cash", "points", "gift_card") else "points",
+                        "amount": round(max(0.0, float(reward.get("amount") or 0)), 2),
+                        "points": max(0, int(reward.get("points") or 0))},
+             "difficulty": c.get("difficulty") if c.get("difficulty") in ("easy", "moderate", "stretch") else "moderate",
+             "confidence": min(1.0, max(0.0, float(c.get("confidence") or 0.7))),
+             "verification": "auto" if c.get("metric") == "job_credits" else "owner"}
+        if tmpl and (tmpl["reward"].get("badge_id")):
+            d["reward"]["kind"] = "combo"
+            d["reward"]["badge_id"] = tmpl["reward"]["badge_id"]
+            d["reward"]["badge_name"] = tmpl["reward"].get("badge_name")
+        if not d["name"] or not d["description"]:
+            continue
+        out.append(d)
+    return out
+
+
+def _draft_doc_out(d: Dict[str, Any]) -> Dict[str, Any]:
+    return {k: d.get(k) for k in (
+        "team", "name", "description", "why", "category", "template_key", "eligible_roles", "type", "metric",
+        "target", "baseline", "start", "end", "reward", "difficulty", "confidence", "verification",
+        "estimated_winners", "estimated_cost", "source", "status", "created_at", "rejected_reason")} | {"id": d["_id"]}
+
+
+async def _generate_drafts(team: str, cfg: Dict[str, Any], count: Optional[int] = None,
+                           actor_name: str = "agent") -> Dict[str, Any]:
+    n = count or int(cfg["aiCrewChallengesPerMonth"] if team == "crew" else cfg["aiSalesChallengesPerMonth"])
+    n = max(1, min(6, n))
+    base = await _agent_baselines(team)
+    recent = await _recent_challenge_fingerprints()
+    source, candidates, llm_error = "ai", [], ""
+    try:
+        candidates = await _llm_drafts(team, n + 2, base, recent, cfg)
+    except Exception as exc:
+        llm_error = str(exc)[:200]
+        logger.warning("Challenge agent LLM failed, using fallback: %s", exc)
+    if not candidates:
+        source = "fallback"
+        candidates = await _fallback_drafts(team, n + 2, base, recent)
+    saved, rejected = [], []
+    for d in candidates:
+        if len(saved) >= n:
+            break
+        reason = await _guard_draft(d, cfg, base, recent)
+        if reason:
+            rejected.append({"name": d.get("name", ""), "reason": reason})
+            continue
+        doc = {**d, "_id": str(uuid4()), "status": "draft", "source": source,
+               "month": d["start"][:7], "created_at": now_iso(), "created_by": actor_name}
+        await mongo_db.challenge_drafts.insert_one(doc)
+        recent["names"].append(doc["name"].strip().lower())
+        if doc.get("template_key"):
+            recent["keys"].add(doc["template_key"])
+        saved.append(doc)
+    if len(saved) < n and source == "ai":
+        for d in await _fallback_drafts(team, n - len(saved) + 2, base, recent):
+            if len(saved) >= n:
+                break
+            if await _guard_draft(d, cfg, base, recent):
+                continue
+            doc = {**d, "_id": str(uuid4()), "status": "draft", "source": "fallback",
+                   "month": d["start"][:7], "created_at": now_iso(), "created_by": actor_name}
+            await mongo_db.challenge_drafts.insert_one(doc)
+            recent["keys"].add(doc.get("template_key"))
+            saved.append(doc)
+    await audit({"name": actor_name, "user_id": None}, "AI generated challenge drafts",
+                f"{team}: {len(saved)} draft(s), {len(rejected)} rejected")
+    return {"drafts": [_draft_doc_out(d) for d in saved], "rejected": rejected,
+            "source": source, "llm_error": llm_error}
+
+
+class GeneratePayload(BaseModel):
+    team: str = "both"
+    count: Optional[int] = None
+
+
+@api_router.post("/challenge-agent/generate")
+async def agent_generate(payload: GeneratePayload = Body(default=GeneratePayload()),
+                         p: Dict[str, Any] = Depends(require_owner)):
+    cfg = await get_rewards_config()
+    if not cfg["aiEnabled"]:
+        raise HTTPException(status_code=422, detail="The AI Challenge Agent is turned off in settings.")
+    teams = TEAMS if payload.team == "both" else ([payload.team] if payload.team in TEAMS else None)
+    if not teams:
+        raise HTTPException(status_code=422, detail="Team must be crew, sales, or both.")
+    out = {"drafts": [], "rejected": [], "source": "", "llm_error": ""}
+    for t in teams:
+        res = await _generate_drafts(t, cfg, payload.count, actor_name=p.get("name") or "owner")
+        out["drafts"] += res["drafts"]
+        out["rejected"] += res["rejected"]
+        out["source"] = res["source"]
+        out["llm_error"] = out["llm_error"] or res["llm_error"]
+    return out
+
+
+@api_router.get("/challenge-agent/drafts")
+async def agent_drafts(p: Dict[str, Any] = Depends(require_owner)):
+    docs = await mongo_db.challenge_drafts.find({"status": "draft"}).sort("created_at", -1).to_list(50)
+    return {"drafts": [_draft_doc_out(d) for d in docs]}
+
+
+class DraftPatchPayload(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    target: Optional[int] = None
+    start: Optional[str] = None
+    end: Optional[str] = None
+    reward_amount: Optional[float] = None
+    reward_points: Optional[int] = None
+
+
+@api_router.patch("/challenge-agent/drafts/{draft_id}")
+async def patch_draft(draft_id: str, payload: DraftPatchPayload, p: Dict[str, Any] = Depends(require_owner)):
+    d = await mongo_db.challenge_drafts.find_one({"_id": draft_id, "status": "draft"})
+    if not d:
+        raise HTTPException(status_code=404, detail="No such draft.")
+    if payload.name is not None and payload.name.strip():
+        d["name"] = payload.name.strip()[:80]
+    if payload.description is not None:
+        d["description"] = payload.description.strip()[:400]
+    if payload.target is not None:
+        d["target"] = max(1, int(payload.target))
+    if payload.start:
+        d["start"] = payload.start[:10]
+    if payload.end:
+        d["end"] = payload.end[:10]
+    if payload.reward_amount is not None:
+        d["reward"]["amount"] = round(max(0.0, float(payload.reward_amount)), 2)
+    if payload.reward_points is not None:
+        d["reward"]["points"] = max(0, int(payload.reward_points))
+    cfg = await get_rewards_config()
+    base = await _agent_baselines(d["team"])
+    recent = await _recent_challenge_fingerprints()
+    recent["names"] = [n for n in recent["names"] if n != d["name"].strip().lower()]
+    recent["keys"].discard(d.get("template_key"))
+    reason = await _guard_draft(d, cfg, base, recent)
+    if reason:
+        raise HTTPException(status_code=422, detail=f"That edit fails the guardrails: {reason}.")
+    await mongo_db.challenge_drafts.update_one({"_id": draft_id}, {"$set": {
+        k: d[k] for k in ("name", "description", "target", "start", "end", "reward",
+                          "estimated_winners", "estimated_cost")}})
+    await audit(p, "edited an AI challenge draft", d["name"])
+    fresh = await mongo_db.challenge_drafts.find_one({"_id": draft_id})
+    return _draft_doc_out(fresh)
+
+
+async def _publish_draft_doc(d: Dict[str, Any], actor_name: str) -> Dict[str, Any]:
+    doc = {"_id": str(uuid4()), "name": d["name"], "description": d["description"], "team": d["team"],
+           "type": d["type"], "metric": d["metric"],
+           "target": d.get("target") if d["type"] in ("individual", "team") else None,
+           "start": d["start"], "end": d["end"], "reward": d["reward"],
+           "eligible_roles": d.get("eligible_roles", "all"), "status": "active",
+           "verified": {}, "winners": [], "created_by": "ai-agent",
+           "template_key": d.get("template_key"), "category": d.get("category"),
+           "estimated_cost": d.get("estimated_cost"),
+           "ai": {"why": d.get("why", ""), "baseline": d.get("baseline"), "difficulty": d.get("difficulty"),
+                  "confidence": d.get("confidence"), "source": d.get("source")},
+           "created_at": now_iso()}
+    await mongo_db.challenges.insert_one(doc)
+    await mongo_db.challenge_drafts.update_one({"_id": d["_id"]},
+                                               {"$set": {"status": "published", "published_at": now_iso(),
+                                                         "challenge_id": doc["_id"]}})
+    await audit({"name": actor_name, "user_id": None}, "approved and published an AI challenge", d["name"])
+    for m in await _active_members(d["team"]):
+        await notify(m["_id"], None, "New challenge just dropped",
+                     f"\u201c{doc['name']}\u201d is live for the {d['team']} team \u2014 check the Challenges page.",
+                     "challenge", {"challenge_id": doc["_id"]})
+    return doc
+
+
+@api_router.post("/challenge-agent/drafts/{draft_id}/publish")
+async def publish_draft(draft_id: str, p: Dict[str, Any] = Depends(require_owner)):
+    d = await mongo_db.challenge_drafts.find_one({"_id": draft_id, "status": "draft"})
+    if not d:
+        raise HTTPException(status_code=404, detail="No such draft.")
+    doc = await _publish_draft_doc(d, p.get("name") or "owner")
+    return _challenge_out(doc, await challenge_progress(doc))
+
+
+@api_router.post("/challenge-agent/drafts/{draft_id}/reject")
+async def reject_draft(draft_id: str, payload: RewardActionPayload = Body(default=RewardActionPayload()),
+                       p: Dict[str, Any] = Depends(require_owner)):
+    d = await mongo_db.challenge_drafts.find_one({"_id": draft_id, "status": "draft"})
+    if not d:
+        raise HTTPException(status_code=404, detail="No such draft.")
+    await mongo_db.challenge_drafts.update_one({"_id": draft_id},
+                                               {"$set": {"status": "rejected",
+                                                         "rejected_reason": (payload.reason or "").strip()[:200]}})
+    await audit(p, "rejected an AI challenge draft", d["name"])
+    return {"ok": True}
+
+
+@api_router.get("/challenge-agent/status")
+async def agent_status(p: Dict[str, Any] = Depends(require_owner)):
+    cfg = await get_rewards_config()
+    month = _et_today()[:7]
+    run = await mongo_db.challenge_gen_runs.find_one({"_id": f"{month}:auto"})
+    drafts = await mongo_db.challenge_drafts.count_documents({"status": "draft"})
+    published = await mongo_db.challenges.count_documents({"created_by": "ai-agent", "start": {"$regex": f"^{month}"}})
+    return {"config": cfg, "month": month, "drafts_waiting": drafts, "published_this_month": published,
+            "ai_spend": {"crew": await _ai_month_spend("crew", month), "sales": await _ai_month_spend("sales", month)},
+            "last_run": {"status": (run or {}).get("status"), "at": (run or {}).get("finished_at") or (run or {}).get("started_at"),
+                         "error": (run or {}).get("error")} if run else None,
+            "llm_available": bool(os.environ.get("EMERGENT_LLM_KEY", "").strip())}
+
+
+@api_router.post("/challenge-agent/retry")
+async def agent_retry_month(p: Dict[str, Any] = Depends(require_owner)):
+    month = _et_today()[:7]
+    await mongo_db.challenge_gen_runs.delete_one({"_id": f"{month}:auto", "status": "failed"})
+    return {"ok": True}
+
+
+async def _run_monthly_generation(month: str, cfg: Dict[str, Any]):
+    run_id = f"{month}:auto"
+    try:
+        await mongo_db.challenge_gen_runs.insert_one({"_id": run_id, "status": "running", "started_at": now_iso()})
+    except Exception:
+        return  # another worker claimed it — idempotent
+    try:
+        total = []
+        for team in TEAMS:
+            res = await _generate_drafts(team, cfg, actor_name="ai-agent")
+            total += res["drafts"]
+        if cfg["aiAutoPublish"] and not cfg["aiRequireApproval"]:
+            for d in list(total):
+                doc = await mongo_db.challenge_drafts.find_one({"_id": d["id"], "status": "draft"})
+                if doc:
+                    await _publish_draft_doc(doc, "ai-agent")
+        await mongo_db.challenge_gen_runs.update_one(
+            {"_id": run_id}, {"$set": {"status": "ok", "finished_at": now_iso(), "drafts": len(total)}})
+        await notify(None, "owner", "This month's challenges are drafted",
+                     f"The Challenge Agent drew up {len(total)} draft(s) for {month}. Review and publish them in Team HQ \u2192 AI Agent.",
+                     "challenge")
+    except Exception as exc:
+        logger.error("Monthly challenge generation failed: %s", exc)
+        await mongo_db.challenge_gen_runs.update_one(
+            {"_id": run_id}, {"$set": {"status": "failed", "finished_at": now_iso(), "error": str(exc)[:300]}})
+        await notify(None, "owner", "Challenge generation failed \u2014 retry",
+                     "This month's automatic challenge generation hit an error. Open Team HQ \u2192 AI Agent and press Generate to retry.",
+                     "challenge")
+
+
+async def challenge_agent_loop():
+    await asyncio.sleep(120)
+    while True:
+        try:
+            cfg = await get_rewards_config()
+            if cfg["aiEnabled"] and cfg["aiMonthlyGeneration"]:
+                month = _et_today()[:7]
+                if not await mongo_db.challenge_gen_runs.find_one({"_id": f"{month}:auto"}):
+                    await _run_monthly_generation(month, cfg)
+        except Exception as exc:
+            logger.error("challenge_agent_loop: %s", exc)
+        await asyncio.sleep(4 * 3600)
 
 
 # ================================================================ sales commissions
@@ -6771,6 +7911,7 @@ async def seed_on_startup():
     asyncio.create_task(invoice_sync_loop())
     asyncio.create_task(lead_alert_loop())
     asyncio.create_task(meta_poll_loop())
+    asyncio.create_task(challenge_agent_loop())
     if not meta_capi.capi_enabled():
         logger.warning("Meta CAPI disabled — set META_DATASET_ID and META_CAPI_ACCESS_TOKEN "
                        "in the secrets panel to send ad conversion events.")

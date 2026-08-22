@@ -183,6 +183,25 @@ export const verifyChallengeApi = (id, user_id, value) =>
   axios.post(`${API}/challenges/${id}/verify`, { user_id, value }).then((r) => r.data);
 export const awardChallengeApi = (id, winners) =>
   axios.post(`${API}/challenges/${id}/award`, { winners }).then((r) => r.data);
+export const rewardsConfigApi = () => axios.get(`${API}/rewards/config`).then((r) => r.data);
+export const saveRewardsConfigApi = (v) => axios.put(`${API}/rewards/config`, v).then((r) => r.data);
+export const listRewardsApi = (params = {}) => axios.get(`${API}/rewards`, { params }).then((r) => r.data.rewards);
+export const rewardActionApi = (id, action, body = {}) => axios.post(`${API}/rewards/${id}/${action}`, body).then((r) => r.data);
+export const rewardsSummaryApi = (month) => axios.get(`${API}/rewards/summary`, { params: month ? { month } : {} }).then((r) => r.data);
+export const rewardsPayrollCsvApi = (month) => axios.get(`${API}/rewards/payroll`, { params: month ? { month } : {} }).then((r) => r.data);
+export const rewardsCatalogApi = () => axios.get(`${API}/rewards/catalog`).then((r) => r.data);
+export const createCatalogItemApi = (b) => axios.post(`${API}/rewards/catalog`, b).then((r) => r.data);
+export const patchCatalogItemApi = (id, b) => axios.patch(`${API}/rewards/catalog/${id}`, b).then((r) => r.data);
+export const redeemPointsApi = (catalog_id) => axios.post(`${API}/rewards/redeem`, { catalog_id }).then((r) => r.data);
+export const rewardsWalletApi = (user_id) => axios.get(`${API}/rewards/wallet`, { params: user_id ? { user_id } : {} }).then((r) => r.data);
+export const giveRecognitionApi = (b) => axios.post(`${API}/rewards/recognition`, b).then((r) => r.data);
+export const agentStatusApi = () => axios.get(`${API}/challenge-agent/status`).then((r) => r.data);
+export const agentGenerateApi = (team, count) => axios.post(`${API}/challenge-agent/generate`, { team, count }).then((r) => r.data);
+export const agentDraftsApi = () => axios.get(`${API}/challenge-agent/drafts`).then((r) => r.data.drafts);
+export const patchDraftApi = (id, b) => axios.patch(`${API}/challenge-agent/drafts/${id}`, b).then((r) => r.data);
+export const publishDraftApi = (id) => axios.post(`${API}/challenge-agent/drafts/${id}/publish`).then((r) => r.data);
+export const rejectDraftApi = (id, reason = "") => axios.post(`${API}/challenge-agent/drafts/${id}/reject`, { reason }).then((r) => r.data);
+export const agentRetryApi = () => axios.post(`${API}/challenge-agent/retry`).then((r) => r.data);
 export const crewComparisonApi = () => axios.get(`${API}/admin/crew-comparison`).then((r) => r.data.rows);
 export const auditLogApi = (limit = 200) => axios.get(`${API}/audit`, { params: { limit } }).then((r) => r.data.entries);
 

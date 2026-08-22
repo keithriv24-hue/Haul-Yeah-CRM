@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { BadgeMedallion, BADGE_ICONS, RARITY_CHIP } from "@/components/team/BadgeMedallion";
 import { teamMembersApi, listBadgesApi, createBadgeApi, patchBadgeApi, awardBadgeApi, revokeBadgeApi, apiErrorMessage } from "@/lib/api";
 
-const EMPTY = { track: "crew", name: "", description: "", rarity: "bronze", icon: "Medal", auto_metric: "", auto_threshold: "" };
+const EMPTY = { track: "crew", name: "", description: "", rarity: "bronze", icon: "Medal", auto_metric: "", auto_threshold: "", unlock_points: "", unlock_amount: "" };
 const METRIC_LABEL = { jobs: "jobs completed", driver: "jobs as Driver", helper: "jobs as Helper", closes: "moves closed", driver_and_helper: "jobs as Driver AND Helper" };
 
 const BadgeFormDialog = ({ open, onOpenChange, editing, onSaved }) => {
@@ -22,7 +22,8 @@ const BadgeFormDialog = ({ open, onOpenChange, editing, onSaved }) => {
     if (open) {
       setForm(editing
         ? { track: editing.track, name: editing.name, description: editing.description, rarity: editing.rarity,
-            icon: editing.icon, auto_metric: editing.auto?.metric || "", auto_threshold: editing.auto?.threshold || "" }
+            icon: editing.icon, auto_metric: editing.auto?.metric || "", auto_threshold: editing.auto?.threshold || "",
+            unlock_points: String(editing.unlock_reward?.points || ""), unlock_amount: String(editing.unlock_reward?.amount || "") }
         : EMPTY);
     }
   }, [open, editing]);
@@ -35,6 +36,8 @@ const BadgeFormDialog = ({ open, onOpenChange, editing, onSaved }) => {
       track: form.track, name: form.name, description: form.description, rarity: form.rarity, icon: form.icon,
       auto_metric: form.auto_metric || (editing ? "" : null),
       auto_threshold: form.auto_metric ? Number(form.auto_threshold) || 0 : null,
+      unlock_points: Number(form.unlock_points) || 0,
+      unlock_amount: Number(form.unlock_amount) || 0,
     };
     try {
       if (editing) await patchBadgeApi(editing.id, payload);
@@ -123,6 +126,17 @@ const BadgeFormDialog = ({ open, onOpenChange, editing, onSaved }) => {
               </div>
             )}
           </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label>Milestone Haul Points (optional)</Label>
+              <Input data-testid="badge-unlock-points-input" type="number" min="0" value={form.unlock_points} onChange={(e) => set("unlock_points")(e.target.value)} placeholder="0" />
+            </div>
+            <div>
+              <Label>One-time bonus $ (optional)</Label>
+              <Input data-testid="badge-unlock-amount-input" type="number" min="0" value={form.unlock_amount} onChange={(e) => set("unlock_amount")(e.target.value)} placeholder="0" />
+            </div>
+          </div>
+          <p className="text-[11px] text-faint -mt-1">Milestone rewards fire once, when the badge unlocks \u2014 they wait in your Rewards queue for approval. Most badges should stay recognition-only.</p>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
@@ -239,6 +253,9 @@ export const AdminBadgesTab = () => {
                     {b.description}
                     {b.auto && <span className="text-faint"> · auto at {b.auto.threshold} {METRIC_LABEL[b.auto.metric]}</span>}
                     {!b.auto && <span className="text-faint"> · owner-awarded</span>}
+                    {(b.unlock_reward?.points > 0 || b.unlock_reward?.amount > 0) && (
+                      <span data-testid="badge-unlock-hint" className="text-accent-ink font-semibold"> · unlocks {[b.unlock_reward.points > 0 && `${b.unlock_reward.points} pts`, b.unlock_reward.amount > 0 && `$${b.unlock_reward.amount}`].filter(Boolean).join(" + ")}</span>
+                    )}
                   </p>
                 </div>
                 <Button data-testid="edit-badge-btn" variant="ghost" size="sm" className="h-7 px-2" onClick={() => { setEditing(b); setFormOpen(true); }}>

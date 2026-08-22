@@ -21,6 +21,7 @@ import {
 const EMPTY = {
   name: "", description: "", team: "crew", type: "individual", metric: "job_credits",
   target: "6", start: "", end: "", reward_kind: "badge", reward_badge_id: "", reward_title: "",
+  reward_amount: "", reward_points: "", reward_label: "", eligible_roles: "all",
 };
 
 const ChallengeFormDialog = ({ open, onOpenChange, editing, badges, onSaved }) => {
@@ -33,7 +34,9 @@ const ChallengeFormDialog = ({ open, onOpenChange, editing, badges, onSaved }) =
         ? { name: editing.name, description: editing.description, team: editing.team, type: editing.type,
             metric: editing.metric, target: String(editing.target || ""), start: editing.start, end: editing.end,
             reward_kind: editing.reward?.kind || "badge", reward_badge_id: editing.reward?.badge_id || "",
-            reward_title: editing.reward?.title || "" }
+            reward_title: editing.reward?.title || "", reward_amount: String(editing.reward?.amount || ""),
+            reward_points: String(editing.reward?.points || ""), reward_label: editing.reward?.label || "",
+            eligible_roles: editing.eligible_roles || "all" }
         : EMPTY);
     }
   }, [open, editing]);
@@ -42,11 +45,13 @@ const ChallengeFormDialog = ({ open, onOpenChange, editing, badges, onSaved }) =
 
   const save = async () => {
     setBusy(true);
-    const payload = { ...form, target: form.type === "individual" ? Number(form.target) || 0 : null };
+    const payload = { ...form, target: form.type !== "competition" ? Number(form.target) || 0 : null,
+      reward_amount: Number(form.reward_amount) || 0, reward_points: Number(form.reward_points) || 0,
+      eligible_roles: form.team === "sales" ? "all" : form.eligible_roles };
     try {
       if (editing) await patchChallengeApi(editing.id, payload);
       else await createChallengeApi(payload);
-      toast.success(editing ? "Challenge updated." : "Challenge is live.");
+      toast.success(editing ? "Challenge updated." : "Challenge is live \u2014 the team was notified.");
       onOpenChange(false);
       onSaved();
     } catch (e) {
@@ -83,6 +88,7 @@ const ChallengeFormDialog = ({ open, onOpenChange, editing, badges, onSaved }) =
                 <SelectContent>
                   <SelectItem value="individual">Individual (everyone can win)</SelectItem>
                   <SelectItem value="competition">Competition (one winner)</SelectItem>
+                  <SelectItem value="team">Team goal (all who hit it win)</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -98,12 +104,26 @@ const ChallengeFormDialog = ({ open, onOpenChange, editing, badges, onSaved }) =
             </div>
           </div>
           <div className="grid grid-cols-3 gap-3">
-            {form.type === "individual" && (
+            {form.type !== "competition" && (
               <div><Label>Goal count</Label><Input data-testid="challenge-target-input" type="number" min="1" value={form.target} onChange={(e) => set("target")(e.target.value)} /></div>
             )}
             <div><Label>Starts</Label><Input data-testid="challenge-start-input" type="date" value={form.start} onChange={(e) => set("start")(e.target.value)} /></div>
             <div><Label>Ends</Label><Input data-testid="challenge-end-input" type="date" value={form.end} onChange={(e) => set("end")(e.target.value)} /></div>
           </div>
+          {form.team === "crew" && (
+            <div>
+              <Label>Who's eligible</Label>
+              <Select value={form.eligible_roles} onValueChange={set("eligible_roles")}>
+                <SelectTrigger data-testid="challenge-eligibility-select"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Crew — everyone</SelectItem>
+                  <SelectItem value="driver">Drivers only (counts driver credits)</SelectItem>
+                  <SelectItem value="helper">Helpers only (counts helper credits)</SelectItem>
+                  <SelectItem value="dual">Dual role (drives and helps)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <Label>Reward</Label>
@@ -112,12 +132,19 @@ const ChallengeFormDialog = ({ open, onOpenChange, editing, badges, onSaved }) =
                 <SelectContent>
                   <SelectItem value="badge">A badge</SelectItem>
                   <SelectItem value="title">A profile title</SelectItem>
+                  <SelectItem value="points">Haul Points</SelectItem>
+                  <SelectItem value="cash">Cash bonus</SelectItem>
+                  <SelectItem value="gift_card">Gift card</SelectItem>
+                  <SelectItem value="merch">Company merch</SelectItem>
+                  <SelectItem value="meal">Meal / lunch</SelectItem>
+                  <SelectItem value="custom">Custom reward</SelectItem>
+                  <SelectItem value="combo">Combination</SelectItem>
                 </SelectContent>
               </Select>
             </div>
-            {form.reward_kind === "badge" ? (
+            {(form.reward_kind === "badge" || form.reward_kind === "combo") && (
               <div>
-                <Label>Which badge</Label>
+                <Label>Which badge{form.reward_kind === "combo" ? " (optional)" : ""}</Label>
                 <Select value={form.reward_badge_id} onValueChange={set("reward_badge_id")}>
                   <SelectTrigger data-testid="challenge-reward-badge-select"><SelectValue placeholder="Pick a badge" /></SelectTrigger>
                   <SelectContent>
@@ -127,10 +154,23 @@ const ChallengeFormDialog = ({ open, onOpenChange, editing, badges, onSaved }) =
                   </SelectContent>
                 </Select>
               </div>
-            ) : (
-              <div><Label>Title text</Label><Input data-testid="challenge-reward-title-input" value={form.reward_title} onChange={(e) => set("reward_title")(e.target.value)} placeholder="October MVP" /></div>
+            )}
+            {(form.reward_kind === "title" || form.reward_kind === "combo") && (
+              <div><Label>Title text{form.reward_kind === "combo" ? " (optional)" : ""}</Label><Input data-testid="challenge-reward-title-input" value={form.reward_title} onChange={(e) => set("reward_title")(e.target.value)} placeholder="October MVP" /></div>
+            )}
+            {["cash", "gift_card", "combo"].includes(form.reward_kind) && (
+              <div><Label>Dollar amount per winner</Label><Input data-testid="challenge-reward-amount-input" type="number" min="0" value={form.reward_amount} onChange={(e) => set("reward_amount")(e.target.value)} placeholder="50" /></div>
+            )}
+            {["points", "combo"].includes(form.reward_kind) && (
+              <div><Label>Haul Points per winner</Label><Input data-testid="challenge-reward-points-input" type="number" min="0" value={form.reward_points} onChange={(e) => set("reward_points")(e.target.value)} placeholder="250" /></div>
+            )}
+            {["gift_card", "merch", "meal", "custom", "combo"].includes(form.reward_kind) && (
+              <div><Label>Describe it{form.reward_kind === "combo" ? " (optional)" : ""}</Label><Input data-testid="challenge-reward-label-input" value={form.reward_label} onChange={(e) => set("reward_label")(e.target.value)} placeholder="$50 Amazon gift card" /></div>
             )}
           </div>
+          {!["badge", "title"].includes(form.reward_kind) && (
+            <p className="text-[11px] text-faint">Money and point rewards land in your Rewards queue when someone wins \u2014 nothing pays out until you approve it.</p>
+          )}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
