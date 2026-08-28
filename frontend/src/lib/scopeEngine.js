@@ -119,13 +119,24 @@ export const LEGACY_ITEM_KEYS = { safe: "safe2" };
 
 /* Custom specialty items — weight is BANDED, never a free number: a free number
    means the operator guesses differently every time and every quote becomes a
-   negotiation with himself. Handling dollars come from the pricing config. */
+   negotiation with himself. Handling dollars come from the pricing config.
+   `mh` is PURE HANDLING (get it, move it, set it down) — fitting work
+   (removeMh/placeMh) bills separately in time via the item's fitWork field. */
 export const CUSTOM_BANDS = [
-  { k: "under150", n: "Under 150 lb", billKey: "surchargeCustomB1", cf: 20, lbs: 120, mh: 0.5, crewFloor: 2, crewFloorStairs: 2 },
-  { k: "w150_299", n: "150–299 lb", billKey: "surchargeCustomB2", cf: 30, lbs: 220, mh: 0.75, crewFloor: 3, crewFloorStairs: 3 },
-  { k: "w300_499", n: "300–499 lb", billKey: "surchargeCustomB3", cf: 45, lbs: 400, mh: 1.0, crewFloor: 3, crewFloorStairs: 4 },
-  { k: "w500_799", n: "500–799 lb", billKey: "surchargeCustomB4", cf: 60, lbs: 650, mh: 1.25, crewFloor: 4, crewFloorStairs: 4 },
+  { k: "under150", n: "Under 150 lb", billKey: "surchargeCustomB1", cf: 20, lbs: 120, mh: 0.5, removeMh: 0.25, placeMh: 0.25, crewFloor: 2, crewFloorStairs: 2 },
+  { k: "w150_299", n: "150–299 lb", billKey: "surchargeCustomB2", cf: 30, lbs: 220, mh: 1.0, removeMh: 0.5, placeMh: 0.5, crewFloor: 3, crewFloorStairs: 3 },
+  { k: "w300_499", n: "300–499 lb", billKey: "surchargeCustomB3", cf: 45, lbs: 400, mh: 1.5, removeMh: 0.75, placeMh: 1.0, crewFloor: 3, crewFloorStairs: 4 },
+  { k: "w500_799", n: "500–799 lb", billKey: "surchargeCustomB4", cf: 60, lbs: 650, mh: 2.0, removeMh: 1.0, placeMh: 1.5, crewFloor: 4, crewFloorStairs: 4 },
   { k: "w800plus", n: "800 lb or more", blocked: true },
+];
+
+/* Fitting work options — placement always costs more than removal: pulling is
+   mostly force, seating is tolerance work (shimming, squaring, leveling). */
+export const FIT_WORK_OPTIONS = [
+  { k: "none", n: "None — just move it" },
+  { k: "removeOnly", n: "Take it out of its opening" },
+  { k: "placeOnly", n: "Set it into an opening" },
+  { k: "both", n: "Both" },
 ];
 
 export const PACKING = [
@@ -238,7 +249,7 @@ export function computeScope(inputs, P, shift = 0) {
      scaling and the lo/hi band keep working untouched. */
   const hasStairs = (acc.stairsO || 0) + (acc.stairsD || 0) > 0;
   const blockers = [];
-  let customBillTotal = 0, customCrewFloor = 0;
+  let customBillTotal = 0, customCrewFloor = 0, fitMH = 0;
   custom.forEach((c) => {
     const band = CUSTOM_BANDS.find((b) => b.k === c?.band);
     if (!band) return;
@@ -254,7 +265,12 @@ export function computeScope(inputs, P, shift = 0) {
         message: `"${label}" is wider than the narrowest point on its path. An on-site assessment is required before quoting.` });
     }
     const units = c.isSwap ? 2 : 1;              // a swap carries the old unit out too — full cf/lbs/mh
-    cf += band.cf * n * units; lbs += band.lbs * n * units; itemMH += band.mh * n * units;
+    const fw = c.fitWork || "none";              // scopes saved before fitWork read as "none"
+    const fitPer = (fw === "removeOnly" || fw === "both" ? band.removeMh : 0)
+                 + (fw === "placeOnly" || fw === "both" ? band.placeMh : 0);
+    cf += band.cf * n * units; lbs += band.lbs * n * units;
+    itemMH += (band.mh + fitPer) * n * units;    // fitting bills in TIME only — never a dollar line
+    fitMH += fitPer * n * units;
     let per = num(P?.[band.billKey]);
     if (c.builtIn) per *= num(P?.customBuiltInMultiplier, 1);
     if (c.needsDisconnect) per *= num(P?.customDisconnectMultiplier, 1);
@@ -330,7 +346,7 @@ export function computeScope(inputs, P, shift = 0) {
   const total = Math.max(cushioned, priceFloor);                                  // 5 price floor (round-up at output)
 
   return { cf, lbs, trucks, sc, volMH, itemMH, accMH, accBill, itemBill: itemBillTotal, matBill, distBill, mileage,
-    customBill: customBillTotal, handlingRaw, handlingBilled, specialtyOnly, blockers, customCrewFloor,
+    customBill: customBillTotal, handlingRaw, handlingBilled, specialtyOnly, blockers, customCrewFloor, fitMH,
     billMH, schedMH, crew, crewRec, onsite, onsiteRec, labor, travel, sub, cushioned, total,
     beds, bedsEff, priceFloor, floorMH, hardFloorApplied };
 }

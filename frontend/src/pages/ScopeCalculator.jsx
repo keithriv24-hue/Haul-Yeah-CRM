@@ -11,7 +11,7 @@ import { LF, f, leadAccess } from "@/lib/fields";
 import { apiErrorMessage, getScopeApi, getScopeAccessApi, getScopePricingValuesApi, listScopesApi, saveScopeApi } from "@/lib/api";
 import {
   TIERS, TRUCK_CF, TRUCK_LBS, ROOMS, ITEMS, PACKING, ACCESS, MATERIALS, NON_TRANSPORT,
-  PKGS, STATE_OPTIONS, NO_PRICING, LEGACY_ITEM_KEYS, CUSTOM_BANDS,
+  PKGS, STATE_OPTIONS, NO_PRICING, LEGACY_ITEM_KEYS, CUSTOM_BANDS, FIT_WORK_OPTIONS,
   itemBill, materialPrice, scopeOutputs, stateGate,
 } from "@/lib/scopeEngine";
 
@@ -47,7 +47,7 @@ const guessSanityCat = (qty, custom) => {
 const newCustomItem = () => ({
   id: (crypto.randomUUID && crypto.randomUUID()) || String(Date.now() + Math.random()),
   name: "", band: "under150", qty: 1, builtIn: false, needsDisconnect: false,
-  widthIn: 0, pathNarrowestIn: 0, isSwap: false,
+  widthIn: 0, pathNarrowestIn: 0, isSwap: false, fitWork: "none",
 });
 
 /* 22px visual, ≥44×44 tap area via an invisible expanded hit zone */
@@ -626,6 +626,25 @@ export default function ScopeCalculator() {
                             className="h-8 w-[64px] text-right tnum" /> in
                         </span>
                       </div>
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2">
+                        <label className="text-xs font-semibold text-primary inline-flex items-center gap-1.5">
+                          Fitting work
+                          <select data-testid="scope-custom-fitwork-select" aria-label="Fitting work" value={c.fitWork || "none"}
+                            onChange={(e) => upd({ fitWork: e.target.value })}
+                            className="h-8 rounded-md border border-border bg-surface px-2 text-xs font-semibold text-primary">
+                            {FIT_WORK_OPTIONS.map((o) => <option key={o.k} value={o.k}>{o.n}</option>)}
+                          </select>
+                        </label>
+                        {(c.fitWork || "none") !== "none" && band && (
+                          <span data-testid="scope-custom-fitwork-hours" className="tnum text-[11px] text-ink-2">
+                            +{((c.fitWork === "removeOnly" || c.fitWork === "both" ? band.removeMh : 0)
+                              + (c.fitWork === "placeOnly" || c.fitWork === "both" ? band.placeMh : 0)).toFixed(2)}mh each — billed as time, not a fee
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[10.5px] text-faint mt-1 leading-snug">
+                        Ask directly. Customers often want a heavy item carried, not installed — and the two are priced differently.
+                      </p>
                       {band && (
                         <p className="tnum text-[11px] text-faint mt-1.5">
                           {band.cf}cf · {band.lbs}lb · +{band.mh}mh each{showBuild ? ` · handling $${itemBill(band, P)} base` : ""}

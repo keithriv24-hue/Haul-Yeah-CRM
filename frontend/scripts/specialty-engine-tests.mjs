@@ -148,6 +148,54 @@ const subZero = {
   check("T10 custom reads as [] (customBill 0)", 0, r.customBill, r.customBill === 0 && r.handlingRaw === r.itemBill);
 }
 
+// ---- FIT-WORK follow-up: install/uninstall separated from handling ----
+{
+  const B4 = CUSTOM_BANDS.find((b) => b.k === "w500_799");
+  const mkCase = (fitWork) => ({
+    dens: {}, cnt: {}, qty: {}, acc: { stairsO: 1, stairsD: 1 }, mat: {}, pack: 0, rate: 2.1,
+    jobType: "labor", miles: 0,
+    custom: [
+      { id: "1", name: "Built-in fridge (swap)", band: "w500_799", qty: 1, builtIn: true, needsDisconnect: false, widthIn: 42, pathNarrowestIn: 48, isSwap: true, fitWork },
+      { id: "2", name: "Built-in fridge", band: "w500_799", qty: 1, builtIn: true, needsDisconnect: false, widthIn: 42, pathNarrowestIn: 48, isSwap: false, fitWork },
+    ],
+  });
+  const rA = computeScope(mkCase("none"), P, 0);
+  const rB = computeScope(mkCase("both"), P, 0);
+
+  // F1 backward compat: no fitWork key at all → reads as "none", fitMH 0
+  const legacyItem = computeScope({ dens: {}, qty: {},
+    custom: [{ id: "l", band: "w300_499", qty: 2, isSwap: false }] }, P, 0);
+  check("F1 missing fitWork key → fitMH 0", 0, legacyItem.fitMH, legacyItem.fitMH === 0);
+  check("F1 itemMH = band.mh only", 1.5 * 2, legacyItem.itemMH, legacyItem.itemMH === 1.5 * 2);
+
+  // F2 fitWork "none" is a no-op: itemMH === mh × qty × units exactly
+  check("F2 caseA itemMH = 2.0×(2+1)", 6, rA.itemMH, rA.itemMH === 6 && rA.fitMH === 0);
+
+  // F3 swap doubles fitting work: (removeMh + placeMh) × 2 on the swap item
+  const swapBoth = computeScope({ dens: {}, qty: {},
+    custom: [{ id: "s", band: "w500_799", qty: 1, isSwap: true, fitWork: "both" }] }, P, 0);
+  check("F3 swap+both fitMH = (1.0+1.5)×2", 5, swapBoth.fitMH, swapBoth.fitMH === (B4.removeMh + B4.placeMh) * 2);
+
+  // F4 cap still exact on both reference cases
+  check("F4 caseA cap = labor×0.30", (rA.labor * 0.3).toFixed(2), rA.handlingBilled.toFixed(2), Math.abs(rA.handlingBilled - rA.labor * 0.3) < 0.01);
+  check("F4 caseB cap = labor×0.30", (rB.labor * 0.3).toFixed(2), rB.handlingBilled.toFixed(2), Math.abs(rB.handlingBilled - rB.labor * 0.3) < 0.01);
+
+  // F5 crew floor holds on both, produced by customCrewFloor
+  check("F5 crew 4 via floor (A)", "crew 4 / floor 4", `crew ${rA.crew} / floor ${rA.customCrewFloor}`, rA.crew === 4 && rA.customCrewFloor === 4);
+  check("F5 crew 4 via floor (B)", "crew 4 / floor 4", `crew ${rB.crew} / floor ${rB.customCrewFloor}`, rB.crew === 4 && rB.customCrewFloor === 4);
+
+  // F6 no new dollars: fitting work moves TIME only
+  check("F6 handlingRaw identical A vs B", rA.handlingRaw, rB.handlingRaw, rA.handlingRaw === rB.handlingRaw);
+  // fit total = swap item (1.0+1.5)×2 units + plain item (1.0+1.5)×1 = 7.5mh
+  check("F6 caseB adds hours (7.5mh fit)", rA.itemMH + 7.5, rB.itemMH, rB.itemMH === rA.itemMH + 7.5 && rB.fitMH === 7.5);
+
+  // F7 survey tier: dollars 0, fitMh still computes (non-monetary calibration)
+  const rSurvey = computeScope(mkCase("both"), NO_PRICING, 0);
+  check("F7 NO_PRICING $0 but fitMH computes", "fitMH 7.5, $0", `fitMH ${rSurvey.fitMH}, $${rSurvey.sub}`,
+        rSurvey.fitMH === 7.5 && rSurvey.sub === 0 && rSurvey.customBill === 0 && rSurvey.handlingBilled === 0);
+  check("F7 caseB onsite > caseA onsite", "B > A", `${rB.onsite.toFixed(2)} > ${rA.onsite.toFixed(2)}`, rB.onsite > rA.onsite);
+}
+
 // ---- report
 const failed = results.filter((x) => !x.pass);
 console.log("| test | expected | actual | pass |");
