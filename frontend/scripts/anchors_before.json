@@ -1,0 +1,32 @@
+{
+  "A": {
+    "finalTotal": 2750,
+    "deposit": 687.5,
+    "bandLo": 2600,
+    "bandHi": 2925,
+    "sub": 2492.5240000000003,
+    "itemBill": 500,
+    "crew": 4,
+    "billMH": 25.549600000000005
+  },
+  "B": {
+    "finalTotal": 5625,
+    "deposit": 1406.25,
+    "bandLo": 5025,
+    "bandHi": 6375,
+    "sub": 5104.9400000000005,
+    "itemBill": 500,
+    "crew": 6,
+    "billMH": 60.876000000000005
+  },
+  "C": {
+    "finalTotal": 1125,
+    "deposit": 281.25,
+    "bandLo": 1050,
+    "bandHi": 1175,
+    "sub": 1001.25,
+    "itemBill": 450,
+    "crew": 2,
+    "billMH": 7
+  }
+}

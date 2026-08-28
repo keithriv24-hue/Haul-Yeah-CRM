@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
-import { Save, RotateCcw, FolderOpen, X, PencilRuler, Ban } from "lucide-react";
+import { Save, RotateCcw, FolderOpen, X, PencilRuler, Ban, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -11,7 +11,7 @@ import { LF, f, leadAccess } from "@/lib/fields";
 import { apiErrorMessage, getScopeApi, getScopeAccessApi, getScopePricingValuesApi, listScopesApi, saveScopeApi } from "@/lib/api";
 import {
   TIERS, TRUCK_CF, TRUCK_LBS, ROOMS, ITEMS, PACKING, ACCESS, MATERIALS, NON_TRANSPORT,
-  PKGS, STATE_OPTIONS, NO_PRICING, LEGACY_ITEM_KEYS,
+  PKGS, STATE_OPTIONS, NO_PRICING, LEGACY_ITEM_KEYS, CUSTOM_BANDS,
   itemBill, materialPrice, scopeOutputs, stateGate,
 } from "@/lib/scopeEngine";
 
@@ -21,6 +21,34 @@ import {
 
 const money = (n) => "$" + Math.round(n).toLocaleString();
 const moneyCents = (n) => "$" + Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+/* Market sanity bands — owner-only, computed and shown HERE only, never persisted.
+   Persisting them would force SCOPE_MONETARY_KEYS / redaction changes for a cosmetic feature. */
+const SANITY_BANDS = [
+  { k: "appl1", n: "Appliance, single", lo: 500, hi: 1200 },
+  { k: "applMulti", n: "Appliance, swap / multi-unit", lo: 900, hi: 1800 },
+  { k: "pianoUp", n: "Piano, upright", lo: 600, hi: 1200 },
+  { k: "pianoGrand", n: "Piano, grand", lo: 1000, hi: 2000 },
+  { k: "safe", n: "Safe / vault", lo: 600, hi: 1800 },
+  { k: "gym", n: "Gym equipment", lo: 400, hi: 1000 },
+  { k: "pool", n: "Pool table (move only)", lo: 700, hi: 1400 },
+];
+
+const guessSanityCat = (qty, custom) => {
+  if (qty.grand) return "pianoGrand";
+  if (qty.upright) return "pianoUp";
+  if (qty.safe1 || qty.safe2 || qty.safe3) return "safe";
+  if (qty.pool) return "pool";
+  if (qty.tread || qty.gym || qty.plates) return "gym";
+  const units = custom.reduce((s, c) => s + (Number(c.qty) || 1) + (c.isSwap ? 1 : 0), 0);
+  return units > 1 ? "applMulti" : "appl1";
+};
+
+const newCustomItem = () => ({
+  id: (crypto.randomUUID && crypto.randomUUID()) || String(Date.now() + Math.random()),
+  name: "", band: "under150", qty: 1, builtIn: false, needsDisconnect: false,
+  widthIn: 0, pathNarrowestIn: 0, isSwap: false,
+});
 
 /* 22px visual, ≥44×44 tap area via an invisible expanded hit zone */
 const Step = ({ v, set, max = 9, lbl }) => (
@@ -53,6 +81,8 @@ export default function ScopeCalculator() {
   const [dens, setDens] = useState({});
   const [cnt, setCnt] = useState({});
   const [qty, setQty] = useState({});
+  const [custom, setCustom] = useState([]);
+  const [sanityCat, setSanityCat] = useState("");   // owner-only display state — never saved
   const [acc, setAcc] = useState({});
   const [mat, setMat] = useState({});
   const [pack, setPack] = useState(0);
@@ -114,21 +144,22 @@ export default function ScopeCalculator() {
      key the snapshot pre-dates (older scopes saved before spec v2.0). */
   const P = viewingSaved ? { ...(livePricing || {}), ...(viewingSaved.pricing || {}) } : livePricing;
 
-  const inputs = { dens, cnt, qty, acc, mat, pack, rate, jobType, crewOverride, hoursOverride, miles: Number(miles) || 0, pkg };
+  const inputs = { dens, cnt, qty, custom, acc, mat, pack, rate, jobType, crewOverride, hoursOverride, miles: Number(miles) || 0, pkg };
   /* eslint-disable react-hooks/exhaustive-deps */
-  const out = useMemo(() => scopeOutputs(inputs, P || {}), [dens, cnt, qty, acc, mat, pack, rate, jobType, crewOverride, hoursOverride, miles, pkg, P]);
+  const out = useMemo(() => scopeOutputs(inputs, P || {}), [dens, cnt, qty, custom, acc, mat, pack, rate, jobType, crewOverride, hoursOverride, miles, pkg, P]);
   /* eslint-enable react-hooks/exhaustive-deps */
   const { r, bandLo, bandHi, spread, finalTotal, deposit, inc } = out;
 
   const gate = stateGate(pickupState, dropoffState, P || {});
 
   const surveyDone = surveyComplete || video.received; // a received video counts as a completed survey
+  const hasBlockers = (r.blockers || []).length > 0;
 
   useEffect(() => {
-    if ((!surveyDone || gate.blocked) && mode === "final") setMode("range");
-  }, [surveyDone, mode, gate.blocked]);
+    if ((!surveyDone || gate.blocked || hasBlockers) && mode === "final") setMode("range");
+  }, [surveyDone, mode, gate.blocked, hasBlockers]);
 
-  const finalMode = mode === "final" && surveyDone && !gate.blocked;
+  const finalMode = mode === "final" && surveyDone && !gate.blocked && !hasBlockers;
 
   /* tier gates — UI mirrors of the backend enforcement, never the other way round */
   const isOwner = tier === "owner";
@@ -141,7 +172,7 @@ export default function ScopeCalculator() {
 
   const flagged = ROOMS.filter((x) => x.risky && (dens[x.k] || 0) >= 2).map((x) => x.n);
   const overWeight = r.lbs > TRUCK_LBS * r.trucks * 0.92;
-  const clear = () => { setDens({}); setCnt({}); setQty({}); setAcc({}); setMat({}); setPack(0); setSurveyComplete(false); setMode("range"); setViewingSaved(null); setRefineFrom(null); setLabel(""); setCrewOverride(null); setHoursOverride(null); setVideo({ link: "", received: false, date: "" }); setMiles(""); setPickupState("NJ"); setDropoffState("NJ"); setPkg(""); };
+  const clear = () => { setDens({}); setCnt({}); setQty({}); setCustom([]); setAcc({}); setMat({}); setPack(0); setSurveyComplete(false); setMode("range"); setViewingSaved(null); setRefineFrom(null); setLabel(""); setCrewOverride(null); setHoursOverride(null); setVideo({ link: "", received: false, date: "" }); setMiles(""); setPickupState("NJ"); setDropoffState("NJ"); setPkg(""); setSanityCat(""); };
 
   const loadSavedList = () => listScopesApi().then(setSavedList).catch((e) => toast.error(apiErrorMessage(e)));
 
@@ -173,6 +204,7 @@ export default function ScopeCalculator() {
       if (q[oldK]) { q[newK] = (q[newK] || 0) + q[oldK]; delete q[oldK]; }
     });
     setDens(i.dens || {}); setCnt(i.cnt || {}); setQty(q); setAcc(i.acc || {}); setMat(i.mat || {});
+    setCustom(Array.isArray(i.custom) ? i.custom : []);   // scopes saved before custom items read as []
     setPack(i.pack || 0); setRate(i.rate || 2.1); setJobType(i.jobType || "truck");
     setCrewOverride(i.crewOverride ?? null); setHoursOverride(i.hoursOverride ?? null);
     setMiles(i.miles ? String(i.miles) : ""); setPickupState(i.pickupState || "NJ"); setDropoffState(i.dropoffState || "NJ");
@@ -209,7 +241,7 @@ export default function ScopeCalculator() {
         lead_id: leadId,
         label: label.trim() || leadName || null,
         refined_from: refineFrom?._id || null,
-        inputs: { dens, cnt, qty, acc, mat, pack, rate, jobType, crewOverride, hoursOverride,
+        inputs: { dens, cnt, qty, custom, acc, mat, pack, rate, jobType, crewOverride, hoursOverride,
           miles: Number(miles) || 0, pickupState, dropoffState, pkg, mode: finalMode ? "final" : "range" },
         pricing: P,
         result: {
@@ -217,6 +249,7 @@ export default function ScopeCalculator() {
           onsiteHours: Math.round(r.onsite * 10) / 10,
           billMH: Math.round(r.billMH * 100) / 100, schedMH: Math.round(r.schedMH * 100) / 100,
           distFee: r.distBill, mileageExtra: r.mileage.extra,
+          specialtyOnly: r.specialtyOnly, blockers: r.blockers,
           bandLo, bandHi,
           finalTotal: finalMode ? finalTotal : null,
           deposit: finalMode ? Math.round(deposit * 100) / 100 : null,
@@ -399,6 +432,19 @@ export default function ScopeCalculator() {
           </p>
         </div>
 
+        <div>
+          <Eyebrow className="mb-1">Pricing mode — derived</Eyebrow>
+          <span data-testid="scope-mode-indicator"
+            className={`inline-flex items-center px-3 min-h-[32px] rounded text-xs font-bold ${r.specialtyOnly ? "bg-info/15 text-info" : "bg-surface-sunk text-ink-2"}`}>
+            {r.specialtyOnly ? "Specialty-only job" : "Household move"}
+          </span>
+          {r.specialtyOnly && (
+            <p data-testid="scope-specialty-prompt" className="text-[10.5px] text-info mt-1 max-w-[200px] leading-snug">
+              No rooms entered — pricing this as a specialty-only job.
+            </p>
+          )}
+        </div>
+
         {canSurveyToggle && (
         <div>
           <Eyebrow className="mb-1">Survey</Eyebrow>
@@ -515,6 +561,90 @@ export default function ScopeCalculator() {
                 ))}
               </div>
             ))}
+          </div>
+
+          <div className="surface p-4" data-testid="scope-custom-items-card">
+            <div className="flex items-center justify-between gap-2">
+              <Eyebrow className="mb-0">Custom specialty items — not in the catalog</Eyebrow>
+              <Button data-testid="scope-custom-add-btn" size="sm" variant="outline" className="gap-1 h-8 text-xs"
+                onClick={() => setCustom([...custom, newCustomItem()])}>
+                <Plus className="w-3.5 h-3.5" /> Add item
+              </Button>
+            </div>
+            <p className="text-xs text-faint mt-1 leading-relaxed">
+              Built-in fridges, wall ovens, hot tubs, gun safes — pick the weight band, never guess a number.
+            </p>
+            {custom.length === 0 && <p className="text-sm text-faint mt-2">Nothing custom on this job.</p>}
+            {custom.map((c) => {
+              const band = CUSTOM_BANDS.find((b) => b.k === c.band);
+              const upd = (patch) => setCustom(custom.map((x) => (x.id === c.id ? { ...x, ...patch } : x)));
+              return (
+                <div key={c.id} data-testid="scope-custom-item-row" className="mt-3 rounded-lg border border-border p-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Input data-testid="scope-custom-name-input" placeholder={'Item (e.g. "Sub-Zero 42in built-in fridge")'}
+                      value={c.name} onChange={(e) => upd({ name: e.target.value })} className="h-9 flex-1 min-w-[180px]" />
+                    <select data-testid="scope-custom-band-select" aria-label="Weight band" value={c.band}
+                      onChange={(e) => upd({ band: e.target.value })}
+                      className="h-9 rounded-md border border-border bg-surface px-2 text-xs font-semibold text-primary">
+                      {CUSTOM_BANDS.map((b) => <option key={b.k} value={b.k}>{b.n}</option>)}
+                    </select>
+                    <span className="inline-flex items-center gap-1.5 text-xs text-ink-2">Qty
+                      <Step v={Number(c.qty) || 1} lbl="custom items" max={6} set={(v) => upd({ qty: Math.max(1, v) })} />
+                    </span>
+                    <button data-testid="scope-custom-remove-btn" aria-label="Remove custom item" type="button"
+                      onClick={() => setCustom(custom.filter((x) => x.id !== c.id))}
+                      className="ml-auto inline-flex items-center justify-center min-h-[44px] min-w-[32px] text-faint hover:text-destructive">
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                  {band?.blocked ? (
+                    <p data-testid="scope-custom-800-note" className="text-[12px] text-destructive font-bold mt-2 leading-snug">
+                      800 lb or more is beyond a standard crew. On-site assessment required — the calculator won't price it.
+                    </p>
+                  ) : (
+                    <>
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mt-2">
+                        <label className="flex items-center gap-1.5 text-xs font-semibold text-primary cursor-pointer min-h-[36px]">
+                          <Checkbox data-testid="scope-custom-builtin" checked={!!c.builtIn} onCheckedChange={(v) => upd({ builtIn: !!v })} /> Built-in
+                        </label>
+                        <label className="flex items-center gap-1.5 text-xs font-semibold text-primary cursor-pointer min-h-[36px]">
+                          <Checkbox data-testid="scope-custom-disconnect" checked={!!c.needsDisconnect} onCheckedChange={(v) => upd({ needsDisconnect: !!v })} /> Needs disconnect
+                        </label>
+                        <label className="flex items-center gap-1.5 text-xs font-semibold text-primary cursor-pointer min-h-[36px]">
+                          <Checkbox data-testid="scope-custom-swap" checked={!!c.isSwap} onCheckedChange={(v) => upd({ isSwap: !!v })} /> Swap — old unit comes out
+                        </label>
+                        <span className="inline-flex items-center gap-1.5 text-xs text-ink-2">
+                          Width
+                          <Input data-testid="scope-custom-width-input" type="number" min="0" max="120" placeholder="in"
+                            value={c.widthIn || ""} onChange={(e) => upd({ widthIn: Number(e.target.value) || 0 })}
+                            className="h-8 w-[64px] text-right tnum" /> in
+                        </span>
+                        <span className="inline-flex items-center gap-1.5 text-xs text-ink-2">
+                          Narrowest point on its path
+                          <Input data-testid="scope-custom-path-input" type="number" min="0" max="120" placeholder="in"
+                            value={c.pathNarrowestIn || ""} onChange={(e) => upd({ pathNarrowestIn: Number(e.target.value) || 0 })}
+                            className="h-8 w-[64px] text-right tnum" /> in
+                        </span>
+                      </div>
+                      {band && (
+                        <p className="tnum text-[11px] text-faint mt-1.5">
+                          {band.cf}cf · {band.lbs}lb · +{band.mh}mh each{showBuild ? ` · handling $${itemBill(band, P)} base` : ""}
+                        </p>
+                      )}
+                      {c.needsDisconnect && (
+                        <p data-testid="scope-custom-disconnect-note" className="text-[11px] text-warning font-semibold mt-1">
+                          Confirm the customer disconnects before arrival, or refer out.
+                        </p>
+                      )}
+                      <p className="text-[10.5px] text-faint mt-1 leading-snug">
+                        Ask the customer to measure wall-to-wall at the narrowest point. A walkthrough video shows you
+                        the turns; only a tape measure tells you if it fits.
+                      </p>
+                    </>
+                  )}
+                </div>
+              );
+            })}
           </div>
 
           <div className="surface p-4">
@@ -667,6 +797,12 @@ export default function ScopeCalculator() {
                 {Number(P.hardFloorHours) || 6}-hour minimum applied — 3BR+ moves never bill under it.
               </p>
             )}
+            {r.customCrewFloor >= 3 && (
+              <p data-testid="scope-crew-floor-note" className="text-[11px] text-warning font-semibold mt-1">
+                {r.customCrewFloor}-man minimum: heavy item{(acc.stairsO || 0) + (acc.stairsD || 0) > 0 ? " on stairs" : ""}.
+                Fewer movers can't arrest that weight — this floor beats any override.
+              </p>
+            )}
             <p className="text-[10.5px] text-faint mt-1 leading-snug">
               {crewOverride != null || hoursOverride != null
                 ? (showPricing ? "Using your numbers — the quote below follows them." : "Using your numbers.")
@@ -689,6 +825,18 @@ export default function ScopeCalculator() {
             <p className="text-[12.5px] text-primary leading-relaxed">
               This move touches {gate.badStates.join(" / ")}. We only move within {gate.allowed.join(", ")} —
               decline politely and move to the next lead. Nothing to price, nothing to save.
+            </p>
+          </div>
+          ) : hasBlockers ? (
+          <div className="surface p-4 border-destructive/40" data-testid="scope-blocker-card">
+            <Eyebrow className="text-destructive">On-site assessment required — no quote</Eyebrow>
+            {r.blockers.map((b, i) => (
+              <p key={i} data-testid="scope-blocker-message" className="text-[12.5px] text-primary leading-relaxed mb-1.5">
+                {b.message}
+              </p>
+            ))}
+            <p className="text-xs text-faint leading-relaxed">
+              Save the scope so nothing is lost — the number comes after someone lays eyes (and a tape measure) on it.
             </p>
           </div>
           ) : (
@@ -737,7 +885,13 @@ export default function ScopeCalculator() {
             <Stat label={`Trip fee (${jobType === "labor" ? "labor only" : "truck"}) × ${r.trucks}`} value={money(r.travel)} />
             {r.distBill > 0 && <Stat label={`Mileage — ${r.mileage.extra} mi beyond the first ${r.mileage.free} × ${moneyCents(P.mileageRatePerMile)}/mi`} value={money(r.distBill)} />}
             {r.accBill > 0 && <Stat label="Stairs / carries / stops" value={money(r.accBill)} />}
-            {r.itemBill > 0 && <Stat label="Specialty handling" value={money(r.itemBill)} />}
+            {r.handlingBilled > 0 && <Stat label="Specialty handling" value={money(r.handlingBilled)} />}
+            {r.handlingRaw > r.handlingBilled + 0.005 && (
+              <p data-testid="scope-handling-cap-note" className="text-[10.5px] text-info leading-snug py-0.5">
+                Handling capped at {Number(P.specialtyHandlingCapPct) || 30}% of labor on specialty-only jobs
+                (uncapped it would be {money(r.handlingRaw)}).
+              </p>
+            )}
             {r.matBill > 0 && <Stat label="Materials" value={money(r.matBill)} />}
             <Stat label={`+ ${P.cushionPercent}% cushion`} value={money(r.cushioned - r.sub)} />
             {r.total > r.cushioned - 0.005 && r.priceFloor > r.cushioned && (
@@ -755,6 +909,32 @@ export default function ScopeCalculator() {
             )}
           </div>
           )}
+
+          {isOwner && showPricing && !gate.blocked && !hasBlockers && r.specialtyOnly && (() => {
+            const catKey = sanityCat || guessSanityCat(qty, custom);
+            const cat = SANITY_BANDS.find((b) => b.k === catKey);
+            const headline = finalMode ? finalTotal : bandHi;
+            return (
+              <div className="surface p-4" data-testid="scope-sanity-card">
+                <Eyebrow className="mb-1.5">Market sanity check — owner only, never saved</Eyebrow>
+                <select data-testid="scope-sanity-select" aria-label="Job category for sanity check" value={catKey}
+                  onChange={(e) => setSanityCat(e.target.value)}
+                  className="h-9 rounded-md border border-border bg-surface px-2 text-xs font-semibold text-primary">
+                  {SANITY_BANDS.map((b) => <option key={b.k} value={b.k}>{b.n}</option>)}
+                </select>
+                {cat && headline > cat.hi ? (
+                  <p data-testid="scope-sanity-warning" className="text-[12px] text-warning font-semibold mt-2 leading-snug">
+                    {money(headline)} is above the typical range for this job type ({money(cat.lo)}–{money(cat.hi)}).
+                    Confirm the scope justifies it before sending.
+                  </p>
+                ) : cat ? (
+                  <p data-testid="scope-sanity-ok" className="text-[11px] text-faint mt-2">
+                    Typical range {money(cat.lo)}–{money(cat.hi)} — you're at {money(headline)}.
+                  </p>
+                ) : null}
+              </div>
+            );
+          })()}
 
           {!finalMode && flagged.length > 0 && (
             <div className="surface p-4 border-warning/50">

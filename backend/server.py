@@ -331,6 +331,11 @@ DEFAULT_RATES = {
     "surchargeGymT1": 150.0, "surchargeGymT2": 300.0, "surchargeMotorcycle": 300.0,
     # materials
     "materialMattressBag": 15.0, "materialWardrobeBox": 12.0, "materialTvBox": 25.0,
+    # custom specialty items — banded handling dollars + ratio modifiers
+    "surchargeCustomB1": 75.0, "surchargeCustomB2": 150.0,
+    "surchargeCustomB3": 250.0, "surchargeCustomB4": 400.0,
+    "customBuiltInMultiplier": 1.25, "customDisconnectMultiplier": 1.15,
+    "customSwapFactor": 0.60, "specialtyHandlingCapPct": 30.0,
     # rules
     "hardFloorBedrooms": 3.0, "hardFloorHours": 6.0,
     # package defaults (crew / hours-on-site per home size)
@@ -350,6 +355,7 @@ CUSHION_FOLDED_KEYS = (
     "surchargeUprightPiano", "surchargeGrandPiano", "surchargePoolTable",
     "surchargeSafeT1", "surchargeSafeT2", "surchargeSafeT3",
     "surchargeGymT1", "surchargeGymT2", "surchargeMotorcycle",
+    "surchargeCustomB1", "surchargeCustomB2", "surchargeCustomB3", "surchargeCustomB4",
     "materialMattressBag", "materialWardrobeBox", "materialTvBox",
 )
 
@@ -4365,8 +4371,8 @@ async def clock_out(payload: PunchPayload, p: Dict[str, Any] = Depends(require_c
                                            {"$set": {"clock_out": clock_out_data, "hours": hours, "flags": flags}})
     await queue_timelog_sync(entry.get("assignment_id"))
     job_today = await mongo_db.jobs.find_one({"crew.user_id": p["user_id"], "job_date": _et_today()})
-    return {"entry_id": entry["_id"], "hours": hours, "flags": flags,
-            "review_prompt": bool(job_today), "job_id": job_today["_id"] if job_today else None,
+    return {"entry_id": str(entry["_id"]), "hours": hours, "flags": flags,
+            "review_prompt": bool(job_today), "job_id": str(job_today["_id"]) if job_today else None,
             "invoice_number": job_today.get("invoice_number") if job_today else None}
 
 

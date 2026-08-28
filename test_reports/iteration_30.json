@@ -1,0 +1,24 @@
+{
+  "summary": "Frontend-only verification of the Specialty Item Engine on /scope-calculator (owner) and ghost sales POV, plus a Settings sanity check. All 11 scripted scenarios pass: derived pricing-mode indicator flips Household ↔ Specialty-only correctly, custom items card exposes every documented data-testid, Sub-Zero 500–799 built-in+swap on stairs shows cap note ('Handling capped at 30% of labor …'), forces crew=4 with the 4-man floor note that cannot be reduced by crew-minus, renders the owner-only market-sanity card (OK line for 'Appliance, swap / multi-unit'), and yields a range quote of $975–$1,075 (well under $2,150). Width 42 / narrowest 34 replaces the quote with scope-blocker-card ('is wider than the narrowest point…') and disables scope-mode-final; path=48 restores the quote. Band 800+ shows scope-custom-800-note and blocker card; changing back restores quote. Needs-disconnect toggle renders scope-custom-disconnect-note. Save→reload persists name/band/builtIn/swap correctly (label $800–$900 shown in list). Household regression (rooms + Upright piano + stairs) shows Household mode, no cap note, no sanity card, range $1,375–$1,550. Ghost sales sees no price build (no cap note, no sanity, no $ figures on the custom row) and a range quote. Owner Settings page contains the new 'Custom specialty items' group with all 8 keys (surchargeCustomB1–4, customBuiltInMultiplier, customDisconnectMultiplier, customSwapFactor, specialtyHandlingCapPct). No JS errors on any page (401s in console are Airtable/ledger endpoints missing keys — expected and out of scope).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "ScopeCalculator.jsx is >1000 lines — consider splitting into subcomponents (RoomsCard, CustomItemsCard, PriceBuild, SanityCard) for maintainability.",
+    "Room density chips (—/Light/Avg/Packed) lack data-testids; had to rely on aria-pressed + role selectors. Adding testids like scope-room-{k}-tier-{i} would harden future automation.",
+    "Saved-scopes list has no inline delete/rename control visible to the tester; TEST_ scopes accumulate in preview. Consider an owner-only trash icon per row for cleanup."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (skipped per request)", "frontend": "100% (11/11 scenarios)"},
+  "test_credentials": "HaulYeahAdmin / HaulYeah2026! (owner); testsalesadmin / HaulYeah2026! (ghost sales POV)",
+  "seed_data_creation": "Created one saved scope labeled TEST_specialty_1787934150 on the owner account (specialty-only Sub-Zero 42in fridge, 500–799, built-in+swap, width 42/path 48). Could not delete via UI — no inline delete control on saved-scopes rows. Non-blocking; safe to leave or main agent can prune from DB.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All specialty engine acceptance criteria verified live in preview at REACT_APP_BACKEND_URL. Reusable Playwright flow: login → /scope-calculator → scope-clear-btn → scope-jobtype-labor → scope-custom-add-btn → fill name/band/checkboxes → stairs via aria-label 'More Flights of stairs — pickup/drop-off'. Room density chips need to be selected via `page.locator('div.grid').filter(has=page.get_by_role('button', name=<room>, exact=True)).locator('button', has_text='Avg')`. Only one older saved scope exists in preview (our own TEST_specialty) — main agent can seed a pre-custom scope if backward-compat regression on legacy scopes needs re-testing later. Airtable/ledger 401s in console are expected (no AIRTABLE_API_KEY in preview).",
+  "rca of the issue": "N/A — no bugs found."
+}

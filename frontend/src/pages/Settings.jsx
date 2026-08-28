@@ -53,6 +53,16 @@ const PRICING_GROUPS = [
     { key: "surchargeGymT2", label: "Rack / multi-station gym ($)" },
     { key: "surchargeMotorcycle", label: "Motorcycle / ATV ($)" },
   ] },
+  { title: "Custom specialty items", note: "Weight-banded handling for one-off heavy items in the calculator. The multipliers and the cap are ratios, not dollars.", fields: [
+    { key: "surchargeCustomB1", label: "Handling — under 150 lb ($)" },
+    { key: "surchargeCustomB2", label: "Handling — 150–299 lb ($)" },
+    { key: "surchargeCustomB3", label: "Handling — 300–499 lb ($)" },
+    { key: "surchargeCustomB4", label: "Handling — 500–799 lb ($)" },
+    { key: "customBuiltInMultiplier", label: "Built-in multiplier (×)", max: 3 },
+    { key: "customDisconnectMultiplier", label: "Disconnect multiplier (×)", max: 3 },
+    { key: "customSwapFactor", label: "Swap — second-unit factor (×)", max: 1 },
+    { key: "specialtyHandlingCapPct", label: "Specialty-only handling cap (% of labor)", max: 100 },
+  ] },
   { title: "Materials", fields: [
     { key: "materialMattressBag", label: "Mattress bag ($ ea)" },
     { key: "materialWardrobeBox", label: "Wardrobe box ($ ea)" },
