@@ -288,28 +288,28 @@ export default function QualityQuoteAccuracy() {
               })}
             </div>
           )}
-
-          <div className="mt-6">
-            <div className="text-[13px] font-bold text-ink-2 mb-2">Feedback log</div>
-            {feedback.length === 0 ? (
-              <EmptyState>No feedback logged yet.</EmptyState>
-            ) : (
-              <div className="space-y-2" data-testid="feedback-log">
-                {feedback.map((fb) => (
-                  <div key={fb.nc_id || fb.date + fb.what_was_off} data-testid="feedback-log-row" className="surface p-3 rounded-lg border border-border">
-                    <div className="flex flex-wrap items-center justify-between gap-2 text-[12px] text-faint">
-                      <span className="font-semibold text-ink">{fb.job_name || "A job"}{fb.rep_name ? ` → ${fb.rep_name}` : ""}</span>
-                      <span>{fmtDate(fb.date)}</span>
-                    </div>
-                    <div className="mt-1 text-[13px] text-ink"><span className="font-semibold">Off:</span> {fb.what_was_off}</div>
-                    {fb.what_to_do && <div className="text-[13px] text-ink-2"><span className="font-semibold">Do:</span> {fb.what_to_do}</div>}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
         </>
       )}
+
+      <div className="mt-6">
+        <div className="text-[13px] font-bold text-ink-2 mb-2">Feedback log</div>
+        {feedback.length === 0 ? (
+          <EmptyState>No feedback logged yet.</EmptyState>
+        ) : (
+          <div className="space-y-2" data-testid="feedback-log">
+            {feedback.map((fb) => (
+              <div key={fb.nc_id || fb.date + fb.what_was_off} data-testid="feedback-log-row" className="surface p-3 rounded-lg border border-border">
+                <div className="flex flex-wrap items-center justify-between gap-2 text-[12px] text-faint">
+                  <span className="font-semibold text-ink">{fb.job_name || "A job"}{fb.rep_name ? ` → ${fb.rep_name}` : ""}</span>
+                  <span>{fmtDate(fb.date)}</span>
+                </div>
+                <div className="mt-1 text-[13px] text-ink"><span className="font-semibold">Off:</span> {fb.what_was_off}</div>
+                {fb.what_to_do && <div className="text-[13px] text-ink-2"><span className="font-semibold">Do:</span> {fb.what_to_do}</div>}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
