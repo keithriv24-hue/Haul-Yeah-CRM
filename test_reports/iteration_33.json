@@ -1,0 +1,51 @@
+{
+  "summary": "Frontend-only smoke test for /projects wiring after adding ComplianceSection to Projects.jsx and adding /projects route to sales/quality role branches. Tested all 4 roles (owner, quality, sales, crew) via Playwright against the public REACT_APP_BACKEND_URL. All expected behaviors verified with zero JS pageerrors on any role.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_results": {
+    "owner": {
+      "landing_url": "/ (login redirect target rendered dashboard shell)",
+      "projects_page_rendered": true,
+      "new_project_btn_visible": true,
+      "js_pageerrors": 0,
+      "status": "PASS"
+    },
+    "quality": {
+      "landing_url": "/quality/audits",
+      "projects_page_rendered_after_nav": true,
+      "redirected_away": false,
+      "new_project_btn_visible": false,
+      "js_pageerrors": 0,
+      "status": "PASS"
+    },
+    "sales": {
+      "landing_url": "/leads",
+      "projects_page_rendered_after_nav": true,
+      "new_project_btn_visible": false,
+      "js_pageerrors": 0,
+      "status": "PASS"
+    },
+    "crew": {
+      "landing_url": "/today",
+      "projects_page_rendered_after_nav": false,
+      "redirected_to": "/today",
+      "js_pageerrors": 0,
+      "status": "PASS (correctly redirected away from /projects)"
+    }
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (skipped per request)", "frontend": "100%"},
+  "test_credentials": "Used credentials from review_request (Owner/Quality/Sales/Crew accounts, HaulYeah2026!). All logins succeeded.",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Projects list is empty in preview because AIRTABLE_API_KEY is not set (503 'Airtable key is not set' shown as expected banner). ComplianceSection cannot be exercised in preview since projects list is empty and the panel only mounts inside expanded ProjectCard Details. Backend for compliance already 40/40 pytest per prior iterations. Prompt-3 will likely need Airtable-seeded projects or a mock to exercise ComplianceSection + Override dialog end-to-end.",
+  "rca of the issue": "N/A — no bugs found. Wiring smoke test 100% pass."
+}
