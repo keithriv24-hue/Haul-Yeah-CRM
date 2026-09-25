@@ -6,8 +6,8 @@ import {
   CreditCard, Handshake, HelpCircle, Eye, EyeOff, RefreshCw, KeyRound, LogOut, SlidersHorizontal, MessageSquareText, Video, UserRound,
   HardHat, ClipboardList, AlarmClock, CalendarDays, Briefcase, Sun, Megaphone, UsersRound, Trophy, Swords, Medal,
   BadgeDollarSign, BellRing, Radio, Wrench, MoreHorizontal, Search, Boxes,
-} from "lucide-react";
-import { useApp } from "@/context/AppContext";
+  ClipboardCheck, AlertOctagon, FileText, Gauge,
+} from "lucide-react";import { useApp } from "@/context/AppContext";
 import { useAuth } from "@/components/AuthGate";
 import { NotificationsBell } from "@/components/NotificationsBell";
 import { CrewContactsBubble } from "@/components/CrewContactsBubble";
@@ -54,11 +54,16 @@ const NAV = [
   { to: "/team-admin", label: "Team HQ", icon: Medal, roles: ["owner"], group: "Team" },
 
   { to: "/marketing", label: "Marketing", icon: Megaphone, roles: ["owner", "marketing"], group: "Business" },
-  { to: "/tasks", label: "To-Do", icon: KanbanSquare, roles: ["owner", "sales", "marketing", "crew", "employee"], group: "Business" },
-  { to: "/blog", label: "Blog", icon: PenLine, roles: ["owner", "sales", "marketing", "crew", "employee"], group: "Business" },
+  { to: "/tasks", label: "To-Do", icon: KanbanSquare, roles: ["owner", "sales", "marketing", "crew", "employee", "quality"], group: "Business" },
+  { to: "/blog", label: "Blog", icon: PenLine, roles: ["owner", "sales", "marketing", "crew", "employee", "quality"], group: "Business" },
   { to: "/notifications", label: "Notifications", icon: BellRing, roles: ["owner", "sales", "marketing"], group: "Business" },
   { to: "/settings", label: "Settings", icon: SlidersHorizontal, roles: ["owner"], group: "Business" },
   { to: "/help", label: "Help", icon: HelpCircle, roles: ["owner"], group: "Business" },
+
+  { to: "/quality/audits", label: "Job Audits", icon: ClipboardCheck, roles: ["owner", "quality"], group: "Quality" },
+  { to: "/quality/problems", label: "Nonconformances", icon: AlertOctagon, roles: ["owner", "quality"], group: "Quality" },
+  { to: "/quality/documents", label: "Documents", icon: FileText, roles: ["owner", "quality"], group: "Quality" },
+  { to: "/quality/quote-accuracy", label: "Quote Accuracy", icon: Gauge, roles: ["owner", "quality"], group: "Quality" },
 ];
 
 /** Four fixed thumb targets per role. Everything else lives behind More. */
@@ -68,11 +73,12 @@ const PRIMARY_TABS = {
   marketing: ["/marketing", "/tasks", "/blog", "/team"],
   crew: ["/today", "/jobs", "/clock", "/team"],
   employee: ["/projects", "/day-sheet", "/tasks", "/team"],
+  quality: ["/quality/audits", "/quality/problems", "/quality/documents", "/quality/quote-accuracy"],
 };
 
-const GROUP_ORDER = ["Today", "My day", "Sales", "Money", "Team", "Business"];
+const GROUP_ORDER = ["Today", "My day", "Sales", "Money", "Team", "Business", "Quality"];
 
-const ROLE_LABEL = { owner: "Owner", sales: "Sales", employee: "Crew", crew: "Crew", marketing: "Marketing" };
+const ROLE_LABEL = { owner: "Owner", sales: "Sales", employee: "Crew", crew: "Crew", marketing: "Marketing", quality: "Quality" };
 
 const LiveIndicator = () => {
   const { health } = useApp();

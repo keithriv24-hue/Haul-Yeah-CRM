@@ -37,6 +37,10 @@ import TeamAdmin from "@/pages/TeamAdmin";
 import Commissions from "@/pages/Commissions";
 import Notifications from "@/pages/Notifications";
 import Track from "@/pages/Track";
+import QualityAudits from "@/pages/QualityAudits";
+import QualityProblems from "@/pages/QualityProblems";
+import QualityDocuments from "@/pages/QualityDocuments";
+import QualityQuoteAccuracy from "@/pages/QualityQuoteAccuracy";
 import { UpdateOverlay } from "@/components/UpdateOverlay";
 
 function RoleRoutes() {
@@ -117,6 +121,21 @@ function RoleRoutes() {
       </Routes>
     );
   }
+  if (role === "quality") {
+    return (
+      <Routes>
+        <Route element={<Layout />}>
+          <Route path="/quality/audits" element={<QualityAudits />} />
+          <Route path="/quality/problems" element={<QualityProblems />} />
+          <Route path="/quality/documents" element={<QualityDocuments />} />
+          <Route path="/quality/quote-accuracy" element={<QualityQuoteAccuracy />} />
+          <Route path="/tasks" element={<Tasks />} />
+          <Route path="/blog" element={<Blog />} />
+          <Route path="*" element={<Navigate to="/quality/audits" replace />} />
+        </Route>
+      </Routes>
+    );
+  }
   return (
     <Routes>
       <Route element={<Layout />}>
@@ -147,6 +166,10 @@ function RoleRoutes() {
         <Route path="/settings" element={<Settings />} />
         <Route path="/scope-calculator" element={<ScopeCalculator />} />
         <Route path="/help" element={<Help />} />
+        <Route path="/quality/audits" element={<QualityAudits />} />
+        <Route path="/quality/problems" element={<QualityProblems />} />
+        <Route path="/quality/documents" element={<QualityDocuments />} />
+        <Route path="/quality/quote-accuracy" element={<QualityQuoteAccuracy />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

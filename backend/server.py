@@ -47,6 +47,9 @@ TABLES = {
     "blog": "tblpuaGzlXg75HU6Y",
     "invoices": "tbl9S7qG5vAwzNm5q",
     "subscriptions": "tbl4B0mqVLQPTAK62",
+    "quality_docs": "tblpsrrkQlfa7BVW5",
+    "nonconformances": "tblDYbrboZq9ClrHM",
+    "job_audits": "tblVFJSZCgogIpz4V",
 }
 
 
@@ -61,18 +64,19 @@ def get_base_id() -> str:
 JWT_ALGORITHM = "HS256"
 _login_attempts: Dict[str, Dict[str, float]] = {}
 
-SWITCH_ROLES = ("owner", "sales", "employee", "marketing")
-ALL_ROLES = ("owner", "sales", "employee", "crew", "marketing")
+SWITCH_ROLES = ("owner", "sales", "employee", "marketing", "quality")
+ALL_ROLES = ("owner", "sales", "employee", "crew", "marketing", "quality")
 ROLE_TABLES = {
     "owner": set(TABLES),
     "sales": {"leads", "tasks", "blog"},
     "employee": {"projects", "tasks", "blog"},
     "marketing": {"tasks", "blog"},
     "crew": {"tasks", "blog"},
+    "quality": {"projects", "contacts", "tasks", "blog", "quality_docs", "nonconformances", "job_audits"},
 }
 
 TASK_GROUPS = ("sales", "marketing", "crew")
-TASK_GROUP_FOR_ROLE = {"sales": "sales", "marketing": "marketing", "crew": "crew", "employee": "crew"}
+TASK_GROUP_FOR_ROLE = {"sales": "sales", "marketing": "marketing", "crew": "crew", "employee": "crew", "quality": "crew"}
 TASK_STATUS_F = "fldIpdRVz51aQaNZh"
 BLOG_STATUS_F = "fldu92VQBEbkeGhtQ"
 BLOG_TITLE_F = "fldKzcIH5j4ZMZQrj"
@@ -87,12 +91,59 @@ PROJECT_DATE_FIELD = "fldVBgzlG9gUCq5OB"
 PROJECT_FROM_FIELD = "fldDf4w5prPb89Q4y"
 PROJECT_TO_FIELD = "fldnFH0mMdyQ84hTV"
 PROJECT_TRUCK_FIELD = "fldhQpzJrqDE6tPAg"
+PROJECT_QUOTED_BY_FIELD = "fldAew7uXk5JvBqBw"   # rule 7: who produced the quote (existing on projects)
+PROJECT_SURVEYOR_FIELD = "fldFJUFcOLLRWvc60"    # rule 7: who performed the survey (existing on projects)
+PROJECT_COMPLETED_STATUS = "Completed"          # exact singleSelect value; NEVER "Complete" (that's TASKS)
 BLOCKED_FIELDS = {
     ("employee", "projects"): {PROJECT_QUOTE_FIELD, PROJECT_DEPOSIT_FIELD, PROJECT_REVENUE_FIELD},
     ("sales", "projects"): {PROJECT_REVENUE_FIELD, PROJECT_DEPOSIT_FIELD},
+    ("quality", "projects"): {PROJECT_REVENUE_FIELD},   # quality sees the quote, never revenue
 }
 DRIVER_RATE = 28
 HELPER_RATE = 24
+
+# ------- Quality & Compliance module — Airtable field IDs (reference by exact ID; never write AUTONUMBER/FORMULA)
+# quality_docs
+QD_NAME_F = "fld3W18nU4Io2ZZNV"
+QD_VERSION_F = "fldiDIwr9JW8hPCzD"
+QD_EFFECTIVE_F = "fldT6Y875tNiquvuX"
+QD_OWNER_F = "fldLjP5CWmyqnZ9Mz"
+QD_REVIEW_F = "fldJpv1V4gzYMFeDY"
+QD_STATUS_F = "fldvFny72rpqL8Gq7"
+QD_DRIVE_F = "fldCZuors8kOtxo4Z"
+QD_NOTES_F = "fldX9QV8g2HjF5tnQ"
+# nonconformances  (NC number fldrmgtcxlPwNdzkw = AUTONUMBER, read-only)
+NC_NUMBER_F = "fldrmgtcxlPwNdzkw"
+NC_RAISED_BY_F = "fldEImK9opqEgqUlS"
+NC_RAISED_DATE_F = "fld0CIIBJ4ONEPB7K"
+NC_TYPE_F = "fldJcoMjr8CWfpw89"
+NC_SEVERITY_F = "fldZjx6p4spGnJkiV"
+NC_WHAT_F = "fldzMOMAv7N762lzo"
+NC_IMMEDIATE_F = "fldjUQA70Llyko0pY"
+NC_ROOT_F = "fldI1z8PvBXwLwECr"
+NC_CORRECTIVE_F = "fldMayZQl7txWLmrZ"
+NC_VERIFY_DATE_F = "fldLIfdho83ko7VCw"
+NC_STATUS_F = "fldHMZHQBqbI0KOTe"
+NC_CLOSED_BY_F = "fldtabcHA42ln02nr"
+NC_CLOSED_DATE_F = "fldefdFzqGo7xz153"
+NC_LINKED_JOB_F = "fldenMuCifGb9sc5n"
+# job_audits  (Audit number fldsa0PZkrqe8029F + Audit due fldQVm8CyjurFAgyJ = read-only)
+JA_NUMBER_F = "fldsa0PZkrqe8029F"
+JA_COMPLETED_DATE_F = "fldcTXzOnPN4UynoG"
+JA_AUDIT_DUE_F = "fldQVm8CyjurFAgyJ"
+JA_AUDITOR_F = "fldYOjPbBIkx5Lf9Z"
+JA_BOL_F = "fldYXIYUXAmisK4SD"
+JA_QUOTED_TOTAL_F = "fldcRVrYi4RvI1f8g"
+JA_FINAL_TOTAL_F = "fldopn48enx6Xkg1f"
+JA_VARIANCE_EXPLAINED_F = "fldHbvmW6KUNQuyuw"
+JA_EST_HOURS_F = "fldmTWweMfFkFdAod"
+JA_ACTUAL_HOURS_F = "fldq7VZ4bHyiRpk1W"
+JA_GATES_F = "fldlFQ0Ovpe8CYRPs"
+JA_RESULT_F = "fldc6beKUsF8nHdWO"
+JA_FINDINGS_F = "fldUp6XjCp9kLl00e"
+JA_SIGNED_BOL_F = "fld8Hu5BuK7oI6dE1"
+JA_LINKED_NC_F = "fldJZDkUMcLRDnx3r"
+JA_LINKED_JOB_F = "fldYjt6xsNHq2U2Qn"
 
 
 def decode_token(request: Request) -> Dict[str, Any]:
@@ -2154,12 +2205,43 @@ async def save_quote_breakdown(lead_id: str, payload: QuoteBreakdownPayload, req
     return {"ok": True, "token": token, "sms_sent": sms_sent, "sms_note": sms_note}
 
 
+# Rule 8: quality gets a READ-ONLY, cost-stripped quote breakdown. ALLOWLIST (fail-closed):
+# copy only these customer-facing keys out of the breakdown; drop everything else, whatever it is named.
+_QUALITY_QUOTE_ALLOWLIST = {
+    "customerName", "customerPhone", "jobDate", "moveDate",
+    "addressFrom", "addressTo", "from", "to",
+    "package", "packageLabel", "scope", "scopeLabel", "homeSize",
+    "crew", "crewSize", "hours", "estimatedHours", "estHours",
+    "hourlyRate", "manHourRate", "rate",
+    "tripFee", "travel", "travelFee",
+    "mileageFree", "mileageExtra", "mileage", "distFee",
+    "stairs", "stairsFee", "longCarry", "longCarryFee",
+    "specialtyItems", "specialty", "extraStop", "extraStopFee",
+    "packingMaterials", "materials", "materialsFee",
+    "subtotal", "finalQuote", "finalTotal", "quoteLow", "quoteHigh",
+    "bandLo", "bandHi", "deposit", "depositAmount",
+    "invoiceLineItems", "lineItems", "surcharges",
+}
+
+
+def _strip_quote_for_quality(breakdown: Any) -> Any:
+    """Return a cost-stripped copy of the quote for the quality role.
+    Allowlist, not denylist: only customer-facing keys survive, so a new internal
+    key added to the breakdown later can never leak (fails closed)."""
+    if not isinstance(breakdown, dict):
+        return breakdown
+    return {k: v for k, v in breakdown.items() if k in _QUALITY_QUOTE_ALLOWLIST}
+
+
 @api_router.get("/quotes/{lead_id}")
 async def get_quote_breakdown(lead_id: str, role: str = Depends(require_auth)):
-    if role not in ("owner", "sales"):
+    if role not in ("owner", "sales", "quality"):
         raise HTTPException(status_code=403, detail="Your role can't see quotes.")
     doc = await mongo_db.lead_quotes.find_one({"_id": lead_id}) or {}
-    return {"breakdown": doc.get("breakdown"), "updated_at": doc.get("updated_at"), "token": doc.get("token")}
+    breakdown = doc.get("breakdown")
+    if role == "quality":
+        breakdown = _strip_quote_for_quality(breakdown)
+    return {"breakdown": breakdown, "updated_at": doc.get("updated_at"), "token": doc.get("token")}
 
 
 def _pdf_move_date(v: Any) -> str:
@@ -2665,7 +2747,7 @@ async def list_records(table_key: str, role: str = Depends(require_auth)):
 
 
 @api_router.post("/tables/{table_key}")
-async def create_record(table_key: str, payload: RecordPayload = Body(...), role: str = Depends(require_auth)):
+async def create_record(table_key: str, request: Request, payload: RecordPayload = Body(...), role: str = Depends(require_auth)):
     table_id = resolve_table(table_key)
     await check_table_access(role, table_key)
     if table_key in ("tasks", "blog") and role != "owner":
@@ -2677,6 +2759,8 @@ async def create_record(table_key: str, payload: RecordPayload = Body(...), role
         rec["audience"] = []
     if table_key == "blog" and payload.fields.get(BLOG_STATUS_F) == "Published":
         await notify_blog_published(data["records"][0])
+    if table_key == "job_audits":
+        await _maybe_open_audit_nc(data["records"][0], request)
     return rec
 
 
@@ -2693,6 +2777,8 @@ async def update_record(table_key: str, record_id: str, request: Request, payloa
         meta = await mongo_db.task_meta.find_one({"_id": record_id})
         if not meta or grp not in (meta.get("audience") or []):
             raise HTTPException(status_code=403, detail="That task isn't shared with your team.")
+    if table_key == "nonconformances" and payload.fields.get(NC_STATUS_F) == "Closed":
+        await _guard_nc_close(record_id, payload.fields)
     prev_lead_status: Optional[str] = None
     if table_key == "leads" and payload.fields.get(LEAD_STATUS_F) == "Booked":
         try:
@@ -2749,6 +2835,366 @@ async def delete_record(table_key: str, record_id: str, role: str = Depends(requ
         raise HTTPException(status_code=403, detail="Only the owner can delete records.")
     await airtable_request("DELETE", table_id, path=f"/{record_id}")
     return {"deleted": True, "id": record_id}
+
+
+# ================= Quality & Compliance module (prompt 1 of 3) =================
+# NOTE: unrelated to audit()/audit_log (the system activity log). Everything here is job_audit / job_audits.
+
+async def _airtable_all(table_id: str) -> List[Dict[str, Any]]:
+    records: List[Dict[str, Any]] = []
+    offset = None
+    while True:
+        params: Dict[str, Any] = {"pageSize": 100, "returnFieldsByFieldId": "true"}
+        if offset:
+            params["offset"] = offset
+        data = await airtable_request("GET", table_id, params=params)
+        records.extend(data.get("records", []))
+        offset = data.get("offset")
+        if not offset:
+            break
+    return records
+
+
+async def _maybe_open_audit_nc(audit_rec: Dict[str, Any], request: Request) -> None:
+    """Rule 4: saving an audit with Result 'Pass with findings' or 'Fail' auto-opens a
+    linked nonconformance of Type 'Audit finding', and links the audit back to it."""
+    fields = audit_rec.get("fields") or {}
+    result = fields.get(JA_RESULT_F)
+    if result not in ("Pass with findings", "Fail"):
+        return
+    try:
+        p = await current_principal(request)
+        linked_jobs = fields.get(JA_LINKED_JOB_F) or []
+        nc_fields: Dict[str, Any] = {
+            NC_TYPE_F: "Audit finding",
+            NC_SEVERITY_F: "Major" if result == "Fail" else "Minor",
+            NC_STATUS_F: "Open",
+            NC_RAISED_BY_F: p.get("name") or "Quality",
+            NC_RAISED_DATE_F: _et_today(),
+            NC_WHAT_F: fields.get(JA_FINDINGS_F) or f"Audit result: {result}",
+        }
+        if linked_jobs:
+            nc_fields[NC_LINKED_JOB_F] = linked_jobs
+        nc_data = await airtable_request(
+            "POST", TABLES["nonconformances"], json_body={"records": [{"fields": nc_fields}], "typecast": True})
+        nc_id = nc_data["records"][0]["id"]
+        await airtable_request(
+            "PATCH", TABLES["job_audits"],
+            json_body={"records": [{"id": audit_rec["id"], "fields": {JA_LINKED_NC_F: [nc_id]}}], "typecast": True})
+    except Exception as exc:
+        logger.warning("Auto-nonconformance from audit failed: %s", exc)
+
+
+async def _guard_nc_close(record_id: str, patch_fields: Dict[str, Any]) -> None:
+    """Rule 5: a nonconformance cannot be closed without a root cause and a corrective action."""
+    root = patch_fields.get(NC_ROOT_F)
+    corrective = patch_fields.get(NC_CORRECTIVE_F)
+    if root is None or corrective is None:
+        try:
+            prev = await airtable_request("GET", TABLES["nonconformances"], path=f"/{record_id}",
+                                          params={"returnFieldsByFieldId": "true"})
+            pf = prev.get("fields") or {}
+        except HTTPException:
+            pf = {}
+        if root is None:
+            root = pf.get(NC_ROOT_F)
+        if corrective is None:
+            corrective = pf.get(NC_CORRECTIVE_F)
+    if not (str(root or "").strip() and str(corrective or "").strip()):
+        raise HTTPException(status_code=422,
+                            detail="Add a root cause and a corrective action before closing this nonconformance.")
+
+
+def _num(v: Any) -> Optional[float]:
+    try:
+        if v is None or v == "":
+            return None
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+async def _resolve_people() -> Dict[str, str]:
+    """Map user _id -> display name so quoted_by / surveyor ids render as names."""
+    users = await mongo_db.users.find({}, {"_id": 1, "name": 1}).to_list(500)
+    return {u["_id"]: u.get("name", "") for u in users}
+
+
+def _person_label(raw: Any, people: Dict[str, str]) -> str:
+    if isinstance(raw, list):
+        raw = raw[0] if raw else ""
+    key = str(raw or "").strip()
+    return people.get(key, key)
+
+
+async def _actual_hours_by_project(projects: List[Dict[str, Any]]) -> Dict[str, Optional[float]]:
+    """On-site actual hours per project from time_entries (last clock-out minus first clock-in).
+    Link chain: project -> Mongo job (project_record_id, else linked lead_id) -> job_date ->
+    assignments on that date -> their time_entries. Best-effort; refined by name when several
+    assignments share a date."""
+    jobs = await mongo_db.jobs.find({}).to_list(1000)
+    by_recid: Dict[str, Dict[str, Any]] = {}
+    by_lead: Dict[str, Dict[str, Any]] = {}
+    for j in jobs:
+        if j.get("project_record_id"):
+            by_recid[j["project_record_id"]] = j
+        if j.get("lead_id"):
+            by_lead[j["lead_id"]] = j
+    assignments = await mongo_db.assignments.find({}).to_list(2000)
+    by_date: Dict[str, List[Dict[str, Any]]] = {}
+    for a in assignments:
+        by_date.setdefault((a.get("job_date") or "")[:10], []).append(a)
+    entries = await mongo_db.time_entries.find({}).to_list(5000)
+    entries_by_assignment: Dict[str, List[Dict[str, Any]]] = {}
+    for e in entries:
+        entries_by_assignment.setdefault(e.get("assignment_id"), []).append(e)
+
+    def onsite_hours(assignment_ids: List[str]) -> Optional[float]:
+        ins, outs, open_left = [], [], 0
+        for aid in assignment_ids:
+            for e in entries_by_assignment.get(aid, []):
+                if e.get("clock_in"):
+                    ins.append(e["clock_in"]["at"])
+                if e.get("clock_out"):
+                    outs.append(e["clock_out"]["at"])
+                else:
+                    open_left += 1
+        if not ins or not outs or open_left:
+            return None
+        try:
+            span = (datetime.fromisoformat(max(outs)) - datetime.fromisoformat(min(ins))).total_seconds() / 3600
+            return round(max(0.0, span), 2)
+        except (ValueError, TypeError):
+            return None
+
+    out: Dict[str, Optional[float]] = {}
+    for pr in projects:
+        f = pr.get("fields") or {}
+        job = by_recid.get(pr["id"])
+        if not job:
+            for lid in (f.get(PROJECT_LEAD_LINK_FIELD) or []):
+                if lid in by_lead:
+                    job = by_lead[lid]
+                    break
+        job_date = (job.get("job_date") if job else None) or (str(f.get(PROJECT_DATE_FIELD) or "")[:10] or None)
+        if not job_date:
+            out[pr["id"]] = None
+            continue
+        candidates = by_date.get(job_date, [])
+        name = str(f.get(PROJECT_NAME_FIELD) or "").lower()
+        matched = [a for a in candidates if a.get("job_name") and str(a["job_name"]).lower()[:12] in name] if name else []
+        chosen = matched or candidates
+        out[pr["id"]] = onsite_hours([a["_id"] for a in chosen])
+    return out
+
+
+@api_router.get("/quality/audit-queue")
+async def quality_audit_queue(request: Request):
+    p = await current_principal(request)
+    if p["role"] not in ("owner", "quality"):
+        raise HTTPException(status_code=403, detail="Only the owner and quality can open the audit queue.")
+    projects = await _airtable_all(TABLES["projects"])
+    audits = await _airtable_all(TABLES["job_audits"])
+    audited: set = set()
+    for a in audits:
+        for jid in ((a.get("fields") or {}).get(JA_LINKED_JOB_F) or []):
+            audited.add(jid)
+    today = datetime.now(ZoneInfo("America/New_York")).date()
+    rows = []
+    for pr in projects:
+        f = pr.get("fields") or {}
+        if f.get(PROJECT_STATUS_FIELD) != PROJECT_COMPLETED_STATUS or pr["id"] in audited:
+            continue
+        move_date = str(f.get(PROJECT_DATE_FIELD) or "")[:10] or None
+        days_since = audit_due = None
+        past_due = False
+        if move_date:
+            try:
+                md = datetime.fromisoformat(move_date).date()
+                days_since = (today - md).days
+                due = md + timedelta(days=7)
+                audit_due = due.isoformat()
+                past_due = today > due
+            except ValueError:
+                pass
+        rows.append({
+            "id": pr["id"],
+            "name": f.get(PROJECT_NAME_FIELD) or "Untitled job",
+            "move_date": move_date,
+            "days_since": days_since,
+            "audit_due": audit_due,
+            "past_due": past_due,
+            "quoted_total": _num(f.get(PROJECT_QUOTE_FIELD)),
+        })
+    rows.sort(key=lambda r: (not r["past_due"], r["audit_due"] or "9999-99-99"))
+    return {"rows": rows}
+
+
+@api_router.get("/quality/quote-accuracy")
+async def quality_quote_accuracy(request: Request):
+    p = await current_principal(request)
+    if p["role"] not in ("owner", "quality"):
+        raise HTTPException(status_code=403, detail="Only the owner and quality can open quote accuracy.")
+    q = request.query_params
+    d_from, d_to, rep = q.get("from"), q.get("to"), q.get("rep")
+    rates = await get_rates_values()
+    max_hours = _num(rates.get("maxHoursOnSite")) or 10.0
+    projects = await _airtable_all(TABLES["projects"])
+    audits = await _airtable_all(TABLES["job_audits"])
+    people = await _resolve_people()
+    completed = [pr for pr in projects if (pr.get("fields") or {}).get(PROJECT_STATUS_FIELD) == PROJECT_COMPLETED_STATUS]
+    actual_by_project = await _actual_hours_by_project(completed)
+    # newest audit per linked project for final total + variance-explained
+    audit_by_job: Dict[str, Dict[str, Any]] = {}
+    for a in audits:
+        af = a.get("fields") or {}
+        for jid in (af.get(JA_LINKED_JOB_F) or []):
+            audit_by_job[jid] = af
+    rows = []
+    for pr in completed:
+        f = pr.get("fields") or {}
+        move_date = str(f.get(PROJECT_DATE_FIELD) or "")[:10] or None
+        if d_from and move_date and move_date < d_from:
+            continue
+        if d_to and move_date and move_date > d_to:
+            continue
+        quoted_by_raw = f.get(PROJECT_QUOTED_BY_FIELD)
+        rep_id = str((quoted_by_raw[0] if isinstance(quoted_by_raw, list) and quoted_by_raw else quoted_by_raw) or "").strip()
+        if rep and rep_id != rep:
+            continue
+        af = audit_by_job.get(pr["id"]) or {}
+        quoted_total = _num(f.get(PROJECT_QUOTE_FIELD))
+        final_total = _num(af.get(JA_FINAL_TOTAL_F))
+        est_hours = _num(f.get(PROJECT_HOURS_FIELD))
+        actual_hours = actual_by_project.get(pr["id"])
+        dollar_var = round(final_total - quoted_total, 2) if (final_total is not None and quoted_total is not None) else None
+        hours_var = round(actual_hours - est_hours, 2) if (actual_hours is not None and est_hours is not None) else None
+        hours_flag = None
+        if hours_var is not None:
+            if abs(hours_var) > 1.0:
+                hours_flag = "red"
+            elif abs(hours_var) > 0.5:
+                hours_flag = "amber"
+        over_max = actual_hours is not None and actual_hours > max_hours
+        lead_link = f.get(PROJECT_LEAD_LINK_FIELD) or []
+        rows.append({
+            "id": pr["id"],
+            "lead_id": lead_link[0] if lead_link else None,
+            "name": f.get(PROJECT_NAME_FIELD) or "Untitled job",
+            "move_date": move_date,
+            "quoted_by": _person_label(quoted_by_raw, people),
+            "quoted_by_id": rep_id or None,
+            "surveyor": _person_label(f.get(PROJECT_SURVEYOR_FIELD), people),
+            "quoted_total": quoted_total,
+            "final_total": final_total,
+            "dollar_variance": dollar_var,
+            "estimated_hours": est_hours,
+            "actual_hours": actual_hours,
+            "hours_variance": hours_var,
+            "hours_flag": hours_flag,
+            "over_max_hours": over_max,
+            "variance_explained": af.get(JA_VARIANCE_EXPLAINED_F),
+        })
+    rows.sort(key=lambda r: r["move_date"] or "", reverse=True)
+
+    def _mean(vals: List[float]) -> Optional[float]:
+        return round(sum(vals) / len(vals), 2) if vals else None
+
+    hv = [r["hours_variance"] for r in rows if r["hours_variance"] is not None]
+    dv = [r["dollar_variance"] for r in rows if r["dollar_variance"] is not None]
+    per_rep: Dict[str, Dict[str, Any]] = {}
+    for r in rows:
+        key = r["quoted_by"] or "Unassigned"
+        slot = per_rep.setdefault(key, {"rep": key, "rep_id": r["quoted_by_id"], "_hv": [], "_dv": [], "jobs": 0})
+        slot["jobs"] += 1
+        if r["hours_variance"] is not None:
+            slot["_hv"].append(r["hours_variance"])
+        if r["dollar_variance"] is not None:
+            slot["_dv"].append(r["dollar_variance"])
+    reps = [{"rep": v["rep"], "rep_id": v["rep_id"], "jobs": v["jobs"],
+             "mean_hours_variance": _mean(v["_hv"]), "mean_dollar_variance": _mean(v["_dv"])}
+            for v in per_rep.values()]
+    reps.sort(key=lambda v: v["rep"].lower())
+    return {
+        "rows": rows,
+        "summary": {"jobs": len(rows), "mean_hours_variance": _mean(hv), "mean_dollar_variance": _mean(dv),
+                    "max_hours_on_site": max_hours, "per_rep": reps},
+        "reps": [{"id": v["rep_id"], "name": v["rep"]} for v in per_rep.values() if v["rep_id"]],
+    }
+
+
+class FeedbackPayload(BaseModel):
+    job_id: Optional[str] = None
+    job_name: Optional[str] = None
+    rep_user_id: Optional[str] = None
+    rep_name: Optional[str] = None
+    date: Optional[str] = None
+    what_was_off: str
+    what_to_do: str = ""
+
+
+@api_router.post("/quality/feedback")
+async def create_quote_feedback(payload: FeedbackPayload, request: Request):
+    p = await current_principal(request)
+    if p["role"] not in ("owner", "quality"):
+        raise HTTPException(status_code=403, detail="Only the owner and quality can log feedback.")
+    if not payload.what_was_off.strip():
+        raise HTTPException(status_code=422, detail="Say what was off before saving feedback.")
+    raised_date = (payload.date or _et_today())[:10]
+    nc_fields: Dict[str, Any] = {
+        NC_TYPE_F: "Quote variance",
+        NC_SEVERITY_F: "Minor",
+        NC_STATUS_F: "Open",
+        NC_RAISED_BY_F: p.get("name") or "Quality",
+        NC_RAISED_DATE_F: raised_date,
+        NC_WHAT_F: payload.what_was_off.strip(),
+        NC_CORRECTIVE_F: payload.what_to_do.strip(),
+    }
+    if payload.job_id:
+        nc_fields[NC_LINKED_JOB_F] = [payload.job_id]
+    nc_id = None
+    try:
+        nc_data = await airtable_request(
+            "POST", TABLES["nonconformances"], json_body={"records": [{"fields": nc_fields}], "typecast": True})
+        nc_id = nc_data["records"][0]["id"]
+    except HTTPException as exc:
+        # Airtable unavailable in preview — still record the feedback app-side so the log/rep view works.
+        logger.warning("Feedback nonconformance write skipped: %s", exc.detail)
+    doc = {
+        "_id": nc_id or str(uuid4()),
+        "nc_id": nc_id,
+        "job_id": payload.job_id,
+        "job_name": payload.job_name,
+        "rep_user_id": payload.rep_user_id,
+        "rep_name": payload.rep_name,
+        "date": raised_date,
+        "what_was_off": payload.what_was_off.strip(),
+        "what_to_do": payload.what_to_do.strip(),
+        "created_by": p.get("name"),
+        "created_at": now_iso(),
+    }
+    await mongo_db.quality_feedback.insert_one(doc)
+    if payload.rep_user_id:
+        await notify(payload.rep_user_id, None, "Feedback on a quote",
+                     f"{p.get('name') or 'Quality'} left feedback on {payload.job_name or 'a job'}. "
+                     f"What was off: {payload.what_was_off.strip()[:120]}",
+                     "quality_feedback", {"job_id": payload.job_id})
+    return {"ok": True, "id": str(doc["_id"]), "nc_id": nc_id}
+
+
+@api_router.get("/quality/feedback")
+async def list_quote_feedback(request: Request):
+    p = await current_principal(request)
+    if p["role"] in ("owner", "quality"):
+        query: Dict[str, Any] = {}
+    elif p.get("user_id"):
+        # a rep sees only feedback given to them, never another rep's
+        query = {"rep_user_id": p["user_id"]}
+    else:
+        raise HTTPException(status_code=403, detail="Your role can't see feedback.")
+    docs = await mongo_db.quality_feedback.find(query, {"_id": 0}).to_list(1000)
+    docs.sort(key=lambda d: d.get("created_at") or "", reverse=True)
+    return {"feedback": docs}
 
 
 class TaskAudiencePayload(BaseModel):
@@ -8092,6 +8538,7 @@ async def seed_on_startup():
             {"name": "Test Crew (Ghost)", "email": "testcrewadmin", "role": "crew"},
             {"name": "Test Sales (Ghost)", "email": "testsalesadmin", "role": "sales"},
             {"name": "Test Marketing (Ghost)", "email": "testmarketingadmin", "role": "marketing"},
+            {"name": "Test Quality (Ghost)", "email": "testqualityadmin", "role": "quality"},
         ]
         for g in ghost_seeds:
             if await mongo_db.users.find_one({"email": g["email"]}) is None:

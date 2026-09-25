@@ -51,6 +51,12 @@ export const updateRecordApi = (table, id, fields) =>
   axios.patch(`${API}/tables/${table}/${id}`, { fields }).then((r) => r.data);
 export const deleteRecordApi = (table, id) => axios.delete(`${API}/tables/${table}/${id}`).then((r) => r.data);
 
+// Quality & Compliance module
+export const qualityAuditQueueApi = () => axios.get(`${API}/quality/audit-queue`).then((r) => r.data);
+export const qualityQuoteAccuracyApi = (params) => axios.get(`${API}/quality/quote-accuracy`, { params }).then((r) => r.data);
+export const qualityFeedbackListApi = () => axios.get(`${API}/quality/feedback`).then((r) => r.data.feedback);
+export const qualityFeedbackCreateApi = (payload) => axios.post(`${API}/quality/feedback`, payload).then((r) => r.data);
+
 export const listUsersApi = () => axios.get(`${API}/users`).then((r) => r.data.users);
 export const createUserApi = (u) => axios.post(`${API}/users`, u).then((r) => r.data);
 export const patchUserApi = (id, u) => axios.patch(`${API}/users/${id}`, u).then((r) => r.data);
