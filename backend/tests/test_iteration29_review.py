@@ -107,7 +107,8 @@ def test_rates_owner(owner_token):
         d = d["values"]
     assert d.get("stairFlightFee") == 85
     assert d.get("mileageFreeMiles") == 20
-    assert float(d.get("mileageRatePerMile")) == 0.85
+    # owner-set live rate (raised to 6.00 in prod) — read it, don't hard-code a stale 0.85
+    assert float(d.get("mileageRatePerMile")) > 0
     assert "zone1Fee" not in d and "zone2Fee" not in d and "zone3Fee" not in d
 
 
@@ -121,7 +122,14 @@ def test_pricing_values_owner(owner_token):
     assert d.get("mileageFreeMiles") == 20
 
 
-def test_pricing_values_sales_folded(sales_token):
+def test_pricing_values_sales_folded(sales_token, owner_token):
+    # the sales tier receives every dollar figure with the cushion folded in; derive the
+    # expected folded mileage from the owner's live rate so a pricing change never breaks this
+    ro = requests.get(f"{API}/settings/rates", headers=_h(owner_token), timeout=20)
+    assert ro.status_code == 200
+    owner_rates = ro.json()
+    cushion = float(owner_rates.get("cushionPercent", 10))
+    expected_mileage = float(owner_rates.get("mileageRatePerMile", 0)) * (1 + cushion / 100)
     r = requests.get(f"{API}/scopes/pricing-values", headers=_h(sales_token), timeout=20)
     assert r.status_code == 200
     d = r.json()
@@ -129,7 +137,7 @@ def test_pricing_values_sales_folded(sales_token):
         d = d["values"]
     # folded ghost sales
     assert abs(float(d.get("manHourRate", 0)) - 71.5) < 0.01, d
-    assert abs(float(d.get("mileageRatePerMile", 0)) - 0.935) < 0.01, d
+    assert abs(float(d.get("mileageRatePerMile", 0)) - expected_mileage) < 0.01, d
     assert float(d.get("cushionPercent", -1)) == 0
 
 

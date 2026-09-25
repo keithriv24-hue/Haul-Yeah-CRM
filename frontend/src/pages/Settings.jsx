@@ -72,6 +72,11 @@ const PRICING_GROUPS = [
     { key: "hardFloorBedrooms", label: "Hard hour floor from (bedrooms)", max: 10 },
     { key: "hardFloorHours", label: "Hard hour floor (hours)", max: 24 },
   ] },
+  { title: "Capacity & scheduling", note: "Crew is sized to finish inside the target day. A job past the max on-site hours adds crew (up to the day's ceiling); truck count never sets crew.", fields: [
+    { key: "maxCrewPerDay", label: "Max crew per day (dial down for tight weekends)", max: 30 },
+    { key: "targetHoursOnSite", label: "Target hours on site", max: 24 },
+    { key: "maxHoursOnSite", label: "Max hours on site before adding crew", max: 24 },
+  ] },
   { title: "Package defaults (crew / hours by home size)", fields: [
     { key: "pkgStudioCrew", label: "Studio/1BR — crew", max: 12 },
     { key: "pkgStudioHours", label: "Studio/1BR — hours", max: 24 },

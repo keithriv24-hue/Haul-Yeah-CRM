@@ -193,6 +193,7 @@ export const NO_PRICING = {
   surchargeCustomB1: 0, surchargeCustomB2: 0, surchargeCustomB3: 0, surchargeCustomB4: 0,
   customBuiltInMultiplier: 0, customDisconnectMultiplier: 0, customSwapFactor: 0, specialtyHandlingCapPct: 0,
   hardFloorBedrooms: 3, hardFloorHours: 6,
+  maxCrewPerDay: 12, targetHoursOnSite: 8, maxHoursOnSite: 10,
   pkgStudioCrew: 2, pkgStudioHours: 3.5, pkg2brCrew: 3, pkg2brHours: 5.5,
   pkg3brCrew: 4, pkg3brHours: 6.5, pkg4brCrew: 4, pkg4brHours: 8,
   serviceStates: "NJ",
@@ -284,10 +285,18 @@ export function computeScope(inputs, P, shift = 0) {
   const specialtyOnly = ROOMS.every((rm) => !dens[rm.k])
     && (ITEMS.some((it) => (qty[it.k] || 0) > 0) || custom.some((c) => CUSTOM_BANDS.some((b) => b.k === c?.band)));
 
-  const pkgDef = PKGS.find((x) => x.k === pkg);
-  const bedsEff = Math.max(beds, pkgDef ? pkgDef.beds : 0);
+  const pkgDef = PKGS.find((x) => x.k === (specialtyOnly ? "" : pkg));
+  /* On a specialty-only job the package is ignored ENTIRELY — its bed count, its
+     crew AND its hours. Sizing comes from the item's own safety floor, not a room package. */
+  const droppedPkg = specialtyOnly && !!pkg;
+  const bedsEff = specialtyOnly ? 0 : Math.max(beds, pkgDef ? pkgDef.beds : 0);
+  const effCrewOverride = droppedPkg ? null : crewOverride;   // package wrote these — drop them
+  const effHoursOverride = droppedPkg ? null : hoursOverride;
 
-  const trucks = Math.max(1, Math.ceil(cf / TRUCK_CF), Math.ceil(lbs / TRUCK_LBS));
+  const trucksRaw = Math.max(1, Math.ceil(cf / TRUCK_CF), Math.ceil(lbs / TRUCK_LBS));
+  const displayTrucks = jobType === "labor" ? 0 : trucksRaw;   // labor-only never runs a truck
+  const billableTrips = jobType === "labor" ? 1 : trucksRaw;   // …but still bills one trip fee
+  const trucks = displayTrucks;                                // graphic / margin read this
   const sc = Math.max(1, cf / 800);          // volume scaling factor (man-hours only)
   const volMH = (cf / 100) * rate * PACKING[pack].m;
 
@@ -308,26 +317,32 @@ export function computeScope(inputs, P, shift = 0) {
   const hardBeds = num(P?.hardFloorBedrooms, 3);
   const hardHours = num(P?.hardFloorHours, 6);
 
-  let crewRec = schedMH < 12 ? 2 : schedMH < 24 ? 3 : 4;
-  if (trucks >= 2) crewRec = 3 * trucks;
+  const maxCrew = num(P?.maxCrewPerDay, 12);
+  const targetHrs = num(P?.targetHoursOnSite, 8);
+  const maxHrs = num(P?.maxHoursOnSite, 10);
+  let crewRec = schedMH < 12 ? 2 : schedMH < 24 ? 3 : 4;                         // truck count NEVER sets crew
   if (bedsEff >= hardBeds) crewRec = Math.max(crewRec, 4);                       // 3BR+ runs with 4 crew
   else if (bedsEff >= 2 && crewRec === 3 && schedMH / 3 > hardHours) crewRec = 4; // 2–3BR running long → 4th mover
   if (customCrewFloor) crewRec = Math.max(crewRec, customCrewFloor);             // heavy-item safety floor
-  const crew = Math.max(crewOverride || crewRec, customCrewFloor);               // override can't go below it
+  // day-length escalation: a job that would run past maxHoursOnSite gets more crew, toward
+  // targetHoursOnSite, capped at maxCrewPerDay (an 80-mh POD load genuinely needs ~10 people)
+  const dayLengthEscalated = maxHrs > 0 && crewRec > 0 && schedMH / crewRec > maxHrs;
+  if (dayLengthEscalated) crewRec = Math.min(maxCrew, Math.max(crewRec, Math.round(schedMH / targetHrs)));
+  const crew = Math.max(effCrewOverride || crewRec, customCrewFloor);            // override can't go below the floor
 
   const minHours = jobType === "labor" ? num(P?.minHoursLabor, 2) : num(P?.minHoursTruck, 3);
   const hourFloor = bedsEff >= hardBeds ? Math.max(hardHours, minHours) : minHours;
   billMH = Math.max(billMH, hourFloor * Math.min(crew, 4));
   const onsiteRec = schedMH / crew;
   let onsite = onsiteRec;
-  if (hoursOverride) {
-    billMH = hoursOverride * crew;
-    onsite = hoursOverride;
+  if (effHoursOverride) {
+    billMH = effHoursOverride * crew;
+    onsite = effHoursOverride;
     if (bedsEff >= hardBeds) billMH = Math.max(billMH, hardHours * Math.min(crew, 4)); // HARD 6-hr floor — override can't go below
   }
   const floorMH = hourFloor * Math.min(crew, 4);
   const hardFloorApplied = bedsEff >= hardBeds && Math.abs(billMH - hardHours * Math.min(crew, 4)) < 1e-9
-    && (hoursOverride ? hoursOverride * crew < billMH : volMH + itemMH < billMH);
+    && (effHoursOverride ? effHoursOverride * crew < billMH : volMH + itemMH < billMH);
 
   /* ---- final pricing steps — every value from the pricing config, exact spec order ---- */
   const manHourRate = num(P?.manHourRate);
@@ -336,7 +351,7 @@ export function computeScope(inputs, P, shift = 0) {
   const mileage = mileageInfo(miles, P);
   const distBill = mileage.fee;
   const labor = billMH * manHourRate;                                             // 1 flat man-hour rate
-  const travel = tripFee * trucks;                                                // 2 trip fee
+  const travel = tripFee * billableTrips;                                         // 2 trip fee (labor = 1 trip)
   const handlingRaw = itemBillTotal + customBillTotal;
   const handlingBilled = specialtyOnly                                            // cap only ever binds specialty-only:
     ? Math.min(handlingRaw, labor * (num(P?.specialtyHandlingCapPct, 30) / 100))  //   household stays bit-identical
@@ -345,9 +360,9 @@ export function computeScope(inputs, P, shift = 0) {
   const cushioned = sub * (1 + num(P?.cushionPercent) / 100);                     // 4 cushion (never itemized)
   const total = Math.max(cushioned, priceFloor);                                  // 5 price floor (round-up at output)
 
-  return { cf, lbs, trucks, sc, volMH, itemMH, accMH, accBill, itemBill: itemBillTotal, matBill, distBill, mileage,
-    customBill: customBillTotal, handlingRaw, handlingBilled, specialtyOnly, blockers, customCrewFloor, fitMH,
-    billMH, schedMH, crew, crewRec, onsite, onsiteRec, labor, travel, sub, cushioned, total,
+  return { cf, lbs, trucks, displayTrucks, billableTrips, sc, volMH, itemMH, accMH, accBill, itemBill: itemBillTotal, matBill, distBill, mileage,
+    customBill: customBillTotal, handlingRaw, handlingBilled, specialtyOnly, droppedPkg, blockers, customCrewFloor, fitMH,
+    billMH, schedMH, crew, crewRec, dayLengthEscalated, onsite, onsiteRec, labor, travel, sub, cushioned, total,
     beds, bedsEff, priceFloor, floorMH, hardFloorApplied };
 }
 

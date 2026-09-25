@@ -10,6 +10,7 @@ import { apiErrorMessage, listScopesApi, patchScopeVideoApi } from "@/lib/api";
 const money = (n) => "$" + Math.round(n || 0).toLocaleString();
 
 const scopePrice = (s) => {
+  if (s.result?.mode === "assessment_required") return "On-site assessment required";
   if (s.result?.mode === "final" && s.result?.finalTotal) return `${money(s.result.finalTotal)} firm`;
   if (s.result?.bandLo != null) return `${money(s.result.bandLo)}–${money(s.result.bandHi)} range`;
   return s.tier === "survey" ? "Survey scope — priced by owner" : "No price yet";

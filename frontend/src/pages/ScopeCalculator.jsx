@@ -159,6 +159,12 @@ export default function ScopeCalculator() {
     if ((!surveyDone || gate.blocked || hasBlockers) && mode === "final") setMode("range");
   }, [surveyDone, mode, gate.blocked, hasBlockers]);
 
+  /* Specialty-only ignores the package entirely — clear it and its overrides so the item's
+     own crew floor sizes the job (and any manual override works again once the package is gone). */
+  useEffect(() => {
+    if (r.specialtyOnly && pkg) { setPkg(""); setCrewOverride(null); setHoursOverride(null); }
+  }, [r.specialtyOnly, pkg]);
+
   const finalMode = mode === "final" && surveyDone && !gate.blocked && !hasBlockers;
 
   /* tier gates — UI mirrors of the backend enforcement, never the other way round */
@@ -171,7 +177,7 @@ export default function ScopeCalculator() {
   const showPricing = !isSurvey;              // survey tier sees no pricing at all
 
   const flagged = ROOMS.filter((x) => x.risky && (dens[x.k] || 0) >= 2).map((x) => x.n);
-  const overWeight = r.lbs > TRUCK_LBS * r.trucks * 0.92;
+  const overWeight = r.trucks > 0 && r.lbs > TRUCK_LBS * r.trucks * 0.92;
   const clear = () => { setDens({}); setCnt({}); setQty({}); setCustom([]); setAcc({}); setMat({}); setPack(0); setSurveyComplete(false); setMode("range"); setViewingSaved(null); setRefineFrom(null); setLabel(""); setCrewOverride(null); setHoursOverride(null); setVideo({ link: "", received: false, date: "" }); setMiles(""); setPickupState("NJ"); setDropoffState("NJ"); setPkg(""); setSanityCat(""); };
 
   const loadSavedList = () => listScopesApi().then(setSavedList).catch((e) => toast.error(apiErrorMessage(e)));
@@ -236,6 +242,7 @@ export default function ScopeCalculator() {
 
   const saveScope = async () => {
     setSaving(true);
+    const assessment = hasBlockers;   // 800 lb+ / clearance blocker → save the scope, store no dollar amount
     try {
       const doc = await saveScopeApi({
         lead_id: leadId,
@@ -245,22 +252,24 @@ export default function ScopeCalculator() {
           miles: Number(miles) || 0, pickupState, dropoffState, pkg, mode: finalMode ? "final" : "range" },
         pricing: P,
         result: {
-          cf: r.cf, lbs: r.lbs, trucks: r.trucks, crew: r.crew, crewRec: r.crewRec,
+          cf: r.cf, lbs: r.lbs, trucks: r.displayTrucks, crew: r.crew, crewRec: r.crewRec,
           onsiteHours: Math.round(r.onsite * 10) / 10,
           billMH: Math.round(r.billMH * 100) / 100, schedMH: Math.round(r.schedMH * 100) / 100,
-          distFee: r.distBill, mileageExtra: r.mileage.extra,
+          distFee: assessment ? null : r.distBill, mileageExtra: r.mileage.extra,
           specialtyOnly: r.specialtyOnly, blockers: r.blockers,
-          bandLo, bandHi,
-          finalTotal: finalMode ? finalTotal : null,
-          deposit: finalMode ? Math.round(deposit * 100) / 100 : null,
-          mode: finalMode ? "final" : "range", jobType,
+          bandLo: assessment ? null : bandLo, bandHi: assessment ? null : bandHi,
+          finalTotal: assessment ? null : (finalMode ? finalTotal : null),
+          deposit: assessment ? null : (finalMode ? Math.round(deposit * 100) / 100 : null),
+          mode: assessment ? "assessment_required" : (finalMode ? "final" : "range"), jobType,
         },
         survey_complete: surveyComplete,
         video: { link: video.link, received: video.received, received_date: video.date },
       });
       setViewingSaved(doc);
       setRefineFrom(null);
-      toast.success(refineFrom
+      toast.success(assessment
+        ? "Saved for on-site assessment — the scope is kept, no dollar amount is stored."
+        : refineFrom
         ? "Saved as a new version — the original scope is untouched."
         : "Scope saved with its pricing snapshot. Settings changes won't re-price it.");
     } catch (e) {
@@ -362,6 +371,7 @@ export default function ScopeCalculator() {
                 </button>
                 <span className="tnum text-ink-2 text-[13px] shrink-0">
                   {s.result?.mode === "custom" ? "custom"
+                    : s.result?.mode === "assessment_required" ? "assessment"
                     : s.result?.mode === "final" && s.result?.finalTotal ? money(s.result.finalTotal)
                     : s.result?.bandLo != null ? `${money(s.result.bandLo)}–${money(s.result.bandHi)}` : "—"}
                 </span>
@@ -440,7 +450,7 @@ export default function ScopeCalculator() {
           </span>
           {r.specialtyOnly && (
             <p data-testid="scope-specialty-prompt" className="text-[10.5px] text-info mt-1 max-w-[200px] leading-snug">
-              No rooms entered — pricing this as a specialty-only job.
+              No rooms scoped — package sizing ignored, pricing as specialty-only.
             </p>
           )}
         </div>
@@ -734,10 +744,11 @@ export default function ScopeCalculator() {
               </div>
             </div>
 
+            {r.displayTrucks > 0 && (
             <svg viewBox="0 0 340 96" className="w-full mt-2" role="img"
-              aria-label={`${r.cf} cubic feet, ${r.lbs} pounds, ${r.trucks} trucks`}>
+              aria-label={`${r.cf} cubic feet, ${r.lbs} pounds, ${r.displayTrucks} trucks`}>
               {[0, 1].map((t) => {
-                if (t === 1 && r.trucks < 2) return null;
+                if (r.displayTrucks < t + 1) return null;
                 const y = t * 48;
                 const rem = Math.max(0, r.cf - t * TRUCK_CF);
                 const pct = Math.min(1, rem / TRUCK_CF);
@@ -758,12 +769,21 @@ export default function ScopeCalculator() {
                 );
               })}
             </svg>
-            <div className="text-[11.5px] text-faint">
-              26-ft box: ~{TRUCK_CF.toLocaleString()} usable cu ft{showBuild ? `, ~${TRUCK_LBS.toLocaleString()} lb payload. Dense loads hit the weight limit before the volume limit.` : "."}
-            </div>
-            {r.trucks > 1 && (
-              <div data-testid="scope-trucks-banner" className="mt-2 rounded bg-accent-wash border border-accent/40 px-3 py-2 text-[12.5px] font-bold text-accent-ink leading-snug">
-                {r.trucks} trucks required{showBuild && overWeight ? " — weight, not volume, is the binding limit" : ""}.
+            )}
+            {r.displayTrucks > 0 ? (
+              <>
+                <div className="text-[11.5px] text-faint">
+                  26-ft box: ~{TRUCK_CF.toLocaleString()} usable cu ft{showBuild ? `, ~${TRUCK_LBS.toLocaleString()} lb payload. Dense loads hit the weight limit before the volume limit.` : "."}
+                </div>
+                {r.displayTrucks > 1 && (
+                  <div data-testid="scope-trucks-banner" className="mt-2 rounded bg-accent-wash border border-accent/40 px-3 py-2 text-[12.5px] font-bold text-accent-ink leading-snug">
+                    {r.displayTrucks} trucks required{showBuild && overWeight ? " — weight, not volume, is the binding limit" : ""}.
+                  </div>
+                )}
+              </>
+            ) : (
+              <div data-testid="scope-labor-no-truck" className="mt-2 text-[11.5px] text-faint">
+                Labor only — no truck on this job, one trip fee applies.
               </div>
             )}
           </div>
@@ -901,7 +921,7 @@ export default function ScopeCalculator() {
             <>
             <Eyebrow className="mt-3.5">Price build</Eyebrow>
             <Stat label={`Labor · ${r.billMH.toFixed(1)} mh × ${moneyCents(P.manHourRate)}`} value={money(r.labor)} />
-            <Stat label={`Trip fee (${jobType === "labor" ? "labor only" : "truck"}) × ${r.trucks}`} value={money(r.travel)} />
+            <Stat label={`Trip fee (${jobType === "labor" ? "labor only" : "truck"}) × ${r.billableTrips}`} value={money(r.travel)} />
             {r.distBill > 0 && <Stat label={`Mileage — ${r.mileage.extra} mi beyond the first ${r.mileage.free} × ${moneyCents(P.mileageRatePerMile)}/mi`} value={money(r.distBill)} />}
             {r.accBill > 0 && <Stat label="Stairs / carries / stops" value={money(r.accBill)} />}
             {r.handlingBilled > 0 && <Stat label="Specialty handling" value={money(r.handlingBilled)} />}
@@ -972,13 +992,15 @@ export default function ScopeCalculator() {
               <Input data-testid="scope-label-input" placeholder="Label (customer / address)" value={label}
                 onChange={(e) => setLabel(e.target.value)} className="h-9 flex-1" />
               <Button data-testid="scope-save-btn" size="sm" className="gap-1.5 bg-accent hover:bg-accent-press min-h-[44px]"
-                disabled={saving || (r.cf === 0 && !pkg) || gate.blocked} onClick={saveScope}>
-                <Save className="w-3.5 h-3.5" /> {saving ? "Saving…" : isSurvey ? "Submit to owner" : refineFrom ? "Save as new version" : "Save scope"}
+                disabled={saving || (r.cf === 0 && !pkg && !hasBlockers) || gate.blocked} onClick={saveScope}>
+                <Save className="w-3.5 h-3.5" /> {saving ? "Saving…" : isSurvey ? "Submit to owner" : hasBlockers ? "Save for assessment" : refineFrom ? "Save as new version" : "Save scope"}
               </Button>
             </div>
             <p className="text-[11px] text-faint">
               {gate.blocked
                 ? "Out-of-state moves can't be saved — we refuse the job on the call."
+                : hasBlockers
+                ? "Saved as assessment-required — the scope detail is kept, no dollar amount is stored until someone measures it on site."
                 : isSurvey
                 ? "Submitting sends your walkthrough scope to the owner — they price it from there."
                 : "Saving snapshots today's pricing values with the quote. Changing Settings later never re-prices a saved scope."}

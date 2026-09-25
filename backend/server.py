@@ -322,7 +322,7 @@ DEFAULT_RATES = {
     "floorTruck": 650.0, "floorLabor": 375.0,
     "minHoursTruck": 3.0, "minHoursLabor": 2.0,
     # mileage (one-way; the first N miles ride free in the trip fee, then per-mile)
-    "mileageFreeMiles": 20.0, "mileageRatePerMile": 0.85,
+    "mileageFreeMiles": 20.0, "mileageRatePerMile": 6.00,
     # access & handling (flat, never volume-scaled)
     "stairFlightFee": 85.0, "longCarryFee": 100.0, "disassemblyFee": 100.0, "extraStopFee": 125.0,
     # specialty surcharges
@@ -338,6 +338,8 @@ DEFAULT_RATES = {
     "customSwapFactor": 0.60, "specialtyHandlingCapPct": 30.0,
     # rules
     "hardFloorBedrooms": 3.0, "hardFloorHours": 6.0,
+    # capacity & scheduling (crew counts / hours — never dollar figures, never cushion-folded)
+    "maxCrewPerDay": 12.0, "targetHoursOnSite": 8.0, "maxHoursOnSite": 10.0,
     # package defaults (crew / hours-on-site per home size)
     "pkgStudioCrew": 2.0, "pkgStudioHours": 3.5,
     "pkg2brCrew": 3.0, "pkg2brHours": 5.5,
