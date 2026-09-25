@@ -7,7 +7,7 @@ export const DEFAULT_RATES = {
   tripFeeTruck: 125, tripFeeLabor: 75,
   floorTruck: 650, floorLabor: 375,
   minHoursTruck: 3, minHoursLabor: 2,
-  mileageFreeMiles: 20, mileageRatePerMile: 6.0,
+  mileageFreeMiles: 20, mileageRatePerMile: 8.0,
   stairFlightFee: 85, longCarryFee: 100, disassemblyFee: 100, extraStopFee: 125,
   surchargeUprightPiano: 500, surchargeGrandPiano: 800, surchargePoolTable: 600,
   surchargeSafeT1: 200, surchargeSafeT2: 500, surchargeSafeT3: 800,

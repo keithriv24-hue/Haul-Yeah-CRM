@@ -211,7 +211,7 @@ export const roundUpTo = (n, inc) => Math.ceil(n / Math.max(1, inc) - 1e-9) * Ma
 export function mileageInfo(miles, P) {
   const m = Math.max(0, num(miles));
   const free = num(P?.mileageFreeMiles, 20);
-  const rate = num(P?.mileageRatePerMile);
+  const rate = num(P?.mileageRatePerMile, 8.0);
   const extra = Math.max(0, Math.round((m - free) * 10) / 10);
   const fee = Math.round(extra * rate * 100) / 100;
   return { miles: m, free, rate, extra, fee,

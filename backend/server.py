@@ -322,7 +322,7 @@ DEFAULT_RATES = {
     "floorTruck": 650.0, "floorLabor": 375.0,
     "minHoursTruck": 3.0, "minHoursLabor": 2.0,
     # mileage (one-way; the first N miles ride free in the trip fee, then per-mile)
-    "mileageFreeMiles": 20.0, "mileageRatePerMile": 6.00,
+    "mileageFreeMiles": 20.0, "mileageRatePerMile": 8.00,
     # access & handling (flat, never volume-scaled)
     "stairFlightFee": 85.0, "longCarryFee": 100.0, "disassemblyFee": 100.0, "extraStopFee": 125.0,
     # specialty surcharges
