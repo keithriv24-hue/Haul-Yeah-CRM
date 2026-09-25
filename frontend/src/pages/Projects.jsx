@@ -16,8 +16,9 @@ import { fmtDate, fmtMoney, calendarTemplate, smsLink, reviewSmsBody, mapsLink }
 import { useAuth } from "@/components/AuthGate";
 import { listUsersApi, listTrucksApi, createAssignmentApi, apiErrorMessage } from "@/lib/api";
 import JobsCalendar from "@/components/JobsCalendar";
+import { ComplianceSection } from "@/components/ComplianceSection";
 
-const NumField = ({ record, fieldId, label, testId }) => {
+const NumField = ({ record, fieldId, label, testId, disabled = false }) => {
   const { updateRecord } = useApp();
   const [val, setVal] = useState(f(record, fieldId) ?? "");
   useEffect(() => setVal(f(record, fieldId) ?? ""), [record, fieldId]);
@@ -29,7 +30,7 @@ const NumField = ({ record, fieldId, label, testId }) => {
   return (
     <label className="text-xs text-faint flex flex-col gap-1">
       {label}
-      <Input data-testid={testId} type="number" className="h-8 w-24" value={val} onChange={(e) => setVal(e.target.value)} onBlur={save} />
+      <Input data-testid={testId} type="number" className="h-8 w-24" value={val} disabled={disabled} onChange={(e) => setVal(e.target.value)} onBlur={save} />
     </label>
   );
 };
@@ -38,6 +39,8 @@ const ProjectCard = ({ project }) => {
   const { updateRecord, deleteRecord, records, business } = useApp();
   const { role } = useAuth();
   const isOwner = (role || "owner") === "owner";
+  const canEditOps = ["owner", "employee"].includes(role || "owner");
+  const canEditCompliance = ["owner", "sales"].includes(role || "owner");
   const [open, setOpen] = useState(false);
   const status = f(project, PF.status) || "Pending Deposit";
   const crew = Number(f(project, PF.crewSize)) || 0;
@@ -77,7 +80,7 @@ const ProjectCard = ({ project }) => {
               </div>
             </div>
           )}
-          <Select value={status} onValueChange={(v) => updateRecord("projects", project.id, { [PF.status]: v }).catch(() => {})}>
+          <Select value={status} onValueChange={(v) => updateRecord("projects", project.id, { [PF.status]: v }).catch(() => {})} disabled={!canEditOps}>
             <SelectTrigger data-testid="project-status-select" className={`w-[150px] h-8 text-xs font-semibold border ${STATUS_PILL[status] || ""}`}>
               <SelectValue />
             </SelectTrigger>
@@ -115,17 +118,18 @@ const ProjectCard = ({ project }) => {
       </div>
 
       {open && (
+        <>
         <div className="mt-4 pt-4 border-t border-border grid md:grid-cols-2 gap-4">
           <div className="space-y-3">
             <div className="flex flex-wrap gap-3">
-              <NumField record={project} fieldId={PF.crewSize} label="Crew size" testId="project-crew-input" />
-              <NumField record={project} fieldId={PF.estHours} label="Est. hours" testId="project-hours-input" />
+              <NumField record={project} fieldId={PF.crewSize} label="Crew size" testId="project-crew-input" disabled={!canEditOps} />
+              <NumField record={project} fieldId={PF.estHours} label="Est. hours" testId="project-hours-input" disabled={!canEditOps} />
               {isOwner && <NumField record={project} fieldId={PF.quote} label="Quote ($)" testId="project-quote-input" />}
               {isOwner && <NumField record={project} fieldId={PF.finalRevenue} label="Final revenue ($)" testId="project-revenue-input" />}
             </div>
             <label className="text-xs text-faint flex flex-col gap-1 w-40">
               Truck
-              <Select value={f(project, PF.truck) || ""} onValueChange={(v) => updateRecord("projects", project.id, { [PF.truck]: v }).catch(() => {})}>
+              <Select value={f(project, PF.truck) || ""} onValueChange={(v) => updateRecord("projects", project.id, { [PF.truck]: v }).catch(() => {})} disabled={!canEditOps}>
                 <SelectTrigger data-testid="project-truck-select" className="h-8 text-xs"><SelectValue placeholder="Pick truck" /></SelectTrigger>
                 <SelectContent>{TRUCKS.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
               </Select>
@@ -198,6 +202,8 @@ const ProjectCard = ({ project }) => {
             </div>
           )}
         </div>
+        <ComplianceSection projectId={project.id} canEdit={canEditCompliance} canOverride={isOwner} />
+        </>
       )}
     </div>
   );

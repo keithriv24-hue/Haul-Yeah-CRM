@@ -142,6 +142,12 @@ export const setTaskAudienceApi = (id, audience, title = "") => axios.post(`${AP
 export const teamNotificationsApi = () => axios.get(`${API}/team-notifications`).then((r) => r.data.items);
 export const saveQuoteBreakdownApi = (leadId, breakdown) => axios.put(`${API}/quotes/${leadId}`, { breakdown }).then((r) => r.data);
 export const getQuoteBreakdownApi = (leadId) => axios.get(`${API}/quotes/${leadId}`).then((r) => r.data);
+
+// Quality prompt 2 — compliance gates
+export const getJobComplianceApi = (id) => axios.get(`${API}/jobs/${id}/compliance`).then((r) => r.data);
+export const saveJobComplianceApi = (id, inputs) => axios.put(`${API}/jobs/${id}/compliance`, { inputs }).then((r) => r.data);
+export const overrideJobComplianceApi = (id, reason, confirm) =>
+  axios.post(`${API}/jobs/${id}/compliance/override`, { reason, confirm }).then((r) => r.data);
 export const trackApi = (token) => axios.get(`${API}/track/${token}`).then((r) => r.data);
 export const portalDetailsApi = (token, payload) => axios.post(`${API}/track/${token}/details`, payload).then((r) => r.data);
 export const portalUploadApi = (token, file, kind) => {

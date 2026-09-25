@@ -55,6 +55,7 @@ function RoleRoutes() {
           <Route path="/script" element={<Script />} />
           <Route path="/commissions" element={<Commissions />} />
           <Route path="/notifications" element={<Notifications />} />
+          <Route path="/projects" element={<Projects />} />
           <Route path="/tasks" element={<Tasks />} />
           <Route path="/blog" element={<Blog />} />
           <Route path="/team" element={<Team />} />
@@ -129,6 +130,7 @@ function RoleRoutes() {
           <Route path="/quality/problems" element={<QualityProblems />} />
           <Route path="/quality/documents" element={<QualityDocuments />} />
           <Route path="/quality/quote-accuracy" element={<QualityQuoteAccuracy />} />
+          <Route path="/projects" element={<Projects />} />
           <Route path="/tasks" element={<Tasks />} />
           <Route path="/blog" element={<Blog />} />
           <Route path="*" element={<Navigate to="/quality/audits" replace />} />

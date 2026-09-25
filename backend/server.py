@@ -93,6 +93,23 @@ PROJECT_TO_FIELD = "fldnFH0mMdyQ84hTV"
 PROJECT_TRUCK_FIELD = "fldhQpzJrqDE6tPAg"
 PROJECT_QUOTED_BY_FIELD = "fldAew7uXk5JvBqBw"   # rule 7: who produced the quote (existing on projects)
 PROJECT_SURVEYOR_FIELD = "fldFJUFcOLLRWvc60"    # rule 7: who performed the survey (existing on projects)
+# ------- Quality prompt 2: compliance gate inputs on Projects (Airtable field IDs; dateTime = America/New_York)
+PROJECT_MOVE_CLASS_F = "fldbtB0QewQLHQjLw"        # select: Household Goods | Office Goods Only | Other Commercial
+PROJECT_SURVEY_TYPE_F = "fld1l5Bbd8VRpX6pk"      # select: On site | Video | None
+PROJECT_SURVEY_DATE_F = "fldsifpgYiCTcJAb3"      # date
+PROJECT_INVENTORY_COMPLETE_F = "fldRqpCyDYQrWJiFE"  # checkbox
+PROJECT_BROCHURE_SENT_F = "fldatfvXCQJpcKsU0"    # dateTime
+PROJECT_ESTIMATE_DELIVERED_F = "fld1kTfUSGYDLB7HM"  # dateTime
+PROJECT_OFS_SIGNED_F = "fldvmMp7NBuw5Jb4M"       # dateTime
+PROJECT_SHORT_NOTICE_PROOF_F = "fldiseTBH76U5bXbq"  # long text
+PROJECT_PROTECTION_OPTION_F = "fldBxR8F0ju95dWjV"   # select: Option 1 | Option 2 | Option 3
+PROJECT_DECLARED_VALUE_F = "fldCjcgmTBaNJGP6a"   # currency
+PROJECT_DEDUCTIBLE_F = "fldL9XhtIwfiqLdjs"       # currency
+PROJECT_OWNER_OP_USED_F = "fldRpTPIT3VjEvaNv"    # checkbox
+PROJECT_OWNER_OP_NOTICE_F = "fldH679ulF2rwlsSe"  # dateTime
+PROJECT_LABOR_EQUIP_F = "fldHghhcEkZSNR7Qz"      # select: None | Agreed in writing | Not agreed
+PROJECT_ONE_WAY_MILES_F = "fld1ADOejPKkHNfbN"    # number
+PROJECT_LONG_HAUL_ACK_F = "fldwqdmCOvlNeo1u4"    # checkbox (OWNER-only write)
 PROJECT_COMPLETED_STATUS = "Completed"          # exact singleSelect value; NEVER "Complete" (that's TASKS)
 BLOCKED_FIELDS = {
     ("employee", "projects"): {PROJECT_QUOTE_FIELD, PROJECT_DEPOSIT_FIELD, PROJECT_REVENUE_FIELD},
@@ -251,6 +268,7 @@ async def require_crew(request: Request) -> Dict[str, Any]:
 async def check_table_access(role: str, table_key: str):
     allowed = set(ROLE_TABLES.get(role, set()))
     if role == "sales":
+        allowed.add("projects")  # read of the job board (compliance panel); writes still blocked below
         doc = await mongo_db.settings.find_one({"_id": "sales_access"}) or {}
         if doc.get("booking_calendar"):
             allowed.add("projects")
@@ -429,6 +447,8 @@ def _user_public(user: Dict[str, Any]) -> Dict[str, Any]:
         "roles": user.get("roles") or ([user["role"]] if user.get("role") else []),
         "active": user.get("active", True), "must_change_password": bool(user.get("must_change_password")),
         "gps_consent": bool(user.get("gps_consent_at")), "created_at": user.get("created_at"),
+        "surveyor_attested": bool(user.get("surveyor_attested")),
+        "crew_docs_expiry": user.get("crew_docs_expiry"),
     }
 
 
@@ -2752,6 +2772,8 @@ async def create_record(table_key: str, request: Request, payload: RecordPayload
     await check_table_access(role, table_key)
     if table_key in ("tasks", "blog") and role != "owner":
         raise HTTPException(status_code=403, detail="Only the owner can add these.")
+    if table_key == "projects" and role in ("sales", "quality"):
+        raise HTTPException(status_code=403, detail="Create jobs from a booked lead — your role can't add projects directly.")
     body = {"records": [{"fields": clean_write_fields(payload.fields, role, table_key)}], "typecast": True}
     data = await airtable_request("POST", table_id, json_body=body)
     rec = filter_record(data["records"][0], role, table_key)
@@ -2768,8 +2790,10 @@ async def create_record(table_key: str, request: Request, payload: RecordPayload
 async def update_record(table_key: str, record_id: str, request: Request, payload: RecordPayload = Body(...), role: str = Depends(require_auth)):
     table_id = resolve_table(table_key)
     await check_table_access(role, table_key)
-    if table_key == "projects" and role == "quality":
-        raise HTTPException(status_code=403, detail="Quality can view jobs but not edit them.")
+    if table_key == "projects" and role in ("sales", "quality"):
+        msg = ("Quality can view jobs but not edit them." if role == "quality"
+               else "Update job details from the Compliance panel.")
+        raise HTTPException(status_code=403, detail=msg)
     if table_key == "blog" and role != "owner":
         raise HTTPException(status_code=403, detail="Only the owner can edit blog posts.")
     if table_key == "tasks" and role != "owner":
@@ -3003,6 +3027,7 @@ async def quality_audit_queue(request: Request):
             audited.add(jid)
     today = datetime.now(ZoneInfo("America/New_York")).date()
     rows = []
+    queued = []
     for pr in projects:
         f = pr.get("fields") or {}
         if f.get(PROJECT_STATUS_FIELD) != PROJECT_COMPLETED_STATUS or pr["id"] in audited:
@@ -3019,6 +3044,7 @@ async def quality_audit_queue(request: Request):
                 past_due = today > due
             except ValueError:
                 pass
+        queued.append(pr)
         rows.append({
             "id": pr["id"],
             "name": f.get(PROJECT_NAME_FIELD) or "Untitled job",
@@ -3028,6 +3054,16 @@ async def quality_audit_queue(request: Request):
             "past_due": past_due,
             "quoted_total": _num(f.get(PROJECT_QUOTE_FIELD)),
         })
+    # read-only gate state per queued job (rule 5: 7-day audit records "gates green or override")
+    if queued:
+        ctx = await _compliance_context(queued)
+        ov = {d["_id"]: d.get("override") for d in
+              await mongo_db.job_compliance.find({"_id": {"$in": [pr["id"] for pr in queued]}}).to_list(500)}
+        by_id = {pr["id"]: pr for pr in queued}
+        for row in rows:
+            pr = by_id.get(row["id"])
+            row["gate_summary"] = _gate_summary(evaluate_gates(pr, ctx)) if pr else None
+            row["overridden"] = bool(ov.get(row["id"]))
     rows.sort(key=lambda r: (not r["past_due"], r["audit_due"] or "9999-99-99"))
     return {"rows": rows}
 
@@ -3197,6 +3233,387 @@ async def list_quote_feedback(request: Request):
     docs = await mongo_db.quality_feedback.find(query, {"_id": 0}).to_list(1000)
     docs.sort(key=lambda d: d.get("created_at") or "", reverse=True)
     return {"feedback": docs}
+
+
+# ================= Compliance gates (Quality prompt 2 of 3) =================
+# Gates never block booking. A failing gate books the job anyway, raises a
+# nonconformance, and notifies the owner. Override is OWNER-ONLY (server-enforced).
+
+_ET = ZoneInfo("America/New_York")
+# severity labels match nonconformances select options; rank = seriousness (lower = worse)
+GATE_SEVERITY_RANK = {"Liability risk": 0, "Regulatory": 1, "Major": 2, "Minor": 3}
+GATE_DEFS = [
+    ("brochure_delivered", "Brochure delivered", "Liability risk"),
+    ("ofs_24h", "Order for Service signed 24h before", "Liability risk"),
+    ("owner_operator", "Owner-operator notice", "Liability risk"),
+    ("move_classification", "Move classification", "Regulatory"),
+    ("survey_performed", "Survey performed", "Regulatory"),
+    ("surveyor_eligible", "Surveyor eligible", "Regulatory"),
+    ("inventory_complete", "Inventory complete", "Regulatory"),
+    ("estimate_24h", "Written estimate 24h before", "Regulatory"),
+    ("protection_selected", "Protection option selected", "Regulatory"),
+    ("labor_equip_change", "Labor/equipment change agreed", "Regulatory"),
+    ("company_credentials", "Company credentials current", "Regulatory"),
+    ("crew_ready", "Crew ready", "Major"),
+    ("deposit_cleared", "Deposit cleared", "Minor"),
+    ("long_haul_review", "Long-haul review", "Minor"),
+]
+GATE_LABELS = {k: label for k, label, _ in GATE_DEFS}
+GATE_SEVERITY = {k: sev for k, _, sev in GATE_DEFS}
+COMPLIANCE_INPUT_FIELDS = {
+    "move_classification": PROJECT_MOVE_CLASS_F,
+    "survey_type": PROJECT_SURVEY_TYPE_F,
+    "survey_date": PROJECT_SURVEY_DATE_F,
+    "inventory_complete": PROJECT_INVENTORY_COMPLETE_F,
+    "brochure_sent_at": PROJECT_BROCHURE_SENT_F,
+    "estimate_delivered_at": PROJECT_ESTIMATE_DELIVERED_F,
+    "ofs_signed_at": PROJECT_OFS_SIGNED_F,
+    "short_notice_proof": PROJECT_SHORT_NOTICE_PROOF_F,
+    "protection_option": PROJECT_PROTECTION_OPTION_F,
+    "declared_value": PROJECT_DECLARED_VALUE_F,
+    "deductible": PROJECT_DEDUCTIBLE_F,
+    "owner_operator_used": PROJECT_OWNER_OP_USED_F,
+    "owner_operator_notice_at": PROJECT_OWNER_OP_NOTICE_F,
+    "labor_equipment_change_agreed": PROJECT_LABOR_EQUIP_F,
+    "one_way_miles": PROJECT_ONE_WAY_MILES_F,
+    "long_haul_owner_ack": PROJECT_LONG_HAUL_ACK_F,
+}
+OWNER_ONLY_INPUTS = {"long_haul_owner_ack"}  # rule: only the owner acknowledges a long-haul move
+CRED_KEYWORDS = {"License": ["license"], "Workers comp": ["workers"], "Cargo insurance": ["cargo"], "Auto insurance": ["auto"]}
+
+
+def _c_dt(v: Any) -> Optional[datetime]:
+    if not v:
+        return None
+    try:
+        d = datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+        if d.tzinfo is None:
+            d = d.replace(tzinfo=timezone.utc)
+        return d.astimezone(_ET)
+    except (ValueError, TypeError):
+        return None
+
+
+def _c_date(v: Any):
+    if not v:
+        return None
+    try:
+        return datetime.fromisoformat(str(v)[:10]).date()
+    except (ValueError, TypeError):
+        return None
+
+
+def _credentials_status(quality_docs: Optional[List[Dict[str, Any]]], today) -> Dict[str, Any]:
+    if quality_docs is None:
+        return {"available": False, "missing": list(CRED_KEYWORDS.keys())}
+    missing = []
+    for label, keywords in CRED_KEYWORDS.items():
+        ok = False
+        for doc in quality_docs:
+            f = doc.get("fields") or {}
+            name = str(f.get(QD_NAME_F) or "").lower()
+            if not any(kw in name for kw in keywords):
+                continue
+            if (f.get(QD_STATUS_F) or "") != "Current":
+                continue
+            review = _c_date(f.get(QD_REVIEW_F))
+            if review and review < today:
+                continue
+            ok = True
+            break
+        if not ok:
+            missing.append(label)
+    return {"available": True, "missing": missing}
+
+
+async def _compliance_context(records: List[Dict[str, Any]]) -> Dict[str, Any]:
+    rates = await get_rates_values()
+    users = await mongo_db.users.find({}).to_list(500)
+    users_by_id = {u["_id"]: u for u in users}
+    try:
+        quality_docs = await _airtable_all(TABLES["quality_docs"])
+    except HTTPException:
+        quality_docs = None
+    jobs = await mongo_db.jobs.find({}).to_list(2000)
+    jobs_by_recid, jobs_by_lead = {}, {}
+    for j in jobs:
+        if j.get("project_record_id"):
+            jobs_by_recid[j["project_record_id"]] = j
+        if j.get("lead_id"):
+            jobs_by_lead[j["lead_id"]] = j
+    assignments = await mongo_db.assignments.find({}).to_list(3000)
+    assignments_by_date: Dict[str, List[Dict[str, Any]]] = {}
+    for a in assignments:
+        assignments_by_date.setdefault((a.get("job_date") or "")[:10], []).append(a)
+    today = datetime.now(_ET).date()
+    return {
+        "rates": rates, "users_by_id": users_by_id,
+        "jobs_by_recid": jobs_by_recid, "jobs_by_lead": jobs_by_lead,
+        "assignments_by_date": assignments_by_date, "today": today,
+        "credentials": _credentials_status(quality_docs, today),
+    }
+
+
+def _project_crew(pr: Dict[str, Any], ctx: Dict[str, Any]):
+    """Best-effort link project -> the day's assignment(s) -> crew user ids + the day's total crew."""
+    fields = pr.get("fields") or {}
+    job = ctx["jobs_by_recid"].get(pr["id"])
+    if not job:
+        for lid in (fields.get(PROJECT_LEAD_LINK_FIELD) or []):
+            if lid in ctx["jobs_by_lead"]:
+                job = ctx["jobs_by_lead"][lid]
+                break
+    day = (job.get("job_date") if job else None) or (str(fields.get(PROJECT_DATE_FIELD) or "")[:10] or None)
+    if not day:
+        return [], 0
+    same_day = ctx["assignments_by_date"].get(day, [])
+    name = str(fields.get(PROJECT_NAME_FIELD) or "").lower()
+    matched = [a for a in same_day if a.get("job_name") and str(a["job_name"]).lower()[:12] in name] if name else []
+    chosen = matched or same_day
+    crew_ids = [c.get("user_id") for a in chosen for c in (a.get("crew") or []) if c.get("user_id")]
+    day_total = sum(len(a.get("crew") or []) for a in same_day)
+    return crew_ids, day_total
+
+
+def evaluate_gates(pr: Dict[str, Any], ctx: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """The 14 compliance gates for one project. Returns [{key,label,severity,passed,reason,exempt}]."""
+    f = pr.get("fields") or {}
+    today = ctx["today"]
+    move_date = _c_date(f.get(PROJECT_DATE_FIELD))
+    move_midnight = datetime.combine(move_date, datetime.min.time(), tzinfo=_ET) if move_date else None
+    threshold_24h = (move_midnight - timedelta(hours=24)) if move_midnight else None
+    mc = f.get(PROJECT_MOVE_CLASS_F)
+    office_only = mc == "Office Goods Only"
+    out: List[Dict[str, Any]] = []
+
+    def add(key, passed, reason="", exempt=False):
+        out.append({"key": key, "label": GATE_LABELS[key], "severity": GATE_SEVERITY[key],
+                    "passed": bool(passed), "reason": reason, "exempt": exempt})
+
+    # Regulatory
+    add("move_classification", mc in ("Household Goods", "Office Goods Only"),
+        "" if mc in ("Household Goods", "Office Goods Only") else "Set the move classification to Household Goods or Office Goods Only on the job.")
+    survey_type = f.get(PROJECT_SURVEY_TYPE_F)
+    add("survey_performed", survey_type in ("On site", "Video"),
+        "" if survey_type in ("On site", "Video") else "Record an on-site or video survey — a survey type of 'None' won't pass.")
+    # surveyor eligibility
+    surv_raw = f.get(PROJECT_SURVEYOR_FIELD)
+    surv_id = (surv_raw[0] if isinstance(surv_raw, list) and surv_raw else surv_raw) or ""
+    surv = ctx["users_by_id"].get(str(surv_id).strip())
+    if not surv:
+        add("surveyor_eligible", False, "No eligible surveyor on the job — assign someone who's attested and has final-calc access.")
+    else:
+        final_access = surv.get("role") == "owner" or surv.get("calculator_access") == "final"
+        attested = bool(surv.get("surveyor_attested"))
+        active = surv.get("active", True)
+        reasons = []
+        if not active:
+            reasons.append("account inactive")
+        if not final_access:
+            reasons.append("no final-calc access")
+        if not attested:
+            reasons.append("not attested")
+        add("surveyor_eligible", not reasons,
+            ("Surveyor can't sign off (" + ", ".join(reasons) + "). Use an attested surveyor with final-calc access.") if reasons else "")
+    add("inventory_complete", bool(f.get(PROJECT_INVENTORY_COMPLETE_F)),
+        "" if f.get(PROJECT_INVENTORY_COMPLETE_F) else "Finish the inventory and check 'Inventory complete'.")
+    # Liability risk: brochure
+    brochure = _c_dt(f.get(PROJECT_BROCHURE_SENT_F))
+    b_ok = bool(brochure) and move_date is not None and brochure.date() <= move_date
+    add("brochure_delivered", b_ok,
+        "" if b_ok else ("Send the brochure and record the date. Without it the $1.00/lb cap may not hold." if not brochure
+                         else "The brochure went out after the move date — it must be sent before the move. Without it the $1.00/lb cap may not hold."))
+    # estimate 24h (office-exempt)
+    if office_only:
+        add("estimate_24h", True, "Exempt — office goods only.", exempt=True)
+    else:
+        est = _c_dt(f.get(PROJECT_ESTIMATE_DELIVERED_F))
+        e_ok = bool(est) and threshold_24h is not None and est <= threshold_24h
+        add("estimate_24h", e_ok, "" if e_ok else "Deliver the written estimate at least 24 hours before the move.")
+    # ofs 24h (office-exempt), Liability risk
+    if office_only:
+        add("ofs_24h", True, "Exempt — office goods only.", exempt=True)
+    else:
+        ofs = _c_dt(f.get(PROJECT_OFS_SIGNED_F))
+        short_notice = str(f.get(PROJECT_SHORT_NOTICE_PROOF_F) or "").strip()
+        o_ok = (bool(ofs) and threshold_24h is not None and ofs <= threshold_24h) or bool(short_notice)
+        add("ofs_24h", o_ok, "" if o_ok else "Needs a signature 24h before the move, or written proof the customer booked inside 24 hours.")
+    # protection
+    prot = f.get(PROJECT_PROTECTION_OPTION_F)
+    if not prot:
+        add("protection_selected", False, "Pick Option 1, 2 or 3 on the Order for Service. Option 2 also needs declared value and deductible.")
+    elif prot == "Option 2":
+        both = f.get(PROJECT_DECLARED_VALUE_F) not in (None, "") and f.get(PROJECT_DEDUCTIBLE_F) not in (None, "")
+        add("protection_selected", both, "" if both else "Option 2 needs both a declared value and a deductible on the Order for Service.")
+    else:
+        add("protection_selected", True)
+    # owner-operator, Liability risk
+    oo_used = bool(f.get(PROJECT_OWNER_OP_USED_F))
+    oo_notice = _c_dt(f.get(PROJECT_OWNER_OP_NOTICE_F))
+    oo_ok = (not oo_used) or (bool(oo_notice) and move_date is not None and oo_notice.date() <= move_date)
+    add("owner_operator", oo_ok, "" if oo_ok else "Send the written consumer notice before the move.")
+    # labor/equipment change
+    labor = f.get(PROJECT_LABOR_EQUIP_F)
+    add("labor_equip_change", labor != "Not agreed",
+        "" if labor != "Not agreed" else "A labor/equipment change wasn't agreed in writing — get it in writing or set the field to None.")
+    # company credentials
+    creds = ctx["credentials"]
+    if not creds["available"]:
+        add("company_credentials", False, "Document Register unavailable — can't verify credentials. Add the Airtable key, then refresh.")
+    else:
+        add("company_credentials", not creds["missing"],
+            "" if not creds["missing"] else "Not current: " + ", ".join(creds["missing"]) + ". Renew them in the Document Register.")
+    # crew ready, Major
+    crew_ids, day_total = _project_crew(pr, ctx)
+    cap = int(ctx["rates"].get("maxCrewPerDay") or 12)
+    if not crew_ids:
+        add("crew_ready", False, "No crew assigned yet — put a crew on the job.")
+    else:
+        bad = []
+        for uid in crew_ids:
+            u = ctx["users_by_id"].get(uid)
+            if not u or not u.get("active", True):
+                bad.append("a crew member's account is off")
+                continue
+            exp = _c_date(u.get("crew_docs_expiry"))
+            if not exp or exp <= today:
+                bad.append(f"{u.get('name', 'a crew member')}'s documents are expired or missing")
+        if day_total > cap:
+            bad.append(f"the day is overbooked ({day_total} vs cap {cap})")
+        add("crew_ready", not bad,
+            ("; ".join(sorted(set(bad))) + " — fix before the move.") if bad else "")
+    # deposit, Minor
+    quote = _num(f.get(PROJECT_QUOTE_FIELD))
+    deposit = _num(f.get(PROJECT_DEPOSIT_FIELD))
+    if not quote:
+        add("deposit_cleared", False, "No quote on file to compare the deposit against — add the quote first.")
+    else:
+        d_ok = (deposit or 0) >= 0.25 * quote
+        add("deposit_cleared", d_ok, "" if d_ok else "Deposit is under 25% of the quote — collect the rest before the move.")
+    # long-haul, Minor
+    miles = _num(f.get(PROJECT_ONE_WAY_MILES_F)) or 0
+    lh_ok = miles < 60 or bool(f.get(PROJECT_LONG_HAUL_ACK_F))
+    add("long_haul_review", lh_ok, "" if lh_ok else "This is a 60+ mile move. The owner needs to acknowledge it (owner-only checkbox).")
+
+    out.sort(key=lambda g: (GATE_SEVERITY_RANK.get(g["severity"], 9), g["passed"]))
+    return out
+
+
+def _gate_summary(gates: List[Dict[str, Any]]) -> Dict[str, Any]:
+    failing = [g for g in gates if not g["passed"]]
+    worst = min((GATE_SEVERITY_RANK.get(g["severity"], 9) for g in failing), default=None)
+    worst_sev = next((s for s, r in GATE_SEVERITY_RANK.items() if r == worst), None) if worst is not None else None
+    return {"total": len(gates), "passed": len(gates) - len(failing), "failing": len(failing),
+            "all_green": not failing, "worst_severity": worst_sev,
+            "failing_keys": [g["key"] for g in failing]}
+
+
+def _compliance_inputs(f: Dict[str, Any]) -> Dict[str, Any]:
+    return {name: f.get(fid) for name, fid in COMPLIANCE_INPUT_FIELDS.items()}
+
+
+async def _fetch_project(project_id: str) -> Dict[str, Any]:
+    return await airtable_request("GET", TABLES["projects"], path=f"/{project_id}",
+                                  params={"returnFieldsByFieldId": "true"})
+
+
+async def _compliance_result(project_id: str) -> Dict[str, Any]:
+    record = await _fetch_project(project_id)
+    ctx = await _compliance_context([record])
+    gates = evaluate_gates(record, ctx)
+    summary = _gate_summary(gates)
+    await mongo_db.job_compliance.update_one(
+        {"_id": project_id},
+        {"$set": {"gate_results": gates, "summary": summary, "evaluated_at": now_iso()}}, upsert=True)
+    comp = await mongo_db.job_compliance.find_one({"_id": project_id}) or {}
+    return {"project_id": project_id, "name": (record.get("fields") or {}).get(PROJECT_NAME_FIELD),
+            "inputs": _compliance_inputs(record.get("fields") or {}), "gates": gates,
+            "summary": summary, "override": comp.get("override")}
+
+
+@api_router.get("/jobs/{project_id}/compliance")
+async def get_job_compliance(project_id: str, request: Request):
+    p = await current_principal(request)
+    if p["role"] not in ("owner", "sales", "quality"):
+        raise HTTPException(status_code=403, detail="Your role can't see compliance.")
+    result = await _compliance_result(project_id)
+    result["can_edit"] = p["role"] in ("owner", "sales")
+    result["can_override"] = p["role"] == "owner"
+    return result
+
+
+class CompliancePayload(BaseModel):
+    inputs: Dict[str, Any]
+
+
+@api_router.put("/jobs/{project_id}/compliance")
+async def save_job_compliance(project_id: str, payload: CompliancePayload, request: Request):
+    p = await current_principal(request)
+    if p["role"] not in ("owner", "sales"):
+        raise HTTPException(status_code=403, detail="Only the owner and sales can edit gate inputs.")
+    unknown = [k for k in payload.inputs if k not in COMPLIANCE_INPUT_FIELDS]
+    if unknown:
+        raise HTTPException(status_code=422, detail=f"Unknown field(s): {', '.join(unknown)}")
+    if p["role"] != "owner" and any(k in OWNER_ONLY_INPUTS for k in payload.inputs):
+        raise HTTPException(status_code=403, detail="Only the owner can acknowledge a long-haul move.")
+    fields = {COMPLIANCE_INPUT_FIELDS[k]: v for k, v in payload.inputs.items()}
+    await airtable_request("PATCH", TABLES["projects"],
+                           json_body={"records": [{"id": project_id, "fields": fields}], "typecast": True})
+    result = await _compliance_result(project_id)
+    result["can_edit"] = True
+    result["can_override"] = p["role"] == "owner"
+    return result
+
+
+class OverridePayload(BaseModel):
+    reason: str
+    confirm: str
+
+
+@api_router.post("/jobs/{project_id}/compliance/override")
+async def override_job_compliance(project_id: str, payload: OverridePayload, p: Dict[str, Any] = Depends(require_owner)):
+    reason = (payload.reason or "").strip()
+    if len(reason) < 20:
+        raise HTTPException(status_code=422, detail="Give a written reason of at least 20 characters.")
+    if payload.confirm != "OVERRIDE":
+        raise HTTPException(status_code=422, detail="Type the word OVERRIDE to confirm.")
+    record = await _fetch_project(project_id)
+    ctx = await _compliance_context([record])
+    gates = evaluate_gates(record, ctx)
+    failing = [g for g in gates if not g["passed"]]
+    if not failing:
+        raise HTTPException(status_code=422, detail="Nothing to override — every gate passes.")
+    worst_rank = min(GATE_SEVERITY_RANK.get(g["severity"], 9) for g in failing)
+    worst_sev = next(s for s, r in GATE_SEVERITY_RANK.items() if r == worst_rank)
+    what = (f"Compliance gate override by {p.get('name')}.\nReason: {reason}\n"
+            f"Failing gates: {', '.join(g['label'] for g in failing)}")
+    nc_fields = {
+        NC_TYPE_F: "Gate override", NC_SEVERITY_F: worst_sev, NC_STATUS_F: "Open",
+        NC_RAISED_BY_F: p.get("name") or "Owner", NC_RAISED_DATE_F: _et_today(),
+        NC_WHAT_F: what, NC_LINKED_JOB_F: [project_id],
+    }
+    try:
+        nc = await airtable_request("POST", TABLES["nonconformances"],
+                                    json_body={"records": [{"fields": nc_fields}], "typecast": True})
+        nc_id = nc["records"][0]["id"]
+    except HTTPException:
+        raise HTTPException(status_code=502,
+                            detail="Override could not be recorded — the nonconformance write failed. Nothing was saved.")
+    override = {"reason": reason, "by": p.get("name"), "by_id": p.get("user_id"),
+                "at": now_iso(), "nc_id": nc_id, "worst_severity": worst_sev}
+    summary = _gate_summary(gates)
+    await mongo_db.job_compliance.update_one(
+        {"_id": project_id},
+        {"$set": {"gate_results": gates, "summary": summary, "evaluated_at": now_iso(), "override": override}},
+        upsert=True)
+    await notify(None, "owner", "Compliance override recorded",
+                 f"{p.get('name')} overrode {len(failing)} failing gate(s) on a job. NC opened ({worst_sev}).",
+                 "gate_override", {"project_id": project_id, "nc_id": nc_id})
+    return {"project_id": project_id, "name": (record.get("fields") or {}).get(PROJECT_NAME_FIELD),
+            "inputs": _compliance_inputs(record.get("fields") or {}), "gates": gates,
+            "summary": summary, "override": override, "can_edit": True, "can_override": True}
+
+
 
 
 class TaskAudiencePayload(BaseModel):
@@ -3646,6 +4063,8 @@ class UserPatchPayload(BaseModel):
     roles: Optional[List[str]] = None
     active: Optional[bool] = None
     password: Optional[str] = None
+    surveyor_attested: Optional[bool] = None
+    crew_docs_expiry: Optional[str] = None
 
 
 @api_router.get("/users")
@@ -3723,6 +4142,12 @@ async def patch_user(user_id: str, payload: UserPatchPayload, p: Dict[str, Any] 
         updates["password_hash"] = hash_password(payload.password)
         updates["must_change_password"] = True
         changes.append("password reset")
+    if payload.surveyor_attested is not None:
+        updates["surveyor_attested"] = bool(payload.surveyor_attested)
+        changes.append("surveyor attested" if payload.surveyor_attested else "surveyor attestation removed")
+    if payload.crew_docs_expiry is not None:
+        updates["crew_docs_expiry"] = payload.crew_docs_expiry or None
+        changes.append("crew docs expiry")
     if not updates:
         return _user_public(user)
     await mongo_db.users.update_one({"_id": user_id}, {"$set": updates})
