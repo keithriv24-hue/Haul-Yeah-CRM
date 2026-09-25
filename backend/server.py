@@ -2768,6 +2768,8 @@ async def create_record(table_key: str, request: Request, payload: RecordPayload
 async def update_record(table_key: str, record_id: str, request: Request, payload: RecordPayload = Body(...), role: str = Depends(require_auth)):
     table_id = resolve_table(table_key)
     await check_table_access(role, table_key)
+    if table_key == "projects" and role == "quality":
+        raise HTTPException(status_code=403, detail="Quality can view jobs but not edit them.")
     if table_key == "blog" and role != "owner":
         raise HTTPException(status_code=403, detail="Only the owner can edit blog posts.")
     if table_key == "tasks" and role != "owner":
