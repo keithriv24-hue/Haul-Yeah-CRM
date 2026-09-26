@@ -1,14 +1,16 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
-import { Save, RotateCcw, FolderOpen, X, PencilRuler, Ban, Plus, Trash2 } from "lucide-react";
+import { Save, RotateCcw, FolderOpen, X, PencilRuler, Ban, Plus, Trash2, Cloud, CheckCircle2, AlertTriangle, RefreshCw, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { PageTitle } from "@/components/Bits";
+import { ScopeLeadPicker } from "@/components/ScopeLeadPicker";
 import { useApp } from "@/context/AppContext";
 import { LF, f, leadAccess } from "@/lib/fields";
-import { apiErrorMessage, getScopeApi, getScopeAccessApi, getScopePricingValuesApi, listScopesApi, saveScopeApi } from "@/lib/api";
+import { apiErrorMessage, getScopeApi, getScopeAccessApi, getScopePricingValuesApi, listScopesApi,
+  commitScopeApi, retryScopeWriteApi, saveScopeDraftApi, findScopeDraftApi } from "@/lib/api";
 import {
   TIERS, TRUCK_CF, TRUCK_LBS, ROOMS, ITEMS, PACKING, ACCESS, MATERIALS, NON_TRANSPORT,
   PKGS, STATE_OPTIONS, NO_PRICING, LEGACY_ITEM_KEYS, CUSTOM_BANDS, FIT_WORK_OPTIONS,
@@ -72,10 +74,29 @@ const Stat = ({ label, value, last = false, accent = false }) => (
   </div>
 );
 
+/* Background draft auto-save indicator — never blocks the rep, just reassures them. */
+const DraftStatusPill = ({ status }) => {
+  const map = {
+    idle: { icon: <Cloud className="w-3 h-3" />, text: "Autosaves as you work", cls: "text-faint" },
+    saving: { icon: <Cloud className="w-3 h-3 animate-pulse" />, text: "Saving draft…", cls: "text-faint" },
+    saved: { icon: <CheckCircle2 className="w-3 h-3" />, text: "Draft saved", cls: "text-success" },
+    offline: { icon: <AlertTriangle className="w-3 h-3" />, text: "Offline — saves when you reconnect", cls: "text-warning" },
+    error: { icon: <AlertTriangle className="w-3 h-3" />, text: "Couldn't save draft — still trying", cls: "text-warning" },
+  };
+  const s = map[status] || map.idle;
+  return (
+    <span data-testid="scope-draft-status" data-state={status || "idle"}
+      className={`inline-flex items-center gap-1 text-[10.5px] font-semibold ${s.cls}`}>
+      {s.icon} {s.text}
+    </span>
+  );
+};
+
 export default function ScopeCalculator() {
   const [params] = useSearchParams();
-  const leadId = params.get("lead") || null;
-  const leadName = params.get("name") || "";
+  const urlLeadId = params.get("lead") || null;
+  const [selectedLeadId, setSelectedLeadId] = useState(urlLeadId);
+  const leadId = selectedLeadId;
   const refineId = params.get("refine") || null;
 
   const [dens, setDens] = useState({});
@@ -105,18 +126,22 @@ export default function ScopeCalculator() {
   const [savedList, setSavedList] = useState([]);
   const [showSaved, setShowSaved] = useState(false);
   const [label, setLabel] = useState("");
-  const [saving, setSaving] = useState(false);
   const [tier, setTier] = useState(null);
 
   /* Lead context — access info from the Tally form + package prefill from home size */
   const { loadTable, loadSchema, records, schemas } = useApp();
-  useEffect(() => {
-    if (!leadId) return;
-    loadTable("leads");
-    loadSchema("leads");
-  }, [leadId, loadTable, loadSchema]);
+  useEffect(() => { loadTable("leads"); loadSchema("leads"); }, [loadTable, loadSchema]);
   const lead = leadId ? records("leads").find((x) => x.id === leadId) : null;
+  const leadName = (lead && f(lead, LF.name)) || params.get("name") || "";   // identity is the ID; name is display only
   const access = lead ? leadAccess(lead, schemas.leads) : null;
+
+  /* Stage 1 — lead picker + draft auto-save + deliberate commit state */
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerTitle, setPickerTitle] = useState("Who is this quote for?");
+  const afterPickRef = useRef(null);
+  const [draftStatus, setDraftStatus] = useState("idle");   // idle|saving|saved|error|offline
+  const [lastCommit, setLastCommit] = useState(null);       // {scope_id, commit_state, type}
+  const [committing, setCommitting] = useState(false);
 
   useEffect(() => {
     getScopeAccessApi().then(({ tier: t }) => {
@@ -240,43 +265,141 @@ export default function ScopeCalculator() {
     toast("Back to live pricing — current Settings values apply.");
   };
 
-  const saveScope = async () => {
-    setSaving(true);
-    const assessment = hasBlockers;   // 800 lb+ / clearance blocker → save the scope, store no dollar amount
+  /* ---- shared scope payload (draft + commit) ---- */
+  const buildScopePayload = () => {
+    const assessment = hasBlockers;   // 800 lb+ / clearance blocker → keep the scope, store no dollar amount
+    return {
+      inputs: { dens, cnt, qty, custom, acc, mat, pack, rate, jobType, crewOverride, hoursOverride,
+        miles: Number(miles) || 0, pickupState, dropoffState, pkg, mode: finalMode ? "final" : "range" },
+      pricing: P || {},
+      result: {
+        cf: r.cf, lbs: r.lbs, trucks: r.displayTrucks, crew: r.crew, crewRec: r.crewRec,
+        onsiteHours: Math.round(r.onsite * 10) / 10,
+        billMH: Math.round(r.billMH * 100) / 100, schedMH: Math.round(r.schedMH * 100) / 100,
+        distFee: assessment ? null : r.distBill, mileageExtra: r.mileage.extra,
+        specialtyOnly: r.specialtyOnly, blockers: r.blockers,
+        bandLo: assessment ? null : bandLo, bandHi: assessment ? null : bandHi,
+        finalTotal: assessment ? null : (finalMode ? finalTotal : null),
+        deposit: assessment ? null : (finalMode ? Math.round(deposit * 100) / 100 : null),
+        mode: assessment ? "assessment_required" : (finalMode ? "final" : "range"), jobType,
+      },
+      survey_complete: surveyComplete,
+      video: { link: video.link, received: video.received, received_date: video.date },
+    };
+  };
+
+  /* ---- background draft auto-save (debounced, idempotent by draft_id, rev-guarded) ---- */
+  const draftKey = `hy_scope_draft:${leadId || "blank"}`;
+  const draftIdRef = useRef(null);
+  const draftRevRef = useRef(0);
+  const draftDirtyRef = useRef(false);
+  const newUuid = () => (typeof crypto !== "undefined" && crypto.randomUUID
+    ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`);
+
+  // resume the caller's existing draft for this lead once (survives refresh)
+  useEffect(() => {
+    draftIdRef.current = localStorage.getItem(draftKey) || null;
+    draftRevRef.current = 0;
+    if (refineId || !tier || tier === "none") return;
+    let cancelled = false;
+    findScopeDraftApi(leadId).then((d) => {
+      if (cancelled || !d) return;
+      draftIdRef.current = d._id;
+      draftRevRef.current = Number(d.rev || 0);
+      localStorage.setItem(draftKey, d._id);
+      if (!draftDirtyRef.current && r.cf === 0 && !pkg) {   // don't stomp active edits
+        applyInputs(d);
+        leadPrefilled.current = true;
+        toast("Recovered your unsaved draft.", { id: "draft-resume" });
+      }
+    }).catch(() => {});
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftKey, tier, refineId]);
+
+  const inputSig = JSON.stringify({ dens, cnt, qty, custom, acc, mat, pack, rate, jobType,
+    crewOverride, hoursOverride, miles, pickupState, dropoffState, pkg, surveyComplete, video, mode });
+  useEffect(() => {
+    if (!tier || tier === "none" || viewingSaved) return;
+    if (r.cf === 0 && !pkg && !hasBlockers) return;   // nothing worth saving yet
+    draftDirtyRef.current = true;
+    const t = setTimeout(async () => {
+      if (typeof navigator !== "undefined" && navigator.onLine === false) { setDraftStatus("offline"); return; }
+      const id = draftIdRef.current || newUuid();
+      draftIdRef.current = id; localStorage.setItem(draftKey, id);
+      const nextRev = draftRevRef.current + 1;
+      setDraftStatus("saving");
+      try {
+        const res = await saveScopeDraftApi({ draft_id: id, lead_id: leadId, rev: nextRev, ...buildScopePayload() });
+        draftRevRef.current = res.stale ? Number(res.rev) : nextRev;
+        setDraftStatus("saved");
+      } catch {
+        setDraftStatus("error");
+      }
+    }, 1200);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inputSig]);
+
+  /* ---- deliberate commit: Save Quote (firm) / Save Range to Lead ---- */
+  const doCommit = async (commitType, targetLeadId) => {
+    setCommitting(true);
     try {
-      const doc = await saveScopeApi({
-        lead_id: leadId,
+      const doc = await commitScopeApi({
+        commit_id: newUuid(),
+        lead_id: targetLeadId, commit_type: commitType,
         label: label.trim() || leadName || null,
         refined_from: refineFrom?._id || null,
-        inputs: { dens, cnt, qty, custom, acc, mat, pack, rate, jobType, crewOverride, hoursOverride,
-          miles: Number(miles) || 0, pickupState, dropoffState, pkg, mode: finalMode ? "final" : "range" },
-        pricing: P,
-        result: {
-          cf: r.cf, lbs: r.lbs, trucks: r.displayTrucks, crew: r.crew, crewRec: r.crewRec,
-          onsiteHours: Math.round(r.onsite * 10) / 10,
-          billMH: Math.round(r.billMH * 100) / 100, schedMH: Math.round(r.schedMH * 100) / 100,
-          distFee: assessment ? null : r.distBill, mileageExtra: r.mileage.extra,
-          specialtyOnly: r.specialtyOnly, blockers: r.blockers,
-          bandLo: assessment ? null : bandLo, bandHi: assessment ? null : bandHi,
-          finalTotal: assessment ? null : (finalMode ? finalTotal : null),
-          deposit: assessment ? null : (finalMode ? Math.round(deposit * 100) / 100 : null),
-          mode: assessment ? "assessment_required" : (finalMode ? "final" : "range"), jobType,
-        },
-        survey_complete: surveyComplete,
-        video: { link: video.link, received: video.received, received_date: video.date },
+        draft_id: draftIdRef.current || null,
+        ...buildScopePayload(),
       });
-      setViewingSaved(doc);
-      setRefineFrom(null);
-      toast.success(assessment
-        ? "Saved for on-site assessment — the scope is kept, no dollar amount is stored."
-        : refineFrom
-        ? "Saved as a new version — the original scope is untouched."
-        : "Scope saved with its pricing snapshot. Settings changes won't re-price it.");
+      setViewingSaved(doc); setRefineFrom(null);
+      setLastCommit({ scope_id: doc._id, commit_state: doc.commit_state, type: commitType });
+      draftIdRef.current = null; localStorage.removeItem(draftKey); setDraftStatus("idle");
+      if (doc.commit_state === "error") {
+        toast.error("Saved here, but the lead's price didn't update in Airtable. Use Retry.");
+      } else if (commitType === "firm") {
+        toast.success(doc.status_changed ? `Quote attached — lead moved to ${doc.status_changed}.` : "Quote attached to the lead.");
+        loadTable("leads", true);
+      } else {
+        toast.success("Range saved to the lead — provisional, not a firm quote.");
+      }
     } catch (e) {
       toast.error(apiErrorMessage(e));
     }
-    setSaving(false);
+    setCommitting(false);
   };
+
+  const saveQuote = (commitType) => {
+    if (!leadId) {
+      setPickerTitle("Who is this quote for?");
+      afterPickRef.current = (id) => doCommit(commitType, id);
+      setPickerOpen(true);
+      return;
+    }
+    doCommit(commitType, leadId);
+  };
+
+  const retryWrite = async () => {
+    if (!lastCommit?.scope_id) return;
+    setCommitting(true);
+    try {
+      const doc = await retryScopeWriteApi(lastCommit.scope_id);
+      setLastCommit({ scope_id: doc._id, commit_state: doc.commit_state, type: "firm" });
+      if (doc.commit_state === "committed") { toast.success("Quote written to the lead."); loadTable("leads", true); }
+      else toast.error("Still couldn't write to Airtable. It's saved here — try again shortly.");
+    } catch (e) { toast.error(apiErrorMessage(e)); }
+    setCommitting(false);
+  };
+
+  const onPickLead = (id) => {
+    if (leadId && id !== leadId &&
+        !window.confirm("Attach this quote to a different customer? This changes who the quote is for.")) return;
+    setSelectedLeadId(id);
+    const cb = afterPickRef.current; afterPickRef.current = null;
+    if (cb) cb(id);
+  };
+
 
   if (tier === "none") {
     return (
@@ -300,6 +423,10 @@ export default function ScopeCalculator() {
             : isSurvey ? "Walk the home, scope every room, submit to the owner."
             : "Scope the move room by room."} />
         <div className="flex flex-wrap items-center gap-2 mb-4">
+          <Button data-testid="scope-attach-lead-btn" variant="outline" size="sm" className="gap-1.5"
+            onClick={() => { setPickerTitle("Who is this quote for?"); afterPickRef.current = null; setPickerOpen(true); }}>
+            <Users className="w-3.5 h-3.5" /> {leadId ? "Change lead" : "Attach to lead"}
+          </Button>
           <Button data-testid="scope-saved-btn" variant="outline" size="sm" className="gap-1.5"
             onClick={() => { setShowSaved(!showSaved); if (!showSaved) loadSavedList(); }}>
             <FolderOpen className="w-3.5 h-3.5" /> Saved scopes
@@ -353,6 +480,35 @@ export default function ScopeCalculator() {
           <Button data-testid="scope-back-live-btn" size="sm" variant="outline" className="gap-1 h-7 text-xs" onClick={backToLive}>
             <X className="w-3 h-3" /> Back to live pricing
           </Button>
+        </div>
+      )}
+
+      {lastCommit && (
+        <div data-testid="scope-commit-result"
+          className={`mb-4 flex flex-wrap items-center gap-3 rounded-lg border px-4 py-2.5 text-[12.5px] text-primary ${lastCommit.commit_state === "error" ? "border-warning/50 bg-warning/10" : "border-success/40 bg-success/10"}`}>
+          {lastCommit.commit_state === "error" ? (
+            <>
+              <AlertTriangle className="w-4 h-4 text-warning shrink-0" />
+              <span data-testid="scope-commit-error-msg" className="flex-1 min-w-[220px]">
+                Saved here, but the lead's price didn't update in Airtable. Your quote is safe — retry the write when you're ready.
+              </span>
+              <Button data-testid="scope-commit-retry-btn" size="sm" variant="outline" className="gap-1 h-7 text-xs"
+                disabled={committing} onClick={retryWrite}>
+                <RefreshCw className={`w-3 h-3 ${committing ? "animate-spin" : ""}`} /> Retry write
+              </Button>
+            </>
+          ) : (
+            <>
+              <CheckCircle2 className="w-4 h-4 text-success shrink-0" />
+              <span data-testid="scope-commit-ok-msg" className="flex-1 min-w-[220px]">
+                {lastCommit.type === "firm"
+                  ? "Firm quote attached to the lead."
+                  : "Range saved to the lead — provisional, not a firm quote."}
+              </span>
+            </>
+          )}
+          <Button data-testid="scope-commit-dismiss-btn" size="sm" variant="ghost" className="h-7 text-xs"
+            onClick={() => setLastCommit(null)}>Dismiss</Button>
         </div>
       )}
 
@@ -987,13 +1143,20 @@ export default function ScopeCalculator() {
           )}
 
           {!viewingSaved && (
-          <div className="surface p-4">
+          <div className="surface p-4" data-testid="scope-save-card">
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <span className="text-[11px] font-bold tracking-[.14em] uppercase text-faint" data-testid="scope-quote-for">
+                {leadId ? <>Quote for <span className="normal-case tracking-normal font-semibold text-primary">{leadName || "this lead"}</span></> : "Not attached to a lead yet"}
+              </span>
+              <DraftStatusPill status={draftStatus} />
+            </div>
             <div className="flex items-center gap-2 mb-2">
               <Input data-testid="scope-label-input" placeholder="Label (customer / address)" value={label}
                 onChange={(e) => setLabel(e.target.value)} className="h-9 flex-1" />
               <Button data-testid="scope-save-btn" size="sm" className="gap-1.5 bg-accent hover:bg-accent-press min-h-[44px]"
-                disabled={saving || (r.cf === 0 && !pkg && !hasBlockers) || gate.blocked} onClick={saveScope}>
-                <Save className="w-3.5 h-3.5" /> {saving ? "Saving…" : isSurvey ? "Submit to owner" : hasBlockers ? "Save for assessment" : refineFrom ? "Save as new version" : "Save scope"}
+                disabled={committing || (r.cf === 0 && !pkg && !hasBlockers) || gate.blocked}
+                onClick={() => saveQuote(finalMode ? "firm" : "range")}>
+                <Save className="w-3.5 h-3.5" /> {committing ? "Saving…" : isSurvey ? "Submit to owner" : finalMode ? "Save Quote" : hasBlockers ? "Save for assessment" : "Save Range to Lead"}
               </Button>
             </div>
             <p className="text-[11px] text-faint">
@@ -1002,8 +1165,10 @@ export default function ScopeCalculator() {
                 : hasBlockers
                 ? "Saved as assessment-required — the scope detail is kept, no dollar amount is stored until someone measures it on site."
                 : isSurvey
-                ? "Submitting sends your walkthrough scope to the owner — they price it from there."
-                : "Saving snapshots today's pricing values with the quote. Changing Settings later never re-prices a saved scope."}
+                ? "Submitting sends your walkthrough scope to the owner — they price it from there. Your work autosaves as a draft until you submit."
+                : finalMode
+                ? "Save Quote attaches this firm price to the lead and moves a new lead to Quoted. Your work autosaves as a draft until you save."
+                : "Save Range attaches a provisional band to the lead — not a firm quote, no status change. Your work autosaves as a draft until you save."}
             </p>
           </div>
           )}
@@ -1039,6 +1204,8 @@ export default function ScopeCalculator() {
           )}
         </div>
       </div>
+
+      <ScopeLeadPicker open={pickerOpen} onOpenChange={setPickerOpen} onPick={onPickLead} title={pickerTitle} />
     </div>
   );
 }

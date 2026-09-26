@@ -823,6 +823,254 @@ async def patch_scope_video(scope_id: str, payload: ScopeVideoPayload, request: 
     return redact_scope_doc(doc, tier)
 
 
+# ------- Stage 1: draft auto-save + deliberate Save Quote / Save Range commit -------
+# Drafts live in their own collection (scope_drafts) so they are excluded from every
+# committed-scope consumer by construction — lead scope list, quality, recommendations,
+# booking-rate counts and customer comms all read lead_scopes, never scope_drafts.
+
+LEAD_QUOTE_FIELD = "fldI5HufBfW35A1fD"             # verified against fields.js (LF.quote)
+QUOTE_AUTO_STATUS_FROM = {"Contacted", "Warm", "Hot"}
+STAGE1_CALIBRATION_VERSION = "v0"
+
+
+def _pricing_version(pricing: Dict[str, Any]) -> str:
+    try:
+        blob = json.dumps(pricing, sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        blob = str(pricing)
+    return hashlib.sha256(blob.encode()).hexdigest()[:12]
+
+
+def _hours_source(inputs: Dict[str, Any]) -> str:
+    if inputs.get("pkg"):
+        return "package"
+    if inputs.get("hoursOverride"):
+        return "rep_override"
+    return "model"
+
+
+def _safe_airtable_error(exc: Exception) -> str:
+    # airtable_request already returns sanitized messages; never surface tokens/keys.
+    if isinstance(exc, HTTPException):
+        return str(exc.detail)[:300]
+    return "The quote couldn't be written to Airtable. It's saved here and can be retried."
+
+
+class ScopeDraftPayload(BaseModel):
+    draft_id: str
+    lead_id: Optional[str] = None
+    rev: int = 0
+    inputs: Dict[str, Any] = {}
+    pricing: Dict[str, Any] = {}
+    result: Dict[str, Any] = {}
+    survey_complete: bool = False
+    video: Optional[Dict[str, Any]] = None
+
+
+@api_router.put("/scope-drafts")
+async def save_scope_draft(payload: ScopeDraftPayload, request: Request):
+    """Debounced background auto-save. Idempotent by draft_id; a monotonic rev guard prevents
+    clobbering a newer revision or another device. Drafts never write Airtable or train anything."""
+    p, tier = await require_scope_tier(request)
+    if not payload.draft_id:
+        raise HTTPException(status_code=422, detail="Missing draft id.")
+    existing = await mongo_db.scope_drafts.find_one({"_id": payload.draft_id})
+    if existing:
+        if existing.get("created_by_id") and existing.get("created_by_id") != p.get("user_id"):
+            raise HTTPException(status_code=403, detail="This draft belongs to someone else.")
+        if payload.rev <= int(existing.get("rev", 0)):
+            return {"draft_id": payload.draft_id, "rev": int(existing.get("rev", 0)),
+                    "saved_at": existing.get("updated_at"), "stale": True}
+    result = dict(payload.result or {})
+    pricing = dict(payload.pricing or {})
+    if tier == "survey":
+        pricing = {}
+        for k in SCOPE_MONETARY_KEYS:
+            result[k] = None
+    doc = {
+        "_id": payload.draft_id, "status": "draft", "training_eligible": False,
+        "lead_id": payload.lead_id or None, "rev": int(payload.rev),
+        "created_by": p.get("name") or p.get("role") or "Unknown", "created_by_id": p.get("user_id"),
+        "tier": tier, "inputs": payload.inputs, "pricing": pricing, "result": result,
+        "survey_complete": bool(payload.survey_complete), "video": _clean_video(payload.video),
+        "created_at": (existing or {}).get("created_at") or now_iso(), "updated_at": now_iso(),
+    }
+    await mongo_db.scope_drafts.replace_one({"_id": payload.draft_id}, doc, upsert=True)
+    return {"draft_id": payload.draft_id, "rev": doc["rev"], "saved_at": doc["updated_at"], "stale": False}
+
+
+@api_router.get("/scope-drafts")
+async def find_scope_draft(request: Request, lead_id: Optional[str] = None):
+    """Resume the caller's most recent draft for this lead (or the blank calculator)."""
+    p, tier = await require_scope_tier(request)
+    doc = await mongo_db.scope_drafts.find_one(
+        {"created_by_id": p.get("user_id"), "lead_id": lead_id or None}, sort=[("updated_at", -1)])
+    return {"draft": redact_scope_doc(doc, tier) if doc else None}
+
+
+@api_router.get("/scope-drafts/{draft_id}")
+async def get_scope_draft(draft_id: str, request: Request):
+    p, tier = await require_scope_tier(request)
+    doc = await mongo_db.scope_drafts.find_one({"_id": draft_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="No such draft.")
+    if doc.get("created_by_id") and doc.get("created_by_id") != p.get("user_id") and p.get("role") != "owner":
+        raise HTTPException(status_code=403, detail="This draft belongs to someone else.")
+    return redact_scope_doc(doc, tier)
+
+
+class ScopeCommitPayload(BaseModel):
+    commit_id: str
+    lead_id: Optional[str] = None
+    commit_type: str = "firm"        # firm | range
+    label: Optional[str] = None
+    refined_from: Optional[str] = None
+    reason: Optional[str] = None
+    draft_id: Optional[str] = None
+    inputs: Dict[str, Any]
+    pricing: Dict[str, Any]
+    result: Dict[str, Any]
+    survey_complete: bool = False
+    video: Optional[Dict[str, Any]] = None
+
+
+async def _write_lead_quote(lead_id: str, amount: float) -> Dict[str, Any]:
+    """Write the firm quote to the lead's real Airtable field and, ONLY from Contacted/Warm/Hot,
+    advance status to Quoted. Returns a durable write-state dict; never raises."""
+    rec = await fetch_lead_record(lead_id)
+    if not rec or not rec.get("id"):
+        return {"state": "error", "attempts": 1, "last_error": "The lead couldn't be found in Airtable.",
+                "status_changed": None, "at": now_iso()}
+    cur_status = (rec.get("fields") or {}).get(LEAD_STATUS_F)
+    fields: Dict[str, Any] = {LEAD_QUOTE_FIELD: amount}
+    status_changed = None
+    if cur_status in QUOTE_AUTO_STATUS_FROM:
+        fields[LEAD_STATUS_F] = "Quoted"
+        status_changed = "Quoted"
+    try:
+        await airtable_request("PATCH", TABLES["leads"],
+                               json_body={"records": [{"id": lead_id, "fields": fields}], "typecast": True})
+        return {"state": "committed", "attempts": 1, "last_error": None,
+                "status_changed": status_changed, "at": now_iso()}
+    except Exception as exc:
+        return {"state": "error", "attempts": 1, "last_error": _safe_airtable_error(exc),
+                "status_changed": None, "at": now_iso()}
+
+
+async def _set_active_quote_link(lead_id: str, scope_id: str, amount: Any, mode: str, by: str, action: str) -> Optional[str]:
+    prev = (await mongo_db.lead_quote_links.find_one({"_id": lead_id}) or {}).get("active_quote_scope_id")
+    entry = {"quote_scope_id": scope_id, "supersedes": prev, "amount": amount, "mode": mode,
+             "by": by, "action": action, "at": now_iso()}
+    await mongo_db.lead_quote_links.update_one(
+        {"_id": lead_id},
+        {"$set": {"active_quote_scope_id": scope_id, "amount": amount, "mode": mode, "updated_at": now_iso()},
+         "$push": {"history": entry}}, upsert=True)
+    return prev
+
+
+@api_router.post("/scopes/commit")
+async def commit_scope(payload: ScopeCommitPayload, request: Request):
+    """Deliberate Save Quote / Save Range — one idempotent, server-owned commit boundary."""
+    p, tier = await require_scope_tier(request)
+    if not payload.commit_id:
+        raise HTTPException(status_code=422, detail="Missing commit id.")
+    existing = await mongo_db.lead_scopes.find_one({"commit_id": payload.commit_id})
+    if existing:   # idempotency — retrying the same commit never duplicates
+        return redact_scope_doc(existing, tier)
+    if not payload.lead_id:
+        raise HTTPException(status_code=422, detail="Who is this quote for? Select or create a lead first.")
+    lead = await fetch_lead_record(payload.lead_id)
+    if not lead or not lead.get("id"):
+        raise HTTPException(status_code=404, detail="That lead no longer exists. Pick another lead.")
+    result_mode = (payload.result or {}).get("mode")
+    is_firm = payload.commit_type == "firm" and result_mode == "final"
+    if payload.commit_type == "firm" and result_mode != "final":
+        raise HTTPException(status_code=422, detail="This isn't a firm quote yet — save it as a range instead.")
+    if is_firm and tier not in ("owner", "final"):
+        raise HTTPException(status_code=403, detail="Your access level can't produce a firm quote.")
+    if payload.survey_complete and tier == "sales":
+        raise HTTPException(status_code=403, detail="Sales access can't mark a survey complete.")
+    server_values = await get_rates_values()
+    if tier in ("owner", "final"):
+        pricing: Dict[str, Any] = {}
+        for k, v in server_values.items():
+            sent = (payload.pricing or {}).get(k, v)
+            if k in RATE_STRING_KEYS:
+                pricing[k] = str(sent)[:100]
+            else:
+                try:
+                    pricing[k] = float(sent)
+                except (TypeError, ValueError):
+                    pricing[k] = float(v)
+    else:
+        pricing = server_values
+    result = dict(payload.result or {})
+    if tier == "survey":
+        for k in SCOPE_MONETARY_KEYS:
+            result[k] = None
+    amount = result.get("finalTotal") if is_firm else None
+    scope_id = str(uuid4())
+    prev_active = (await mongo_db.lead_quote_links.find_one({"_id": payload.lead_id}) or {}).get("active_quote_scope_id")
+    doc = {
+        "_id": scope_id, "quote_scope_id": scope_id, "commit_id": payload.commit_id,
+        "status": "saved", "commit_type": payload.commit_type, "training_eligible": False,
+        "lead_id": payload.lead_id, "label": (payload.label or "").strip(),
+        "created_by": p.get("name") or p.get("role") or "Unknown", "created_by_id": p.get("user_id"),
+        "tier": tier, "inputs": payload.inputs, "pricing": pricing, "result": result,
+        "amount": amount, "estimate_mode": result_mode, "hours_source": _hours_source(payload.inputs or {}),
+        "pricing_version": _pricing_version(pricing), "calibration_version": STAGE1_CALIBRATION_VERSION,
+        "survey_complete": bool(payload.survey_complete), "video": _clean_video(payload.video),
+        "refined_from": payload.refined_from or None, "supersedes_quote_scope_id": prev_active or None,
+        "reason": (payload.reason or "").strip() or None,
+        "commit_state": "committed", "airtable_write": None, "status_changed": None,
+        "created_at": now_iso(), "updated_at": now_iso(),
+    }
+    if is_firm and amount is not None:
+        doc["commit_state"] = "pending"
+        await mongo_db.lead_scopes.insert_one(doc)
+        write = await _write_lead_quote(payload.lead_id, float(amount))
+        state = "committed" if write["state"] == "committed" else "error"
+        await mongo_db.lead_scopes.update_one({"_id": scope_id}, {"$set": {
+            "airtable_write": write, "commit_state": state,
+            "status_changed": write.get("status_changed"), "updated_at": now_iso()}})
+        doc.update({"airtable_write": write, "commit_state": state, "status_changed": write.get("status_changed")})
+        await _set_active_quote_link(payload.lead_id, scope_id, amount, "firm", doc["created_by"], "firm_quote")
+    else:
+        await mongo_db.lead_scopes.insert_one(doc)
+        if payload.commit_type == "range":   # links to the lead but NEVER the firm active quote / no Airtable write
+            await mongo_db.lead_quote_links.update_one(
+                {"_id": payload.lead_id},
+                {"$set": {"last_range_scope_id": scope_id, "updated_at": now_iso()},
+                 "$push": {"history": {"quote_scope_id": scope_id, "amount": amount, "mode": "range",
+                                       "by": doc["created_by"], "action": "range", "at": now_iso()}}}, upsert=True)
+    if payload.draft_id:   # the deliberate commit retires its recoverable draft
+        await mongo_db.scope_drafts.delete_one({"_id": payload.draft_id, "created_by_id": p.get("user_id")})
+    await audit(p, f"committed a {'firm quote' if is_firm else payload.commit_type}",
+                doc["label"] or payload.lead_id, {"scope_id": scope_id, "amount": amount})
+    return redact_scope_doc(doc, tier)
+
+
+@api_router.post("/scopes/{scope_id}/retry-write")
+async def retry_scope_write(scope_id: str, request: Request):
+    """Re-attempt a firm quote's Airtable write after a failure. Owner/final only."""
+    p, tier = await require_scope_tier(request)
+    doc = await mongo_db.lead_scopes.find_one({"_id": scope_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="No such saved quote.")
+    if doc.get("commit_type") != "firm" or doc.get("commit_state") == "committed":
+        raise HTTPException(status_code=422, detail="Nothing to retry — this quote is already committed.")
+    if tier not in ("owner", "final"):
+        raise HTTPException(status_code=403, detail="Your access level can't write firm quotes.")
+    write = await _write_lead_quote(doc["lead_id"], float(doc.get("amount") or 0))
+    write["attempts"] = int((doc.get("airtable_write") or {}).get("attempts", 0)) + 1
+    state = "committed" if write["state"] == "committed" else "error"
+    await mongo_db.lead_scopes.update_one({"_id": scope_id}, {"$set": {
+        "airtable_write": write, "commit_state": state,
+        "status_changed": write.get("status_changed"), "updated_at": now_iso()}})
+    doc.update({"airtable_write": write, "commit_state": state, "status_changed": write.get("status_changed")})
+    return redact_scope_doc(doc, tier)
+
+
 # ------- Calculator access assignment (owner-only)
 
 class CalcAccessPayload(BaseModel):

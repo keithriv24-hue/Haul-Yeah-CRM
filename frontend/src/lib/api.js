@@ -26,6 +26,10 @@ export const switchRoleApi = (role) => axios.post(`${API}/auth/switch-role`, { r
 export const getRates = () => axios.get(`${API}/settings/rates`).then((r) => r.data);
 export const saveRatesApi = (rates) => axios.put(`${API}/settings/rates`, rates).then((r) => r.data);
 export const saveScopeApi = (payload) => axios.post(`${API}/scopes`, payload).then((r) => r.data);
+export const commitScopeApi = (payload) => axios.post(`${API}/scopes/commit`, payload).then((r) => r.data);
+export const retryScopeWriteApi = (scopeId) => axios.post(`${API}/scopes/${scopeId}/retry-write`).then((r) => r.data);
+export const saveScopeDraftApi = (payload) => axios.put(`${API}/scope-drafts`, payload).then((r) => r.data);
+export const findScopeDraftApi = (leadId) => axios.get(`${API}/scope-drafts`, { params: leadId ? { lead_id: leadId } : {} }).then((r) => r.data.draft);
 export const listScopesApi = (leadId) => axios.get(`${API}/scopes`, { params: leadId ? { lead_id: leadId } : {} }).then((r) => r.data.scopes);
 export const getScopeApi = (id) => axios.get(`${API}/scopes/${id}`).then((r) => r.data);
 export const patchScopeVideoApi = (id, video) => axios.patch(`${API}/scopes/${id}/video`, video).then((r) => r.data);
