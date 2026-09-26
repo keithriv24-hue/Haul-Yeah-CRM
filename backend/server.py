@@ -6064,8 +6064,9 @@ async def job_mgmt_detail(project_id: str, request: Request) -> Dict[str, Any]:
         "id": a["_id"], "job_name": a.get("job_name"),
         "job_date": a.get("job_date"), "arrival_time": a.get("arrival_time"),
         "exec_status": a.get("exec_status") or a.get("status"),
-        "truck_name": a.get("truck_name"),
-        "crew": [{"name": c.get("name"), "position": c.get("position")} for c in a.get("crew", [])],
+        "truck_name": a.get("truck_name"), "truck_id": a.get("truck_id"),
+        "crew": [{"name": c.get("name"), "position": c.get("position"), "user_id": c.get("user_id")} for c in a.get("crew", [])],
+        "crew_lead": _crew_lead_detail_out(a),
     } for a in assignments]
 
     scope = None
@@ -6442,7 +6443,89 @@ class AssignmentPayload(BaseModel):
     truck_id: Optional[str] = None
     job_size: str = ""
     crew: List[CrewSlot] = []
+    crew_lead_id: Optional[str] = None
+    crew_lead_secondary_id: Optional[str] = None
     ignore_warnings: bool = False
+
+
+# ------- Stage 2: Crew Lead (per-assignment coordinator) + eight-tap documentation flow -------
+# "Crew Lead" is an ADDITIONAL role on ONE assignment (primary + optional secondary), chosen by the
+# owner from that assignment's crew. It is NOT a pay position (Driver/Helper stays) and NOT a customer lead.
+# The assignment doc is the single source of truth for Crew Lead selection.
+
+CRITICAL_INSPECTION_KEYS = {"lights", "tires", "brakes", "fluids"}
+JOB_LEAD_STEPS = ["clock_in", "depart", "arrived", "no_damage", "loaded", "dropoff", "complete", "clock_out"]
+JOB_LEAD_STEP_LABEL = {
+    "clock_in": "Clock in to this job",
+    "depart": "All good — Depart",
+    "arrived": "Arrived — walkthrough done",
+    "no_damage": "No damage",
+    "loaded": "Loaded — leaving pickup",
+    "dropoff": "At drop-off",
+    "complete": "All as quoted & Complete",
+    "clock_out": "Clock out & No defects",
+}
+
+
+def _driver_user_id(crew: List[Dict[str, Any]]) -> Optional[str]:
+    for c in crew:
+        if (c.get("position") or "").lower() == "driver":
+            return c.get("user_id")
+    return crew[0]["user_id"] if crew else None
+
+
+def _build_crew_lead(crew: List[Dict[str, Any]], primary_id: Optional[str] = None,
+                     secondary_id: Optional[str] = None, prev: Optional[Dict[str, Any]] = None,
+                     by: str = "", explicit_secondary: bool = True) -> Dict[str, Any]:
+    """Resolve the Crew Lead selection against the assignment's crew. Preserves any prior taps/override/
+    corrections. Defaults the primary to the Driver (source 'driver_default') when nothing is chosen."""
+    prev = dict(prev or {})
+    names = {c["user_id"]: c.get("name") for c in crew}
+    pid = primary_id if primary_id in names else None
+    source = "explicit" if pid else None
+    if not pid:
+        pid = prev.get("primary_id") if prev.get("primary_id") in names else None
+        source = prev.get("source")
+    if not pid:
+        pid = _driver_user_id(crew)
+        source = "driver_default"
+    if explicit_secondary:
+        sid = secondary_id if (secondary_id in names and secondary_id != pid) else None
+    else:
+        prev_sid = prev.get("secondary_id")
+        sid = prev_sid if (prev_sid in names and prev_sid != pid) else None
+    cl = dict(prev)
+    cl.update({
+        "primary_id": pid, "primary_name": names.get(pid),
+        "secondary_id": sid, "secondary_name": names.get(sid) if sid else None,
+        "source": source or "driver_default",
+        "set_by": by or prev.get("set_by") or "", "set_at": now_iso(),
+    })
+    cl.setdefault("taps", {})
+    cl.setdefault("corrections", [])
+    cl.setdefault("depart_override", None)
+    cl.setdefault("depart_blocker", None)
+    return cl
+
+
+def _effective_lead_ids(a: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
+    cl = a.get("crew_lead") or {}
+    pid = cl.get("primary_id") or _driver_user_id(a.get("crew", []))
+    return pid, cl.get("secondary_id")
+
+
+def _is_crew_lead(a: Dict[str, Any], user_id: Optional[str]) -> bool:
+    pid, sid = _effective_lead_ids(a)
+    return bool(user_id) and (user_id == pid or user_id == sid)
+
+
+def _crew_lead_role(a: Dict[str, Any], user_id: Optional[str]) -> str:
+    pid, sid = _effective_lead_ids(a)
+    if user_id == pid:
+        return "primary"
+    if user_id == sid:
+        return "secondary"
+    return "helper"
 
 
 async def assignment_warnings(job_date: str, crew_ids: List[str], truck_id: Optional[str],
@@ -6504,13 +6587,15 @@ async def create_assignment(payload: AssignmentPayload, p: Dict[str, Any] = Depe
         raise HTTPException(status_code=409, detail={"error": "conflicts", "warnings": warnings})
     truck = await mongo_db.trucks.find_one({"_id": payload.truck_id}) if payload.truck_id else None
     site_coords = await geocode(payload.start_address)
+    crew_list = [{"user_id": c.user_id, "name": users_by_id[c.user_id]["name"], "position": c.position} for c in payload.crew]
+    crew_lead = _build_crew_lead(crew_list, payload.crew_lead_id, payload.crew_lead_secondary_id, by=p["name"])
     doc = {
         "_id": str(uuid4()), "project_id": payload.project_id, "job_name": payload.job_name.strip(),
         "job_date": payload.job_date, "arrival_time": payload.arrival_time,
         "start_address": payload.start_address.strip(), "end_address": payload.end_address.strip(),
         "truck_id": payload.truck_id, "truck_name": truck["name"] if truck else None,
         "job_size": payload.job_size,
-        "crew": [{"user_id": c.user_id, "name": users_by_id[c.user_id]["name"], "position": c.position} for c in payload.crew],
+        "crew": crew_list, "crew_lead": crew_lead,
         "site_coords": site_coords, "exec_status": "Assigned", "status_history": [],
         "completion_notes": "", "review_prompted": False,
         "created_at": now_iso(), "updated_at": now_iso(),
@@ -6529,7 +6614,25 @@ async def create_assignment(payload: AssignmentPayload, p: Dict[str, Any] = Depe
                             by=p["name"])
     if doc["truck_name"]:
         await log_job_event(doc["_id"], "truck", f"Truck assigned: {doc['truck_name']}", by=p["name"])
+    await _announce_crew_lead(doc, crew_lead, None, p)
     return {**_sanitize_assignment(doc), "warnings": warnings}
+
+
+async def _announce_crew_lead(a: Dict[str, Any], cl: Dict[str, Any], prev: Optional[Dict[str, Any]], p: Dict[str, Any]) -> None:
+    """Notify + log a Crew Lead naming/swap. Only fires when the primary/secondary actually changed."""
+    prev = prev or {}
+    if cl.get("primary_id") == prev.get("primary_id") and cl.get("secondary_id") == prev.get("secondary_id"):
+        return
+    label = cl.get("primary_name") or "—"
+    if cl.get("secondary_name"):
+        label += f" (backup: {cl['secondary_name']})"
+    await log_job_event(a["_id"], "crew_lead", f"Crew Lead: {label}", by=p.get("name", ""))
+    for uid, role in ((cl.get("primary_id"), "Crew Lead"), (cl.get("secondary_id"), "backup Crew Lead")):
+        if uid and uid != (prev.get("primary_id") if role == "Crew Lead" else prev.get("secondary_id")):
+            await notify(uid, None, f"You're the {role}",
+                         f"You're the {role} on \"{a.get('job_name')}\" ({a.get('job_date')}). "
+                         f"Open My Jobs on move day to run the checklist.",
+                         "assignment", {"assignment_id": a["_id"]})
 
 
 @api_router.patch("/assignments/{assignment_id}")
@@ -6561,6 +6664,11 @@ async def update_assignment(assignment_id: str, payload: AssignmentPayload,
         "site_coords": site_coords, "updated_at": now_iso(),
     }
     old_ids = {c["user_id"] for c in existing.get("crew", [])}
+    crew_lead = _build_crew_lead(
+        updates["crew"], payload.crew_lead_id, payload.crew_lead_secondary_id,
+        prev=existing.get("crew_lead"), by=p["name"],
+        explicit_secondary=(payload.crew_lead_secondary_id is not None or payload.crew_lead_id is not None))
+    updates["crew_lead"] = crew_lead
     await mongo_db.assignments.update_one({"_id": assignment_id}, {"$set": updates})
     for c in updates["crew"]:
         if c["user_id"] not in old_ids:
@@ -6585,7 +6693,113 @@ async def update_assignment(assignment_id: str, payload: AssignmentPayload,
                             by=p["name"])
     await queue_timelog_sync(assignment_id)
     fresh = await mongo_db.assignments.find_one({"_id": assignment_id})
+    await _announce_crew_lead(fresh, crew_lead, existing.get("crew_lead"), p)
     return {**_sanitize_assignment(fresh), "warnings": warnings}
+
+
+# ------- Crew Lead selection + exception controls (owner)
+
+class CrewLeadPayload(BaseModel):
+    primary_id: Optional[str] = None
+    secondary_id: Optional[str] = None
+
+
+@api_router.patch("/assignments/{assignment_id}/crew-lead")
+async def set_crew_lead(assignment_id: str, payload: CrewLeadPayload, p: Dict[str, Any] = Depends(require_owner)):
+    a = await mongo_db.assignments.find_one({"_id": assignment_id})
+    if not a:
+        raise HTTPException(status_code=404, detail="No such assignment.")
+    crew = a.get("crew", [])
+    crew_ids = {c["user_id"] for c in crew}
+    if not payload.primary_id or payload.primary_id not in crew_ids:
+        raise HTTPException(status_code=422, detail="Pick a primary Crew Lead from this job's crew.")
+    if payload.secondary_id and payload.secondary_id not in crew_ids:
+        raise HTTPException(status_code=422, detail="The backup Crew Lead must be on this job's crew.")
+    if payload.secondary_id and payload.secondary_id == payload.primary_id:
+        raise HTTPException(status_code=422, detail="Primary and backup Crew Lead must be different people.")
+    prev = a.get("crew_lead")
+    cl = _build_crew_lead(crew, payload.primary_id, payload.secondary_id, prev=prev, by=p["name"])
+    cl["source"] = "explicit"
+    await mongo_db.assignments.update_one({"_id": assignment_id}, {"$set": {"crew_lead": cl, "updated_at": now_iso()}})
+    await audit(p, "named the Crew Lead", a.get("job_name") or assignment_id,
+                {"primary": cl.get("primary_name"), "secondary": cl.get("secondary_name")})
+    fresh = await mongo_db.assignments.find_one({"_id": assignment_id})
+    await _announce_crew_lead(fresh, cl, prev, p)
+    return {**_sanitize_assignment(fresh)}
+
+
+class DepartOverridePayload(BaseModel):
+    reason: str
+    resolution: str = "override"   # "corrected" = defect fixed & verified | "override" = authorized departure despite it
+
+
+@api_router.post("/assignments/{assignment_id}/depart-override")
+async def depart_override(assignment_id: str, payload: DepartOverridePayload, p: Dict[str, Any] = Depends(require_owner)):
+    """Owner reviews a critical-defect block so the Crew Lead can depart. Records either 'corrected'
+    (fixed & verified) or 'override' (authorized despite the defect). Preserves the failed inspection and the
+    owner's decision; NEVER departs the truck — the Crew Lead must still tap Depart. Always audited."""
+    a = await mongo_db.assignments.find_one({"_id": assignment_id})
+    if not a:
+        raise HTTPException(status_code=404, detail="No such assignment.")
+    reason = (payload.reason or "").strip()
+    if len(reason) < 10:
+        raise HTTPException(status_code=422, detail="Give a real reason (at least 10 characters) for the decision.")
+    resolution = payload.resolution if payload.resolution in ("corrected", "override") else "override"
+    prev_blocker = (a.get("crew_lead") or {}).get("depart_blocker")
+    override = {"by": p["name"], "by_id": p.get("user_id"), "resolution": resolution,
+                "reason": reason[:500], "at": now_iso(), "cleared_blocker": prev_blocker}
+    await mongo_db.assignments.update_one({"_id": assignment_id},
+                                          {"$set": {"crew_lead.depart_override": override,
+                                                    "crew_lead.depart_blocker": None, "updated_at": now_iso()}})
+    verb = "confirmed the defect corrected & verified" if resolution == "corrected" else "authorized departure despite the defect"
+    await log_job_event(assignment_id, "crew_lead", f"Owner {verb}: {reason[:120]}", by=p["name"])
+    await audit(p, "reviewed a critical-defect departure block", a.get("job_name") or assignment_id,
+                {"resolution": resolution, "reason": reason})
+    pid, sid = _effective_lead_ids(a)
+    note = (f"The owner confirmed the truck defect is fixed on \"{a.get('job_name')}\". Tap Depart when ready."
+            if resolution == "corrected"
+            else f"The owner authorized departure on \"{a.get('job_name')}\" despite the defect. Tap Depart when ready.")
+    for uid in (pid, sid):
+        if uid:
+            await notify(uid, None, "Departure cleared by owner", note,
+                         "assignment", {"assignment_id": assignment_id})
+    fresh = await mongo_db.assignments.find_one({"_id": assignment_id})
+    return {**_sanitize_assignment(fresh)}
+
+
+class CrewLeadCorrectionPayload(BaseModel):
+    tap_key: str
+    action: str = "note"   # note | clear
+    reason: str
+    note: Optional[str] = None
+
+
+@api_router.post("/assignments/{assignment_id}/crew-lead/correct")
+async def correct_crew_lead(assignment_id: str, payload: CrewLeadCorrectionPayload,
+                            p: Dict[str, Any] = Depends(require_owner)):
+    """Owner correction of a documentation record — always keeps an audited reason. 'clear' undoes a tap
+    so the Crew Lead can redo it; 'note' just annotates. Never silently rewrites what the crew attested."""
+    a = await mongo_db.assignments.find_one({"_id": assignment_id})
+    if not a:
+        raise HTTPException(status_code=404, detail="No such assignment.")
+    if payload.tap_key not in JOB_LEAD_STEPS:
+        raise HTTPException(status_code=422, detail="Unknown step.")
+    reason = (payload.reason or "").strip()
+    if len(reason) < 5:
+        raise HTTPException(status_code=422, detail="Give a reason for the correction.")
+    entry = {"tap_key": payload.tap_key, "action": payload.action, "reason": reason[:500],
+             "note": (payload.note or "").strip()[:500] or None, "by": p["name"], "at": now_iso()}
+    ops: Dict[str, Any] = {"$push": {"crew_lead.corrections": entry}, "$set": {"updated_at": now_iso()}}
+    if payload.action == "clear":
+        ops["$unset"] = {f"crew_lead.taps.{payload.tap_key}": ""}
+    await mongo_db.assignments.update_one({"_id": assignment_id}, ops)
+    await log_job_event(assignment_id, "crew_lead",
+                        f"Owner correction on {JOB_LEAD_STEP_LABEL.get(payload.tap_key, payload.tap_key)}: {reason[:120]}",
+                        by=p["name"])
+    await audit(p, "corrected a crew-lead record", a.get("job_name") or assignment_id,
+                {"step": payload.tap_key, "action": payload.action, "reason": reason})
+    fresh = await mongo_db.assignments.find_one({"_id": assignment_id})
+    return {**_sanitize_assignment(fresh)}
 
 
 @api_router.delete("/assignments/{assignment_id}")
@@ -7399,10 +7613,6 @@ async def clock_in(payload: PunchPayload, request: Request, p: Dict[str, Any] = 
         await mongo_db.gps_pings.insert_one({"_id": str(uuid4()), "user_id": p["user_id"], "user_name": p["name"],
                                              "lat": payload.lat, "lng": payload.lng, "at": now.isoformat()})
     await queue_timelog_sync(doc["assignment_id"])
-    try:
-        await maybe_send_tracking_sms(p, request)
-    except Exception as exc:
-        logger.error("Tracking SMS hook failed: %s", exc)
     return {"entry_id": doc["_id"], "clocked_in_at": doc["clock_in"]["at"], "job_name": doc["job_name"],
             "position": position, "flags": doc["flags"]}
 
@@ -7460,6 +7670,298 @@ async def my_time(p: Dict[str, Any] = Depends(require_crew)):
         "open_entry": {"id": open_entry["_id"], "clocked_in_at": open_entry["clock_in"]["at"],
                        "job_name": open_entry.get("job_name")} if open_entry else None,
     }
+
+
+# ------- Stage 2: eight-tap Crew Lead flow (lives inside crew "My Jobs") -------
+
+async def _assignment_linked_job(a: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The customer job (mongo `jobs`) linked to this assignment — by Airtable project link, else date+crew."""
+    pr = a.get("project_id")
+    if pr:
+        j = await mongo_db.jobs.find_one({"project_record_id": pr})
+        if j:
+            return j
+    crew_ids = [c["user_id"] for c in a.get("crew", [])]
+    if a.get("job_date") and crew_ids:
+        return await mongo_db.jobs.find_one({"job_date": a["job_date"], "crew.user_id": {"$in": crew_ids}})
+    return None
+
+
+async def _depart_send_tracking(a: Dict[str, Any], by: str) -> Dict[str, Any]:
+    """Fire the one 'crew is on the way' customer text — idempotent via job.tracking.onway_sms_sent."""
+    job = await _assignment_linked_job(a)
+    if not job:
+        return {"status": "no_customer_job", "detail": "No linked customer job — no text to send."}
+    tr = job.get("tracking") or {}
+    if tr.get("onway_sms_sent") or tr.get("sms_sent"):
+        return {"status": "already_sent"}
+    try:
+        await _send_tracking_sms(job, by=by, template_key="move_day", mark_onway=True)
+        return {"status": "sent"}
+    except HTTPException as exc:
+        detail = exc.detail if isinstance(exc.detail, str) else "Could not send the on-the-way text."
+        await notify(None, "owner", "On-the-way text NOT sent",
+                     f"Job #{job.get('invoice_number')}: {detail}", "warning")
+        return {"status": "failed", "detail": str(detail)[:200]}
+
+
+async def _record_crew_inspection(a: Dict[str, Any], items: Dict[str, bool], p: Dict[str, Any], phase: str) -> Dict[str, Any]:
+    truck_id = a.get("truck_id")
+    norm = {k: bool((items or {}).get(k, False)) for k, _ in INSPECTION_ITEMS}
+    failed = [k for k, _ in INSPECTION_ITEMS if not norm[k]]
+    passed = not failed
+    critical = [k for k in failed if k in CRITICAL_INSPECTION_KEYS]
+    if truck_id:
+        await mongo_db.truck_inspections.insert_one({
+            "_id": str(uuid4()), "truck_id": truck_id, "truck_name": a.get("truck_name"),
+            "date": _et_today(), "by": p["name"], "by_id": p.get("user_id"),
+            "items": norm, "failed": failed, "passed": passed, "phase": phase,
+            "odometer": None, "notes": "", "assignment_id": a["_id"], "created_at": now_iso()})
+        if not passed:
+            t = await mongo_db.trucks.find_one({"_id": truck_id})
+            if t and t.get("fleet_status", "in_service") == "in_service":
+                await mongo_db.trucks.update_one({"_id": truck_id}, {"$set": {"fleet_status": "needs_attention"}})
+    return {"passed": passed, "failed": failed,
+            "failed_labels": [INSPECTION_LABELS[k] for k in failed],
+            "critical": critical, "critical_labels": [INSPECTION_LABELS[k] for k in critical]}
+
+
+async def _lead_mark_checklist(assignment_id: str, list_key: str, by: str) -> None:
+    template = next((t for t in CHECKLIST_TEMPLATES if t[0] == list_key), None)
+    if not template:
+        return
+    items = {str(i): {"done": True, "by": by, "at": now_iso()} for i in range(len(template[2]))}
+    await mongo_db.job_checklists.update_one(
+        {"_id": assignment_id},
+        {"$set": {f"lists.{list_key}.items": items, f"lists.{list_key}.completed_at": now_iso()}}, upsert=True)
+
+
+async def _lead_advance_status(a: Dict[str, Any], status: str, p: Dict[str, Any],
+                               notes: Optional[str] = None, delay_factors: Optional[List[str]] = None) -> None:
+    """Forward-only status advance — never moves a job backwards. Reuses the canonical side effects."""
+    cur = a.get("exec_status") or "Assigned"
+    if EXEC_STATUSES.index(status) > EXEC_STATUSES.index(cur):
+        await _apply_exec_status(a, status, p, notes, delay_factors)
+        a["exec_status"] = status
+
+
+def _crew_lead_detail_out(a: Dict[str, Any]) -> Dict[str, Any]:
+    """Owner-facing crew-lead documentation summary for Job Detail: who tapped each step + corrections."""
+    cl = a.get("crew_lead") or {}
+    pid, sid = _effective_lead_ids(a)
+    taps = cl.get("taps") or {}
+    steps = []
+    for key in JOB_LEAD_STEPS:
+        rec = taps.get(key) or {}
+        steps.append({"key": key, "label": JOB_LEAD_STEP_LABEL[key], "done": bool(rec),
+                      "by": rec.get("by"), "at": rec.get("at"),
+                      "detail": {k: v for k, v in rec.items() if k not in ("by", "by_id", "at")}})
+    return {
+        "primary_id": pid, "primary_name": cl.get("primary_name"),
+        "secondary_id": sid, "secondary_name": cl.get("secondary_name"),
+        "source": cl.get("source"), "set_by": cl.get("set_by"), "set_at": cl.get("set_at"),
+        "steps": steps, "taps_done": sum(1 for s in steps if s["done"]), "taps_total": len(JOB_LEAD_STEPS),
+        "depart_override": cl.get("depart_override"), "depart_blocker": cl.get("depart_blocker"),
+        "corrections": cl.get("corrections") or [], "main_clock_at": cl.get("main_clock_at"),
+    }
+
+
+async def _crew_lead_flow_state(a: Dict[str, Any], p: Dict[str, Any]) -> Dict[str, Any]:
+    cl = a.get("crew_lead") or {}
+    pid, sid = _effective_lead_ids(a)
+    taps = cl.get("taps") or {}
+    role = _crew_lead_role(a, p["user_id"])
+    open_entry = await mongo_db.time_entries.find_one({"user_id": p["user_id"], "clock_out": None})
+    names = {c["user_id"]: c.get("name") for c in a.get("crew", [])}
+    steps = [{"key": k, "label": JOB_LEAD_STEP_LABEL[k], "done": bool(taps.get(k)),
+              "by": (taps.get(k) or {}).get("by"), "at": (taps.get(k) or {}).get("at"),
+              "detail": {kk: vv for kk, vv in (taps.get(k) or {}).items() if kk not in ("by", "by_id", "at")}}
+             for k in JOB_LEAD_STEPS]
+    next_tap = next((s["key"] for s in steps if not s["done"]), None)
+    return {
+        "assignment_id": a["_id"], "job_name": a.get("job_name"), "job_date": a.get("job_date"),
+        "arrival_time": a.get("arrival_time"), "start_address": a.get("start_address"),
+        "end_address": a.get("end_address"), "truck_id": a.get("truck_id"), "truck_name": a.get("truck_name"),
+        "is_today": a.get("job_date") == _et_today(), "exec_status": a.get("exec_status") or "Assigned",
+        "primary_id": pid, "primary_name": names.get(pid) or cl.get("primary_name"),
+        "secondary_id": sid, "secondary_name": (names.get(sid) if sid else None) or cl.get("secondary_name"),
+        "lead_source": cl.get("source"),
+        "role_on_job": role, "is_lead": role in ("primary", "secondary"),
+        "steps": steps, "next_tap": next_tap,
+        "inspection_items": [{"key": k, "label": v} for k, v in INSPECTION_ITEMS],
+        "critical_keys": sorted(CRITICAL_INSPECTION_KEYS),
+        "depart_override": cl.get("depart_override"), "depart_blocker": cl.get("depart_blocker"),
+        "corrections": cl.get("corrections") or [],
+        "clocked_in": bool(open_entry), "main_clock_at": cl.get("main_clock_at"),
+    }
+
+
+@api_router.get("/crew/job-lead/{assignment_id}")
+async def get_crew_lead_flow(assignment_id: str, p: Dict[str, Any] = Depends(require_crew)):
+    a = await mongo_db.assignments.find_one({"_id": assignment_id, "crew.user_id": p["user_id"]})
+    if not a:
+        raise HTTPException(status_code=404, detail="That job isn't on your schedule.")
+    return await _crew_lead_flow_state(a, p)
+
+
+class TapPayload(BaseModel):
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+    accuracy: Optional[float] = None
+    inspection_items: Optional[Dict[str, bool]] = None
+    damage_found: Optional[bool] = None
+    delay_factors: Optional[List[str]] = None
+    notes: Optional[str] = None
+    lead_identity: Optional[str] = None
+    no_defects: Optional[bool] = None
+    posttrip_items: Optional[Dict[str, bool]] = None
+
+
+async def _truck_last_job_today(a: Dict[str, Any]) -> bool:
+    truck_id = a.get("truck_id")
+    if not truck_id:
+        return True
+    others = await mongo_db.assignments.find(
+        {"truck_id": truck_id, "job_date": a.get("job_date"), "_id": {"$ne": a["_id"]}}).to_list(20)
+    if not others:
+        return True
+    return all((o.get("exec_status") == "Complete") for o in others)
+
+
+@api_router.post("/crew/job-lead/{assignment_id}/{tap_key}")
+async def crew_lead_tap(assignment_id: str, tap_key: str, payload: TapPayload, p: Dict[str, Any] = Depends(require_crew)):
+    """One of the eight discrete Crew Lead actions. Every side effect is an explicit tap — nothing here
+    is triggered by GPS, elapsed time, or another crew member's punch. Idempotent per step."""
+    if tap_key not in JOB_LEAD_STEPS:
+        raise HTTPException(status_code=404, detail="Unknown step.")
+    a = await mongo_db.assignments.find_one({"_id": assignment_id, "crew.user_id": p["user_id"]})
+    if not a:
+        raise HTTPException(status_code=404, detail="That job isn't on your schedule.")
+    if not _is_crew_lead(a, p["user_id"]):
+        raise HTTPException(status_code=403,
+                            detail="Only the Crew Lead runs this checklist. Ask the owner to name you Crew Lead.")
+    cl = a.get("crew_lead") or _build_crew_lead(a.get("crew", []))
+    if cl.get("source") == "driver_default" and not cl.get("owner_told_default"):
+        cl["owner_told_default"] = True
+        await mongo_db.assignments.update_one({"_id": assignment_id}, {"$set": {"crew_lead": cl}})
+        await notify(None, "owner", "Crew Lead defaulted to the driver",
+                     f"{p['name']} is running \"{a.get('job_name')}\" as Crew Lead (driver default). "
+                     f"Confirm or change it on the Crew Assign board.",
+                     "assignment", {"assignment_id": assignment_id})
+        await log_job_event(assignment_id, "crew_lead", f"{p['name']} acting as Crew Lead (driver default)", by=p["name"])
+    taps = dict(cl.get("taps") or {})
+    if tap_key in taps:   # idempotent — a repeated tap never re-fires a side effect (e.g. the customer text)
+        return await _crew_lead_flow_state(await mongo_db.assignments.find_one({"_id": assignment_id}), p)
+    expected = next((s for s in JOB_LEAD_STEPS if s not in taps), None)
+    if tap_key != expected:
+        raise HTTPException(status_code=409,
+                            detail=f"Do \u201c{JOB_LEAD_STEP_LABEL.get(expected, expected)}\u201d first.")
+    coords = None
+    if payload.lat is not None and payload.lng is not None:
+        coords = {"lat": payload.lat, "lng": payload.lng, "accuracy": payload.accuracy}
+    rec: Dict[str, Any] = {"by": p["name"], "by_id": p["user_id"], "at": now_iso()}
+    if coords:
+        rec["coords"] = coords
+    set_ops: Dict[str, Any] = {}
+
+    if tap_key == "clock_in":
+        entry = await mongo_db.time_entries.find_one({"user_id": p["user_id"], "clock_out": None})
+        if not entry:
+            raise HTTPException(status_code=409, detail="Clock in didn't register — tap Clock in again.")
+        rec["entry_id"] = entry["_id"]
+        rec["at"] = (entry.get("clock_in") or {}).get("at") or rec["at"]
+        pid, sid = _effective_lead_ids(a)
+        if p["user_id"] == pid or (p["user_id"] == sid and not cl.get("main_clock_entry_id")):
+            set_ops["crew_lead.main_clock_entry_id"] = entry["_id"]
+            set_ops["crew_lead.main_clock_at"] = rec["at"]
+        await log_job_event(assignment_id, "crew_lead", f"{p['name']} clocked in as Crew Lead", by=p["name"])
+
+    elif tap_key == "depart":
+        if a.get("truck_id"):
+            insp = await _record_crew_inspection(a, payload.inspection_items or {}, p, "pre_trip")
+            if insp["critical"] and not cl.get("depart_override"):
+                blocker = {"failed_labels": insp["critical_labels"], "at": now_iso(), "by": p["name"]}
+                await mongo_db.assignments.update_one({"_id": assignment_id},
+                                                      {"$set": {"crew_lead.depart_blocker": blocker}})
+                await notify(None, "owner", "Departure blocked — critical truck defect",
+                             f"{p['name']} can't leave on \"{a.get('job_name')}\": "
+                             + ", ".join(insp["critical_labels"]) + ". Clear it with an override or reschedule.",
+                             "flag", {"assignment_id": assignment_id})
+                await log_job_event(assignment_id, "crew_lead",
+                                    "Departure blocked — critical defect: " + ", ".join(insp["critical_labels"]),
+                                    by=p["name"])
+                raise HTTPException(status_code=409, detail={
+                    "error": "critical_defect", "failed": insp["critical_labels"],
+                    "message": "Critical truck defect — departure needs an owner override."})
+            rec["inspection"] = {"passed": insp["passed"], "failed": insp["failed_labels"]}
+        if cl.get("depart_override"):
+            rec["override"] = cl["depart_override"]
+        set_ops["crew_lead.depart_blocker"] = None
+        await _lead_advance_status(a, "En Route", p)
+        await _lead_mark_checklist(assignment_id, "warehouse_departure", p["name"])
+        sms = await _depart_send_tracking(a, by="Crew Lead — Depart")
+        rec["sms"] = sms
+        await log_job_event(assignment_id, "crew_lead", "Departed pickup — on-the-way text " + sms["status"], by=p["name"])
+
+    elif tap_key == "arrived":
+        await _lead_advance_status(a, "Arrived", p)
+        await _lead_mark_checklist(assignment_id, "arrival", p["name"])
+        await log_job_event(assignment_id, "crew_lead", "Arrived — walkthrough done", by=p["name"])
+
+    elif tap_key == "no_damage":
+        found = bool(payload.damage_found)
+        rec["damage_found"] = found
+        if found:
+            await notify(None, "owner", "Existing damage noted at pickup",
+                         f"{p['name']} logged existing damage on \"{a.get('job_name')}\" — check the job photos.",
+                         "flag", {"assignment_id": assignment_id})
+        await log_job_event(assignment_id, "crew_lead",
+                            "Damage check: existing damage found (photos)" if found else "Damage check: no existing damage",
+                            by=p["name"])
+
+    elif tap_key == "loaded":
+        await _lead_advance_status(a, "In Progress", p)
+        await _lead_mark_checklist(assignment_id, "loading", p["name"])
+        await log_job_event(assignment_id, "milestone", "Leaving pickup", by=p["name"])
+
+    elif tap_key == "dropoff":
+        await _lead_advance_status(a, "In Progress", p)
+        await log_job_event(assignment_id, "milestone", "At drop-off", by=p["name"])
+
+    elif tap_key == "complete":
+        rec["delay_factors"] = [d for d in (payload.delay_factors or []) if d in DELAY_FACTORS]
+        rec["as_found"] = (payload.notes or "").strip()[:1000]
+        rec["lead_identity"] = ((payload.lead_identity or p["name"]) or "")[:120]
+        await _lead_mark_checklist(assignment_id, "delivery", p["name"])
+        await _lead_mark_checklist(assignment_id, "completion", p["name"])
+        await _lead_advance_status(a, "Complete", p, notes=rec["as_found"] or None,
+                                   delay_factors=rec["delay_factors"] or None)
+        await log_job_event(assignment_id, "crew_lead", "Marked complete — all as quoted", by=p["name"])
+
+    elif tap_key == "clock_out":
+        rec["no_defects"] = payload.no_defects if payload.no_defects is not None else True
+        is_last = await _truck_last_job_today(a)
+        rec["last_job_of_day"] = is_last
+        if is_last and a.get("truck_id"):
+            posttrip = payload.posttrip_items
+            if posttrip is None:
+                posttrip = {k: bool(rec["no_defects"]) for k, _ in INSPECTION_ITEMS}
+            insp = await _record_crew_inspection(a, posttrip, p, "post_trip")
+            rec["posttrip"] = {"passed": insp["passed"], "failed": insp["failed_labels"]}
+            if not insp["passed"]:
+                await notify(None, "owner", "Post-trip defect reported",
+                             f"{p['name']} flagged a post-trip defect on {a.get('truck_name')}: "
+                             + ", ".join(insp["failed_labels"]) + ".",
+                             "flag", {"assignment_id": assignment_id})
+        await log_job_event(assignment_id, "crew_lead",
+                            "Clocked out — post-trip " + ("no defects" if rec.get("no_defects") else "DEFECT flagged"),
+                            by=p["name"])
+
+    set_ops[f"crew_lead.taps.{tap_key}"] = rec
+    set_ops["updated_at"] = now_iso()
+    await mongo_db.assignments.update_one({"_id": assignment_id}, {"$set": set_ops})
+    fresh = await mongo_db.assignments.find_one({"_id": assignment_id})
+    return await _crew_lead_flow_state(fresh, p)
 
 
 # ------- owner: timeclock management, live map

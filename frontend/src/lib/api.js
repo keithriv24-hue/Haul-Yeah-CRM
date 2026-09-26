@@ -95,6 +95,16 @@ export const listAssignmentsApi = (params = {}) => axios.get(`${API}/assignments
 export const createAssignmentApi = (a) => axios.post(`${API}/assignments`, a).then((r) => r.data);
 export const updateAssignmentApi = (id, a) => axios.patch(`${API}/assignments/${id}`, a).then((r) => r.data);
 export const dispatchBoardApi = (date) => axios.get(`${API}/dispatch/board`, { params: date ? { date } : {} }).then((r) => r.data);
+// Stage 2 — Crew Lead assignment + eight-tap flow
+export const setCrewLeadApi = (assignmentId, primary_id, secondary_id) =>
+  axios.patch(`${API}/assignments/${assignmentId}/crew-lead`, { primary_id, secondary_id: secondary_id || null }).then((r) => r.data);
+export const departOverrideApi = (assignmentId, reason, resolution = "override") =>
+  axios.post(`${API}/assignments/${assignmentId}/depart-override`, { reason, resolution }).then((r) => r.data);
+export const correctCrewLeadApi = (assignmentId, payload) =>
+  axios.post(`${API}/assignments/${assignmentId}/crew-lead/correct`, payload).then((r) => r.data);
+export const crewLeadFlowApi = (assignmentId) => axios.get(`${API}/crew/job-lead/${assignmentId}`).then((r) => r.data);
+export const crewLeadTapApi = (assignmentId, tapKey, payload = {}) =>
+  axios.post(`${API}/crew/job-lead/${assignmentId}/${tapKey}`, payload).then((r) => r.data);
 export const jobChecklistsApi = (id) => axios.get(`${API}/assignments/${id}/checklists`).then((r) => r.data);
 export const toggleChecklistItemApi = (id, listKey, idx, done) => axios.post(`${API}/assignments/${id}/checklists/${listKey}/items/${idx}`, { done }).then((r) => r.data);
 export const jobTimelineApi = (id) => axios.get(`${API}/assignments/${id}/timeline`).then((r) => r.data);

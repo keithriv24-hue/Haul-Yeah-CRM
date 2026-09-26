@@ -9,7 +9,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { InstructionBanner, SearchBar, searchMatch, EmptyState } from "@/components/Bits";
 import { JobChecklists } from "@/components/JobChecklists";
 import { InspectionDialog } from "@/components/fleet/InspectionDialog";
-import { myJobsApi, myTimeApi, setJobStatusApi, uploadJobPhotoApi, listJobPhotosApi, photoUrl, apiErrorMessage } from "@/lib/api";
+import { JobLeadFlow } from "@/components/crew/JobLeadFlow";
+import { myJobsApi, myTimeApi, setJobStatusApi, uploadJobPhotoApi, listJobPhotosApi, photoUrl, crewLeadFlowApi, apiErrorMessage } from "@/lib/api";
 import { fmtDate, todayISO, mapsLink } from "@/lib/format";
 
 const NEXT_LABEL = { "En Route": "I'm on the way", Arrived: "I've arrived", "In Progress": "Start the job", Complete: "Finish the job" };
@@ -110,6 +111,13 @@ const JobCard = ({ job, onChanged, clockedIn }) => {
   const [completeOpen, setCompleteOpen] = useState(false);
   const [notes, setNotes] = useState("");
   const [factors, setFactors] = useState([]);
+  const [leadFlow, setLeadFlow] = useState(undefined);
+
+  useEffect(() => {
+    crewLeadFlowApi(job.id).then(setLeadFlow).catch(() => setLeadFlow(null));
+  }, [job.id]);
+  const flowMode = !!leadFlow && typeof leadFlow === "object"; // Crew Lead flow owns status + checklists
+  const legacyMode = leadFlow === null; // flow unavailable → fall back to the old buttons
 
   const toggleFactor = (fct) =>
     setFactors((cur) => {
@@ -161,7 +169,7 @@ const JobCard = ({ job, onChanged, clockedIn }) => {
           {job.my_position && <span className="font-semibold text-accent-ink">You're the {job.my_position}</span>}
         </p>
       </div>
-      {next && (
+      {legacyMode && next && (
         <Button
           data-testid="job-next-status-btn"
           disabled={busy}
@@ -174,7 +182,8 @@ const JobCard = ({ job, onChanged, clockedIn }) => {
       {job.exec_status === "Complete" && job.completion_notes && (
         <p className="text-xs text-faint mt-2 bg-surface-sunk rounded p-2">Notes: {job.completion_notes}</p>
       )}
-      <ChecklistSection job={job} onChanged={onChanged} clockedIn={clockedIn} />
+      {flowMode && <JobLeadFlow assignmentId={job.id} seedFlow={leadFlow} onChanged={onChanged} />}
+      {legacyMode && <ChecklistSection job={job} onChanged={onChanged} clockedIn={clockedIn} />}
       <PhotoSection jobId={job.id} />
       <Dialog open={completeOpen} onOpenChange={setCompleteOpen}>
         <DialogContent data-testid="complete-job-dialog">

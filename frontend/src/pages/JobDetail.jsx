@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { InstructionBanner } from "@/components/Bits";
 import { ComplianceSection } from "@/components/ComplianceSection";
 import { JobEditDialog } from "@/components/job/JobEditDialog";
+import { CrewLeadDoc } from "@/components/crew/CrewLeadDoc";
 import { useAuth } from "@/components/AuthGate";
 import { PF, STATUS_PILL } from "@/lib/fields";
 import { fmtDate, fmtMoney, mapsLink } from "@/lib/format";
@@ -210,6 +211,9 @@ export default function JobDetail() {
                   ))}
                   {(a.crew || []).length === 0 && <span className="text-xs text-faint">No crew on this assignment.</span>}
                 </div>
+                {a.crew_lead && (a.crew || []).length > 0 && (
+                  <CrewLeadDoc assignment={a} canCorrect={role === "owner"} onChanged={load} />
+                )}
               </div>
             ))}
             {(data.crew_clock || []).length > 0 && (

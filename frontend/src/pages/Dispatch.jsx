@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
-  ChevronLeft, ChevronRight, MapPin, Truck, CalendarPlus, AlertTriangle, GripVertical, X, Clock, History,
+  ChevronLeft, ChevronRight, MapPin, Truck, CalendarPlus, AlertTriangle, GripVertical, X, Clock, History, Star,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -294,6 +294,12 @@ export default function Dispatch() {
                 {(a.crew || []).length === 0 && (
                   <span data-testid="job-no-crew" className="text-[11px] font-semibold text-warning border border-dashed border-warning/30 rounded-full px-2.5 py-1">
                     Drop crew here
+                  </span>
+                )}
+                {a.crew_lead?.primary_name && (a.crew || []).length > 0 && (
+                  <span data-testid="dispatch-crew-lead" className="inline-flex items-center gap-1 bg-primary/10 border border-primary/25 text-primary rounded-full px-2 py-0.5 text-[11px] font-semibold">
+                    <Star className="w-3 h-3 text-accent-ink" /> Lead: {a.crew_lead.primary_name}
+                    {a.crew_lead.secondary_name && <span className="text-faint font-normal">· backup {a.crew_lead.secondary_name}</span>}
                   </span>
                 )}
                 {a.truck_name ? (

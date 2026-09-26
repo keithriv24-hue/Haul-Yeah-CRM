@@ -18,12 +18,15 @@ export const AssignmentModal = ({ open, onOpenChange, initial, users, trucks, on
   const { records, loadTable } = useApp();
   const [form, setForm] = useState(BLANK);
   const [crewSel, setCrewSel] = useState({});
+  const [leadPrimary, setLeadPrimary] = useState("");
+  const [leadSecondary, setLeadSecondary] = useState("");
   const [warnings, setWarnings] = useState([]);
   const [busy, setBusy] = useState(false);
 
   const crewUsers = users.filter((u) => u.role === "crew" && u.active);
   const activeTrucks = trucks.filter((t) => t.active);
   const projects = records("projects").filter((p) => f(p, PF.status) !== "Cancelled");
+  const selectedCrew = crewUsers.filter((u) => crewSel[u.id]).map((u) => ({ id: u.id, name: u.name }));
 
   useEffect(() => {
     if (!open) return;
@@ -41,12 +44,32 @@ export const AssignmentModal = ({ open, onOpenChange, initial, users, trucks, on
         job_size: initial.job_size || "",
       });
       setCrewSel(Object.fromEntries((initial.crew || []).map((c) => [c.user_id, c.position])));
+      setLeadPrimary(initial.crew_lead?.primary_id || "");
+      setLeadSecondary(initial.crew_lead?.secondary_id || "");
     } else {
       setForm(BLANK);
       setCrewSel({});
+      setLeadPrimary("");
+      setLeadSecondary("");
     }
     setWarnings([]);
   }, [open, initial]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Keep the Crew Lead selection valid: default the primary to the Driver (else first crew),
+  // drop any lead who is no longer on the crew, and never let the backup equal the primary.
+  useEffect(() => {
+    const ids = Object.keys(crewSel);
+    setLeadPrimary((cur) => {
+      if (cur && crewSel[cur]) return cur;
+      if (!ids.length) return "";
+      return ids.find((id) => crewSel[id] === "Driver") || ids[0];
+    });
+    setLeadSecondary((cur) => (cur && crewSel[cur] ? cur : ""));
+  }, [crewSel]);
+
+  useEffect(() => {
+    if (leadSecondary && leadSecondary === leadPrimary) setLeadSecondary("");
+  }, [leadPrimary, leadSecondary]);
 
   const set = (k) => (v) => setForm((prev) => ({ ...prev, [k]: v }));
 
@@ -87,6 +110,8 @@ export const AssignmentModal = ({ open, onOpenChange, initial, users, trucks, on
       project_id: form.project_id || null,
       truck_id: form.truck_id || null,
       crew: Object.entries(crewSel).map(([user_id, position]) => ({ user_id, position })),
+      crew_lead_id: leadPrimary || null,
+      crew_lead_secondary_id: leadSecondary || null,
       ignore_warnings: ignore,
     };
     try {
@@ -190,6 +215,35 @@ export const AssignmentModal = ({ open, onOpenChange, initial, users, trucks, on
               ))}
             </div>
           </div>
+          {selectedCrew.length > 0 && (
+            <div data-testid="assignment-crew-lead-block" className="rounded-md border border-accent/25 bg-accent/5 p-3 space-y-3">
+              <p className="text-xs font-bold uppercase tracking-wide text-accent-ink">Crew Lead for this truck</p>
+              <div>
+                <Label>Primary Crew Lead</Label>
+                <Select value={leadPrimary || undefined} onValueChange={setLeadPrimary}>
+                  <SelectTrigger data-testid="assignment-lead-primary-select"><SelectValue placeholder="Pick the Crew Lead" /></SelectTrigger>
+                  <SelectContent>
+                    {selectedCrew.map((u) => (
+                      <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-[11px] text-faint mt-1">Runs the move-day checklist. A job role only — it doesn't change Driver/Helper pay.</p>
+              </div>
+              <div>
+                <Label>Backup Crew Lead (optional)</Label>
+                <Select value={leadSecondary || "none"} onValueChange={(v) => setLeadSecondary(v === "none" ? "" : v)}>
+                  <SelectTrigger data-testid="assignment-lead-secondary-select"><SelectValue placeholder="None" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">None</SelectItem>
+                    {selectedCrew.filter((u) => u.id !== leadPrimary).map((u) => (
+                      <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          )}
           {warnings.length > 0 && (
             <div data-testid="assignment-warnings" className="bg-warning/10 border border-warning/25 rounded-md p-3 space-y-1">
               <p className="text-xs font-bold text-warning flex items-center gap-1"><AlertTriangle className="w-3.5 h-3.5" /> Hold on:</p>
