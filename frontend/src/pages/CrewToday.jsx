@@ -80,7 +80,7 @@ export default function CrewToday() {
     setSendingTrack(true);
     try {
       await sendTrackingLinkApi(job.job_id);
-      toast.success("New tracking link texted to the customer.");
+      toast.success("Move page resent to the customer.");
       load();
     } catch (e) {
       toast.error(apiErrorMessage(e));
@@ -184,11 +184,11 @@ export default function CrewToday() {
           </div>
 
           <div className="surface p-4">
-            <p className="text-xs font-bold uppercase tracking-wide text-faint mb-1">Customer tracking link</p>
+            <p className="text-xs font-bold uppercase tracking-wide text-faint mb-1">Customer move page</p>
             <p className="text-sm text-faint">
               {job.tracking_sms_sent
-                ? "The customer already got a tracking text. Only send a new one if their link broke."
-                : "The customer gets one tracking text automatically when the first person clocks in."}
+                ? "The customer already got their move page. Resending texts the same link again."
+                : "The customer gets their move page automatically when the first person clocks in."}
             </p>
             <Button
               data-testid="send-tracking-link-btn"
@@ -198,7 +198,7 @@ export default function CrewToday() {
               onClick={() => setConfirmTrack(true)}
             >
               {sendingTrack ? <Loader2 className="w-4 h-4 animate-spin" /> : <LinkIcon className="w-4 h-4" />}
-              Send New Tracking Link
+              Resend move page
             </Button>
           </div>
 
@@ -226,9 +226,9 @@ export default function CrewToday() {
       <AlertDialog open={confirmTrack} onOpenChange={setConfirmTrack}>
         <AlertDialogContent data-testid="confirm-tracking-dialog">
           <AlertDialogHeader>
-            <AlertDialogTitle className="font-display">Text a new tracking link?</AlertDialogTitle>
+            <AlertDialogTitle className="font-display">Resend the move page?</AlertDialogTitle>
             <AlertDialogDescription>
-              This sends the customer a fresh link right away. The old link stops working.
+              This texts the customer their move page again — same link as before, so any link they already have still works.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { PageTitle } from "@/components/Bits";
 import { apiErrorMessage, getRates, saveRatesApi } from "@/lib/api";
 import { IntegrationsCard } from "@/components/IntegrationsCard";
+import { CustomerPageCard } from "@/components/CustomerPageCard";
 import { GmailCard } from "@/components/GmailCard";
 import { MetaCard } from "@/components/MetaCard";
 
@@ -235,6 +236,8 @@ export default function Settings() {
           )}
         </div>
       </div>
+
+      <CustomerPageCard />
 
       <IntegrationsCard />
       <GmailCard />

@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import {
-  CheckCircle2, XCircle, Clock3, MapPin, Truck, Users, Pencil, Briefcase, Plus, Loader2, PlugZap,
+  CheckCircle2, XCircle, Clock3, MapPin, Truck, Users, Pencil, Briefcase, Plus, Loader2, PlugZap, Send,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,6 +11,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { InstructionBanner, PageTitle, Private, SearchBar, searchMatch } from "@/components/Bits";
+import CustomerPageDialog, { PortalChip } from "@/components/portal/CustomerPageDialog";
 import { fmtMoney } from "@/lib/format";
 import { mapsUrl, fmtTime12 } from "@/lib/maps";
 import {
@@ -237,6 +238,7 @@ export default function JobsBoard() {
   const [trucks, setTrucks] = useState([]);
   const [reviews, setReviews] = useState([]);
   const [editJob, setEditJob] = useState(null);
+  const [portalJob, setPortalJob] = useState(null);
   const [query, setQuery] = useState("");
 
   const load = useCallback(() => {
@@ -301,9 +303,17 @@ export default function JobsBoard() {
                     {job.customer?.name || "Customer"}{job.customer?.phone ? ` · ${job.customer.phone}` : ""}
                   </p>
                 </div>
-                <Button data-testid={`assign-btn-${job.invoice_number}`} size="sm" variant="outline" className="gap-1.5" onClick={() => setEditJob(job)}>
-                  <Pencil className="w-3.5 h-3.5" /> {job.crew?.length ? "Edit" : "Assign"}
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button data-testid={`customer-page-btn-${job.invoice_number}`} size="sm" variant="outline" className="gap-1.5" onClick={() => setPortalJob(job)}>
+                    <Send className="w-3.5 h-3.5" /> Customer page
+                  </Button>
+                  <Button data-testid={`assign-btn-${job.invoice_number}`} size="sm" variant="outline" className="gap-1.5" onClick={() => setEditJob(job)}>
+                    <Pencil className="w-3.5 h-3.5" /> {job.crew?.length ? "Edit" : "Assign"}
+                  </Button>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <PortalChip job={job} />
               </div>
               <div className="space-y-1 bg-surface-sunk rounded-md p-3">
                 <PayRow label="Deposit Paid (25%)" info={job.deposit_paid} />
@@ -373,6 +383,14 @@ export default function JobsBoard() {
           onSaved={() => { setEditJob(null); load(); }}
           onClose={() => setEditJob(null)}
           onTruckCreated={(t) => setTrucks((list) => [...list, t])}
+        />
+      )}
+      {portalJob && (
+        <CustomerPageDialog
+          jobId={portalJob.id}
+          invoiceNumber={portalJob.invoice_number}
+          onClose={() => setPortalJob(null)}
+          onChanged={load}
         />
       )}
     </div>

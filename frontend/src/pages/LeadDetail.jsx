@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import {
   Phone, Mail, Calculator, CreditCard, Truck, MapPin, CalendarDays, CalendarPlus, Home, Lightbulb,
   Package, StickyNote, Search, MessageSquare, ArrowLeft, History, Pencil, Save, X, FileText, Undo2, BellRing,
-  Building2, DoorOpen,
+  Building2, DoorOpen, Send,
 } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { useAuth } from "@/components/AuthGate";
@@ -24,6 +24,8 @@ import { fmtDate, gmailCompose, gmailSearch, calendarTemplate, smsLink, winBackS
 import { quoteSmsBody } from "@/lib/quote";
 import { depositFromQuote } from "@/lib/pricing";
 import { bookLeadAsJob } from "@/lib/leadActions";
+import { listJobsApi } from "@/lib/api";
+import CustomerPageDialog from "@/components/portal/CustomerPageDialog";
 
 const InfoRow = ({ icon: Icon, label, children, isPrivate = true, testId }) => (
   <div className="flex items-start gap-2 text-sm" data-testid={testId}>
@@ -48,12 +50,17 @@ export default function LeadDetail() {
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({});
   const [savingEdit, setSavingEdit] = useState(false);
+  const [jobForLead, setJobForLead] = useState(null);
+  const [portalOpen, setPortalOpen] = useState(false);
 
   useEffect(() => {
     loadTable("leads");
     loadSchema("leads");
-    if (isOwner) loadSquareInvoices();
-  }, [loadTable, loadSchema, loadSquareInvoices, isOwner]);
+    if (isOwner) {
+      loadSquareInvoices();
+      listJobsApi().then((js) => setJobForLead((js || []).find((j) => j.lead_id === id) || null)).catch(() => setJobForLead(null));
+    }
+  }, [loadTable, loadSchema, loadSquareInvoices, isOwner, id]);
 
   const lead = records("leads").find((r) => r.id === id);
   const { loading } = tableState("leads");
@@ -168,6 +175,20 @@ export default function LeadDetail() {
           </SelectContent>
         </Select>
       </div>
+
+      {isOwner && jobForLead && (
+        <Button data-testid="lead-customer-page-btn" variant="outline" size="sm" className="gap-1.5 mb-4" onClick={() => setPortalOpen(true)}>
+          <Send className="w-4 h-4" /> Customer page (Job #{jobForLead.invoice_number})
+        </Button>
+      )}
+      {portalOpen && jobForLead && (
+        <CustomerPageDialog
+          jobId={jobForLead.id}
+          invoiceNumber={jobForLead.invoice_number}
+          onClose={() => setPortalOpen(false)}
+          onChanged={() => listJobsApi().then((js) => setJobForLead((js || []).find((j) => j.lead_id === id) || null)).catch(() => {})}
+        />
+      )}
 
       <InstructionBanner testId="lead-detail-hint">{nextStepHint(lead)}</InstructionBanner>
 

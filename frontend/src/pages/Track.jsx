@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { Truck, MapPin, Users, CalendarDays } from "lucide-react";
+import { Truck, MapPin, Users, CalendarDays, Archive, Phone } from "lucide-react";
 import { trackApi } from "@/lib/api";
 import { fmtTime12 } from "@/lib/maps";
 import { PortalBalance, PortalDetails, PortalUploads, PortalTip, PortalReview } from "@/components/portal/PortalSections";
@@ -13,6 +13,8 @@ const daysUntil = (d) => {
   const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
   return Math.round((new Date(`${d}T12:00:00`) - new Date(`${today}T12:00:00`)) / 86400000);
 };
+
+const telHref = (p) => `tel:${(p || "").replace(/[^\d+]/g, "")}`;
 
 const STATUS_LABEL = {
   Scheduled: "Your move is booked",
@@ -27,6 +29,26 @@ export default function Track() {
   const { token } = useParams();
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
+
+  // Privacy: keep this customer page out of search engines and out of product analytics /
+  // session recording. Scoped to /track only — Emergent's scripts stay in place globally.
+  useEffect(() => {
+    const meta = document.createElement("meta");
+    meta.name = "robots";
+    meta.content = "noindex,nofollow";
+    document.head.appendChild(meta);
+    try {
+      window.posthog?.opt_out_capturing?.();
+      window.posthog?.stopSessionRecording?.();
+    } catch { /* posthog may not be present */ }
+    return () => {
+      document.head.removeChild(meta);
+      try {
+        window.posthog?.opt_in_capturing?.();
+        window.posthog?.startSessionRecording?.();
+      } catch { /* posthog may not be present */ }
+    };
+  }, []);
 
   const load = useCallback(() => {
     trackApi(token)
@@ -46,9 +68,33 @@ export default function Track() {
   const firstName = (data?.customer_name || "").split(" ")[0];
   const crewNames = (data?.crew || []).map((c) => c.name.split(" ")[0]).join(", ");
 
-  return (
+  const Shell = ({ children }) => (
     <div data-testid="track-page" className="min-h-screen bg-primary text-white flex flex-col items-center px-4 py-10 gap-4">
       <img src="/logo.png" alt="Haul Yeah Moving" className="w-48 rounded-lg" />
+      {children}
+      <p className="mt-2 text-sm text-white/50 italic">Weekend moves, flat price, no surprises.</p>
+    </div>
+  );
+
+  if (data?.archived) {
+    return (
+      <Shell>
+        <div data-testid="track-archived" className="w-full max-w-md mt-4 bg-white/5 border border-white/10 rounded-2xl p-6 text-center">
+          <Archive className="w-10 h-10 text-white/30 mx-auto" />
+          <p className="mt-3 text-sm text-white/80">This move is archived.</p>
+          {data.business_phone && (
+            <a data-testid="track-archived-call" href={telHref(data.business_phone)}
+              className="mt-3 inline-flex items-center gap-2 rounded-full bg-accent hover:bg-accent-press text-white font-bold text-sm px-4 py-2">
+              <Phone className="w-4 h-4" /> Text us at {data.business_phone}
+            </a>
+          )}
+        </div>
+      </Shell>
+    );
+  }
+
+  return (
+    <Shell>
       <div className="w-full max-w-md mt-4 bg-white/5 border border-white/10 rounded-2xl p-6 text-center">
         {error ? (
           <>
@@ -79,6 +125,16 @@ export default function Track() {
             {data.status && (
               <p data-testid="track-job-status" className="mt-2 text-sm font-semibold text-white/80">{STATUS_LABEL[data.status] || data.status}</p>
             )}
+            {(data.pickup_address || data.dropoff_address) && (
+              <div data-testid="track-addresses" className="mt-4 border-t border-white/10 pt-3 text-sm text-white/80 space-y-1.5 text-left">
+                {data.pickup_address && (
+                  <p className="flex items-start gap-2"><MapPin className="w-4 h-4 text-white/40 mt-0.5 shrink-0" /><span><span className="text-white/45">From </span>{data.pickup_address}</span></p>
+                )}
+                {data.dropoff_address && (
+                  <p className="flex items-start gap-2"><MapPin className="w-4 h-4 text-accent-ink mt-0.5 shrink-0" /><span><span className="text-white/45">To </span>{data.dropoff_address}</span></p>
+                )}
+              </div>
+            )}
             <div className="mt-5">
               {data.live && pos ? (
                 <>
@@ -101,10 +157,6 @@ export default function Track() {
               ) : data.live ? (
                 <p data-testid="track-status" className="inline-flex items-center gap-2 text-success font-bold">
                   <Truck className="w-5 h-5" /> Crew is on the clock — waiting for a location signal…
-                </p>
-              ) : data.updated_minutes_ago != null && data.updated_minutes_ago <= 120 ? (
-                <p data-testid="track-status" className="text-warning font-bold">
-                  Crew is en route — last updated {data.updated_minutes_ago} minute{data.updated_minutes_ago === 1 ? "" : "s"} ago.
                 </p>
               ) : (
                 <p data-testid="track-status" className="text-white/70 font-medium">
@@ -134,15 +186,19 @@ export default function Track() {
       {data && !error && (
         <>
           <PortalBalance data={data} />
-          <PortalDetails token={token} initial={data.details} />
-          <PortalUploads token={token} initial={data.uploads} />
-          {data.tips_enabled && <PortalTip token={token} crewNames={crewNames} />}
-          <PortalReview token={token} reviewLink={data.review_link} alreadyDone={data.review_submitted} />
+          <PortalDetails token={token} initial={data.details} readOnly={!data.editable} />
+          <PortalUploads token={token} initial={data.uploads} readOnly={!data.editable} />
+          {data.show_tip && data.tips_enabled && <PortalTip token={token} crewNames={crewNames} />}
+          {data.show_review && <PortalReview token={token} reviewLink={data.review_link} alreadyDone={data.review_submitted} />}
         </>
       )}
 
-      <p className="text-xs text-white/40 mt-2">Link not working? Reply to our text and we'll send you a new one.</p>
-      <p className="mt-2 text-sm text-white/50 italic">Weekend moves, flat price, no surprises.</p>
-    </div>
+      {data?.business_phone && (
+        <a data-testid="track-footer-call" href={telHref(data.business_phone)} className="mt-1 inline-flex items-center gap-1.5 text-sm text-white/60 hover:text-white">
+          <Phone className="w-3.5 h-3.5" /> Questions? Text us at {data.business_phone}
+        </a>
+      )}
+      <p className="text-xs text-white/40">Link not working? Reply to our text and we'll send you a new one.</p>
+    </Shell>
   );
 }

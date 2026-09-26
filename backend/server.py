@@ -935,6 +935,136 @@ async def save_business(payload: BusinessPayload, role: str = Depends(require_au
     return {"reviewLink": link}
 
 
+# ------- Customer Page (portal) settings + message templates (settings _id "portal")
+PORTAL_TEMPLATE_KEYS = ("booked", "move_day", "wrap_up")
+PORTAL_DEFAULTS = {
+    "booked": ("Hi {first_name}, thanks for choosing Haul Yeah Moving! Here's your move page for {move_date}: {link}\n"
+               "See your crew, track the truck on move day, add gate/parking details, and view your balance. "
+               "No login needed. Questions? Just reply here."),
+    "move_day": ("Haul Yeah Moving: Your crew is on the way! Track them live: {link}\n"
+                 "Reply here if you need us."),
+    "wrap_up": ("Thanks for moving with Haul Yeah, {first_name}! Your receipt, crew tip, and review link are all here: {link}\n"
+                "We appreciate you!"),
+}
+
+
+async def _portal_settings() -> Dict[str, Any]:
+    return await mongo_db.settings.find_one({"_id": "portal"}) or {}
+
+
+def _portal_template(portal: Dict[str, Any], key: str) -> str:
+    t = (portal.get("templates") or {}).get(key)
+    return t if isinstance(t, str) and t.strip() else PORTAL_DEFAULTS.get(key, "")
+
+
+async def _portal_base(portal: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    """Customer-facing link base: the owner's Settings value, else the PUBLIC_BASE_URL env.
+    Never the request host — a customer link must not point at whatever host answered."""
+    portal = portal if portal is not None else await _portal_settings()
+    base = (portal.get("portal_base_url") or "").strip() or os.environ.get("PUBLIC_BASE_URL", "").strip()
+    base = base.rstrip("/")
+    return base or None
+
+
+async def _business_phone(portal: Optional[Dict[str, Any]] = None) -> str:
+    portal = portal if portal is not None else await _portal_settings()
+    bp = (portal.get("business_phone") or "").strip()
+    if bp:
+        return bp
+    return (await openphone_config()).get("number") or ""
+
+
+def _fmt_move_date(d: Any) -> str:
+    dt = _c_date(d)
+    return f"{dt.strftime('%a, %b')} {dt.day}" if dt else ""
+
+
+def _render_portal_message(tmpl: str, job: Dict[str, Any], link: str, business_phone: str = "") -> str:
+    """Fill {first_name} {move_date} {link} {job_number} {business_phone}. Unknown or empty
+    variables render as empty strings — never '{undefined}' or 'None'."""
+    cust = job.get("customer") or {}
+    vals = {
+        "first_name": (cust.get("name") or "").split(" ")[0] or "",
+        "move_date": _fmt_move_date(job.get("job_date")),
+        "link": link or "",
+        "job_number": str(job.get("invoice_number") or ""),
+        "business_phone": business_phone or "",
+    }
+    out = tmpl or ""
+    for k, v in vals.items():
+        out = out.replace("{" + k + "}", str(v))
+    return re.sub(r"\{[a-zA-Z_][a-zA-Z0-9_]*\}", "", out)   # strip any leftover placeholder
+
+
+class PortalSettingsPayload(BaseModel):
+    portal_base_url: Optional[str] = None
+    business_phone: Optional[str] = None
+    license_number: Optional[str] = None
+    brochure_url: Optional[str] = None
+    templates: Optional[Dict[str, str]] = None
+    prep_checklist: Optional[List[str]] = None
+    policy_cancellation: Optional[str] = None
+    policy_protection: Optional[str] = None
+    policy_claims: Optional[str] = None
+
+
+async def _portal_settings_out(portal: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    portal = portal if portal is not None else await _portal_settings()
+    return {
+        "portal_base_url": (portal.get("portal_base_url") or "").strip(),
+        "business_phone": await _business_phone(portal),
+        "license_number": (portal.get("license_number") or "").strip(),
+        "brochure_url": (portal.get("brochure_url") or "").strip(),
+        "templates": {k: _portal_template(portal, k) for k in PORTAL_TEMPLATE_KEYS},
+        "base_effective": await _portal_base(portal),
+        "env_base_set": bool(os.environ.get("PUBLIC_BASE_URL", "").strip()),
+        "prep_checklist": portal.get("prep_checklist") or [],
+        "policy_cancellation": portal.get("policy_cancellation") or "",
+        "policy_protection": portal.get("policy_protection") or "",
+        "policy_claims": portal.get("policy_claims") or "",
+    }
+
+
+@api_router.get("/settings/portal")
+async def get_portal_settings(p: Dict[str, Any] = Depends(require_owner)):
+    return await _portal_settings_out()
+
+
+@api_router.put("/settings/portal")
+async def save_portal_settings(payload: PortalSettingsPayload, p: Dict[str, Any] = Depends(require_owner)):
+    data = payload.model_dump(exclude_none=True)
+    updates: Dict[str, Any] = {}
+    if "portal_base_url" in data:
+        base = data["portal_base_url"].strip().rstrip("/")
+        if base and not base.startswith("https://"):
+            raise HTTPException(status_code=422, detail="The Customer page URL must start with https://")
+        updates["portal_base_url"] = base
+    for k in ("business_phone", "license_number", "brochure_url",
+              "policy_cancellation", "policy_protection", "policy_claims"):
+        if k in data:
+            updates[k] = str(data[k]).strip()
+    if isinstance(data.get("templates"), dict):
+        updates["templates"] = {k: str(data["templates"][k]).strip()[:1000]
+                                for k in PORTAL_TEMPLATE_KEYS if isinstance(data["templates"].get(k), str)}
+    if isinstance(data.get("prep_checklist"), list):
+        updates["prep_checklist"] = [str(x).strip()[:300] for x in data["prep_checklist"] if str(x).strip()][:30]
+    if updates:
+        await mongo_db.settings.update_one({"_id": "portal"}, {"$set": updates}, upsert=True)
+        await audit(p, "updated customer page settings", "settings", {"fields": list(updates.keys())})
+    out = await _portal_settings_out()
+    out["warning"] = None
+    base = out["portal_base_url"]
+    if base:   # a typo here breaks every customer link — warn (never block) if it isn't this app
+        try:
+            async with httpx.AsyncClient(timeout=6.0) as client:
+                r = await client.get(f"{base}/api/portal/ping")
+            if r.status_code >= 400 or "haul-yeah-moving" not in (r.text or ""):
+                out["warning"] = "That URL didn't answer as this app. Double-check it — a typo breaks every customer link."
+        except Exception:
+            out["warning"] = "Couldn't reach that URL. Double-check it — a typo breaks every customer link."
+    return out
+
+
 SQUARE_VERSION = "2024-08-21"
 DEFAULT_TRUCK_PICKUP = "3 Slater Dr, Elizabeth, NJ"
 OPENPHONE_API_URL = "https://api.openphone.com/v1"
@@ -1174,10 +1304,6 @@ LEAD_F = {
     "move_date": "fldWUAHyvTippkVGd", "from": "fldHysDcz9GAos0zD", "to": "fldIKwCb5ZqAP1fEh",
     "quote": "fldI5HufBfW35A1fD",
 }
-
-TRACKING_SMS_TEMPLATE = ("Haul Yeah Moving: Your crew is on the way! Track them here: {link}. "
-                         "If the link isn't working, reply to this message and we'll send you a new one. "
-                         "— Weekend moves, flat price, no surprises.")
 
 
 def _et_today() -> str:
@@ -1836,30 +1962,60 @@ async def crew_active_job(p: Dict[str, Any] = Depends(require_crew)):
         "pickup_address": job.get("pickup_address"), "dropoff_address": job.get("dropoff_address"),
         "customer": job.get("customer") or {},
         "crew": teammates,
-        "tracking_sms_sent": (job.get("tracking") or {}).get("sms_sent", False),
+        "tracking_sms_sent": bool((job.get("tracking") or {}).get("onway_sms_sent")
+                                  or (job.get("tracking") or {}).get("sms_sent")),
         "review_link": business.get("reviewLink", ""),
         "is_today": job.get("job_date") == today,
     }, "upcoming_count": len(docs) - 1}
 
 
-async def _send_tracking_sms(job: Dict[str, Any], base_url: str) -> None:
-    token = uuid4().hex
-    link = f"{base_url}/track/{token}"
-    await openphone_send_sms((job.get("customer") or {}).get("phone"), TRACKING_SMS_TEMPLATE.format(link=link))
-    await mongo_db.jobs.update_one({"_id": job["_id"]}, {"$set": {
-        "tracking": {"token": token, "sms_sent": True, "sms_sent_at": now_iso()}}})
+async def _ensure_tracking_token(job: Dict[str, Any]) -> str:
+    """One stable token per job. Reuse it forever; only create one if it is truly missing.
+    Sending NEVER rotates it — only an explicit owner Reset does."""
+    token = (job.get("tracking") or {}).get("token")
+    if not token:
+        token = uuid4().hex
+        await mongo_db.jobs.update_one({"_id": job["_id"]}, {"$set": {"tracking.token": token}})
+        job.setdefault("tracking", {})["token"] = token
+    return token
+
+
+async def _log_portal_send(job: Dict[str, Any], channel: str, template_key: str, by: str) -> Dict[str, Any]:
+    entry = {"at": now_iso(), "channel": channel, "template_key": template_key, "by": by or "Owner"}
+    await mongo_db.jobs.update_one({"_id": job["_id"]}, {"$push": {"portal_sends": entry}})
+    return entry
+
+
+async def _send_tracking_sms(job: Dict[str, Any], by: str = "Auto — crew clock-in",
+                             template_key: str = "move_day", mark_onway: bool = True) -> None:
+    portal = await _portal_settings()
+    base = await _portal_base(portal)
+    if not base:
+        raise HTTPException(status_code=503,
+                            detail="Set your Customer page URL in Settings → Customer Page first.")
+    token = await _ensure_tracking_token(job)
+    link = f"{base}/track/{token}"
+    text = _render_portal_message(_portal_template(portal, template_key), job, link, await _business_phone(portal))
+    await openphone_send_sms((job.get("customer") or {}).get("phone"), text)
+    if mark_onway:
+        await mongo_db.jobs.update_one({"_id": job["_id"]}, {"$set": {
+            "tracking.onway_sms_sent": True, "tracking.onway_sms_sent_at": now_iso()}})
+    await _log_portal_send(job, "sms", template_key, by)
 
 
 async def maybe_send_tracking_sms(p: Dict[str, Any], request: Request) -> None:
     job = await mongo_db.jobs.find_one({"crew.user_id": p["user_id"], "job_date": _et_today()})
-    if not job or (job.get("tracking") or {}).get("sms_sent"):
+    if not job:
+        return
+    tr = job.get("tracking") or {}
+    if tr.get("onway_sms_sent") or tr.get("sms_sent"):   # legacy sms_sent=True counts as already sent
         return
     try:
-        await _send_tracking_sms(job, _request_base(request))
-        await notify(None, "owner", "Tracking link sent",
-                     f"The customer for Job #{job['invoice_number']} got the tracking text.", "info")
+        await _send_tracking_sms(job)
+        await notify(None, "owner", "Move-day text sent",
+                     f"The customer for Job #{job['invoice_number']} got the move-day tracking text.", "info")
     except HTTPException as exc:
-        detail = exc.detail if isinstance(exc.detail, str) else "Could not send the tracking text."
+        detail = exc.detail if isinstance(exc.detail, str) else "Could not send the move-day text."
         await notify(None, "owner", "Tracking text NOT sent", f"Job #{job['invoice_number']}: {detail}", "warning")
 
 
@@ -1868,54 +2024,131 @@ async def send_new_tracking_link(job_id: str, request: Request, p: Dict[str, Any
     job = await mongo_db.jobs.find_one({"_id": job_id, "crew.user_id": p["user_id"]})
     if not job:
         raise HTTPException(status_code=404, detail="That job isn't yours.")
-    await _send_tracking_sms(job, _request_base(request))
-    await audit(p, "sent new tracking link", f"job {job.get('invoice_number')}")
-    return {"ok": True, "message": "New tracking link sent to the customer."}
+    await _send_tracking_sms(job, by=p.get("name") or "Crew")   # reuses the SAME token — old link keeps working
+    await audit(p, "resent the move page", f"job {job.get('invoice_number')}")
+    return {"ok": True, "message": "Move page resent to the customer."}
+
+
+async def _job_assignment_ids(job: Dict[str, Any]) -> List[str]:
+    """Assignment(s) belonging to THIS job — matched by the Airtable project link, falling back
+    to job_date + crew ONLY when the job has no project link."""
+    pr = job.get("project_record_id")
+    if pr:
+        docs = await mongo_db.assignments.find({"project_id": pr}).to_list(20)
+        if docs:
+            return [d["_id"] for d in docs]
+    crew_ids = [c["user_id"] for c in job.get("crew", [])]
+    if job.get("job_date") and crew_ids:
+        docs = await mongo_db.assignments.find(
+            {"job_date": job["job_date"], "crew.user_id": {"$in": crew_ids}}).to_list(20)
+        return [d["_id"] for d in docs]
+    return []
+
+
+def _portal_stage(job: Dict[str, Any], status: str, today_str: str) -> Dict[str, Any]:
+    jd = (job.get("job_date") or "")[:10]
+    today = _c_date(today_str)
+    move = _c_date(jd)
+    days_after = (today - move).days if (today and move) else None   # >0 = N days after the move
+    is_complete = status == "Complete"
+    archived = days_after is not None and days_after > 120
+    show_review = is_complete or (days_after is not None and days_after > 0)
+    show_tip = status in ("Arrived", "In Progress", "Complete") or (days_after is not None and 0 <= days_after <= 14)
+    return {"archived": archived, "is_complete": is_complete, "days_after_move": days_after,
+            "show_review": show_review, "show_tip": show_tip, "editable": not is_complete and not archived}
+
+
+async def _log_portal_view(job: Dict[str, Any], request: Request) -> None:
+    if request.headers.get("Authorization", "").startswith("Bearer "):
+        try:
+            decode_token(request)   # a logged-in CRM user (owner preview) — don't count it as a customer view
+            return
+        except HTTPException:
+            pass
+    views = job.get("portal_views") or {}
+    last = views.get("last_at")
+    if last:
+        try:
+            if (datetime.now(timezone.utc) - datetime.fromisoformat(last)).total_seconds() < 600:
+                return   # throttle: 1 logged view per 10 minutes per job
+        except ValueError:
+            pass
+    now = now_iso()
+    first = not views.get("count")
+    await mongo_db.jobs.update_one({"_id": job["_id"]}, {"$set": {"portal_views": {
+        "count": (views.get("count") or 0) + 1, "first_at": views.get("first_at") or now, "last_at": now}}})
+    if first:
+        who = (job.get("customer") or {}).get("name") or "The customer"
+        await _owner_portal_ping(job, "Move page opened",
+                                 f"{who} opened their move page (Job #{job.get('invoice_number')}).")
+
+
+@public_router.get("/portal/ping")
+async def portal_ping():
+    """Public marker so the owner's Customer-page URL can be validated without auth."""
+    return {"app": "haul-yeah-moving"}
 
 
 @public_router.get("/track/{token}")
-async def track_job(token: str) -> Dict[str, Any]:
+async def track_job(token: str, request: Request) -> Dict[str, Any]:
     job = await mongo_db.jobs.find_one({"tracking.token": token})
     if not job:
         raise HTTPException(status_code=404, detail="This tracking link is no longer active. Reply to our text and we'll send a new one.")
+    await _log_portal_view(job, request)
     crew_ids = [c["user_id"] for c in job.get("crew", [])]
-    live = False
-    position = None
-    minutes_ago = None
-    if crew_ids:
-        open_entries = await mongo_db.time_entries.find({"user_id": {"$in": crew_ids}, "clock_out": None}).to_list(20)
-        live = bool(open_entries)
-        pings = await mongo_db.gps_pings.find({"user_id": {"$in": crew_ids}}).sort("at", -1).limit(1).to_list(1)
-        if pings:
-            try:
-                at = datetime.fromisoformat(pings[0]["at"])
-                minutes_ago = max(0, int((datetime.now(timezone.utc) - at).total_seconds() // 60))
-            except ValueError:
-                minutes_ago = None
-            if live and minutes_ago is not None and minutes_ago <= 10:
-                position = {"lat": pings[0]["lat"], "lng": pings[0]["lng"]}
     status = await _track_status(job, crew_ids)
+    today = _et_today()
+    stage = _portal_stage(job, status, today)
+    portal_settings = await _portal_settings()
+    business_phone = await _business_phone(portal_settings)
+    if stage["archived"]:   # >120 days after the move — stop returning money, uploads, details
+        return {"archived": True, "status": status, "job_date": job.get("job_date"),
+                "invoice_number": job.get("invoice_number"), "business_phone": business_phone,
+                "customer_name": (job.get("customer") or {}).get("name", "")}
+    # Live GPS ONLY for this job, ONLY on move day, ONLY while not complete, ONLY from a crew
+    # member clocked into THIS job's assignment. Never bleed a crew's other job onto this page.
+    live, position, minutes_ago = False, None, None
+    if crew_ids and job.get("job_date") == today and not stage["is_complete"]:
+        assignment_ids = await _job_assignment_ids(job)
+        q: Dict[str, Any] = {"clock_out": None, "user_id": {"$in": crew_ids}}
+        if assignment_ids:
+            q["assignment_id"] = {"$in": assignment_ids}
+        open_entries = await mongo_db.time_entries.find(q).to_list(20)
+        if open_entries:
+            live = True
+            entry_users = [e["user_id"] for e in open_entries]
+            pings = await mongo_db.gps_pings.find({"user_id": {"$in": entry_users}}).sort("at", -1).limit(1).to_list(1)
+            if pings:
+                try:
+                    at = datetime.fromisoformat(pings[0]["at"])
+                    minutes_ago = max(0, int((datetime.now(timezone.utc) - at).total_seconds() // 60))
+                except ValueError:
+                    minutes_ago = None
+                if minutes_ago is not None and minutes_ago <= 10:
+                    position = {"lat": pings[0]["lat"], "lng": pings[0]["lng"]}
     money = _track_money(job)
     portal = await _track_portal_bits(job)
     return {"invoice_number": job.get("invoice_number"), "job_date": job.get("job_date"),
             "start_time": job.get("start_time"), "live": live, "position": position,
-            "updated_minutes_ago": minutes_ago,
+            "updated_minutes_ago": minutes_ago, "business_phone": business_phone,
             "customer_name": (job.get("customer") or {}).get("name", ""),
             "status": status,
             "pickup_address": job.get("pickup_address"), "dropoff_address": job.get("dropoff_address"),
             "crew": [{"name": c.get("name", "Crew member"), "position": c.get("position", "Helper")}
                      for c in job.get("crew", [])],
             "truck_name": job.get("truck_name") or "",
-            **money, **portal}
+            **stage, **money, **portal}
 
 
 # ------- customer portal (phase D — extends the public tracking link)
 
 async def _track_status(job: Dict[str, Any], crew_ids: List[str]) -> str:
-    if crew_ids and job.get("job_date"):
-        a = await mongo_db.assignments.find_one({"job_date": job["job_date"], "crew.user_id": {"$in": crew_ids}})
-        if a and a.get("exec_status") and a["exec_status"] != "Assigned":
-            return a["exec_status"]
+    # Match the assignment to THIS job (by Airtable project link), so a crew's second job of the
+    # day can never flip this customer's status. Fall back to date+crew only when unlinked.
+    assignment_ids = await _job_assignment_ids(job)
+    a = await mongo_db.assignments.find_one({"_id": {"$in": assignment_ids}}) if assignment_ids else None
+    if a and a.get("exec_status") and a["exec_status"] != "Assigned":
+        return a["exec_status"]
     return "Crew assigned" if job.get("crew") else "Scheduled"
 
 
@@ -2144,7 +2377,7 @@ async def portal_review(token: str, payload: PortalReviewPayload):
                              f"{who} (Job #{job.get('invoice_number')}) left {stars}"
                              + (f': "{review["text"][:120]}"' if review["text"] else "."))
     business = await mongo_db.settings.find_one({"_id": "business"}) or {}
-    return {"ok": True, "review_link": business.get("reviewLink", "") if payload.rating >= 4 else ""}
+    return {"ok": True, "review_link": business.get("reviewLink", "")}
 
 
 @api_router.get("/jobs/{job_id}/portal-uploads")
@@ -2156,6 +2389,77 @@ async def job_portal_uploads(job_id: str, p: Dict[str, Any] = Depends(require_ow
     return {"token": (job.get("tracking") or {}).get("token"),
             "uploads": [{"id": u["_id"], "kind": u.get("kind"), "filename": u.get("filename"),
                          "content_type": u.get("content_type"), "created_at": u.get("created_at")} for u in ups]}
+
+
+# ------- Owner: "Send customer page" (stable link, multi-channel send, view history, reset)
+
+def _portal_state(job: Dict[str, Any]) -> Dict[str, Any]:
+    sends = job.get("portal_sends") or []
+    views = job.get("portal_views") or {}
+    ack = job.get("docs_ack") or {}
+    return {
+        "sends": [{"at": s.get("at"), "channel": s.get("channel"),
+                   "template_key": s.get("template_key"), "by": s.get("by")} for s in sends],
+        "views": {"count": views.get("count") or 0, "first_at": views.get("first_at"), "last_at": views.get("last_at")},
+        "docs": {"ack_at": ack.get("at"), "ack_name": ack.get("name")},
+    }
+
+
+@api_router.get("/jobs/{job_id}/portal")
+async def get_job_portal(job_id: str, p: Dict[str, Any] = Depends(require_owner)):
+    job = await mongo_db.jobs.find_one({"_id": job_id})
+    if not job:
+        raise HTTPException(status_code=404, detail="No such job.")
+    portal = await _portal_settings()
+    base = await _portal_base(portal)
+    token = (job.get("tracking") or {}).get("token")
+    url = f"{base}/track/{token}" if (base and token) else None
+    bp = await _business_phone(portal)
+    rendered = {k: _render_portal_message(_portal_template(portal, k), job, url or "", bp) for k in PORTAL_TEMPLATE_KEYS}
+    return {"url": url, "base_set": bool(base), "customer": job.get("customer") or {},
+            "job_date": job.get("job_date"), "invoice_number": job.get("invoice_number"),
+            "templates": rendered, "business_phone": bp, **_portal_state(job)}
+
+
+class PortalSendPayload(BaseModel):
+    channel: str
+    template_key: str = "booked"
+    message: str = ""
+
+
+@api_router.post("/jobs/{job_id}/portal/send")
+async def send_job_portal(job_id: str, payload: PortalSendPayload, p: Dict[str, Any] = Depends(require_owner)):
+    job = await mongo_db.jobs.find_one({"_id": job_id})
+    if not job:
+        raise HTTPException(status_code=404, detail="No such job.")
+    channel = (payload.channel or "").lower()
+    if channel not in ("sms", "copy", "email"):
+        raise HTTPException(status_code=422, detail="Channel must be sms, copy, or email.")
+    base = await _portal_base()
+    if not base:
+        raise HTTPException(status_code=503, detail="Set your Customer page URL in Settings → Customer Page first.")
+    token = await _ensure_tracking_token(job)
+    url = f"{base}/track/{token}"
+    if channel == "sms":   # only OpenPhone actually sends; a failure keeps the dialog open for Copy
+        msg = (payload.message or "").strip()
+        if not msg:
+            raise HTTPException(status_code=422, detail="Write the message first.")
+        await openphone_send_sms((job.get("customer") or {}).get("phone"), msg)
+    await _log_portal_send(job, channel, payload.template_key, p.get("name") or "Owner")
+    await audit(p, f"sent customer page ({channel})", f"job {job.get('invoice_number')}", {"template": payload.template_key})
+    return {"ok": True, "url": url}
+
+
+@api_router.post("/jobs/{job_id}/portal/reset")
+async def reset_job_portal(job_id: str, p: Dict[str, Any] = Depends(require_owner)):
+    job = await mongo_db.jobs.find_one({"_id": job_id})
+    if not job:
+        raise HTTPException(status_code=404, detail="No such job.")
+    token = uuid4().hex
+    await mongo_db.jobs.update_one({"_id": job["_id"]}, {"$set": {"tracking.token": token}})
+    await audit(p, "reset the customer page link", f"job {job.get('invoice_number')}")
+    base = await _portal_base()
+    return {"ok": True, "url": f"{base}/track/{token}" if base else None}
 
 
 class ReviewRequestPayload(BaseModel):
@@ -4824,8 +5128,8 @@ async def list_users(p: Dict[str, Any] = Depends(require_owner)):
 @api_router.post("/users")
 async def create_user(payload: UserCreatePayload, p: Dict[str, Any] = Depends(require_owner)):
     roles = [r for r in (payload.roles or [payload.role]) if r]
-    if not roles or any(r not in ("crew", "sales", "owner", "marketing") for r in roles):
-        raise HTTPException(status_code=422, detail="Roles must be crew, sales, owner, or marketing.")
+    if not roles or any(r not in ("crew", "sales", "owner", "marketing", "quality") for r in roles):
+        raise HTTPException(status_code=422, detail="Roles must be crew, sales, owner, marketing, or quality.")
     email = payload.email.strip().lower()
     if len(email) < 3 or " " in email:
         raise HTTPException(status_code=422, detail="That login doesn't look right — use a username (3+ characters, no spaces) or an email.")
@@ -4866,16 +5170,16 @@ async def patch_user(user_id: str, payload: UserPatchPayload, p: Dict[str, Any] 
         changes.append("email")
     if payload.roles is not None:
         roles = [r for r in payload.roles if r]
-        if not roles or any(r not in ("crew", "sales", "owner", "marketing") for r in roles):
-            raise HTTPException(status_code=422, detail="Roles must be crew, sales, owner, or marketing.")
+        if not roles or any(r not in ("crew", "sales", "owner", "marketing", "quality") for r in roles):
+            raise HTTPException(status_code=422, detail="Roles must be crew, sales, owner, marketing, or quality.")
         if p["user_id"] == user_id and "owner" not in roles:
             raise HTTPException(status_code=422, detail="You can't take Owner off your own account — you'd lock yourself out.")
         updates["roles"] = roles
         updates["role"] = roles[0]
         changes.append(f"roles → {'+'.join(roles)}")
     elif payload.role is not None:
-        if payload.role not in ("crew", "sales", "owner", "marketing"):
-            raise HTTPException(status_code=422, detail="Role must be crew, sales, owner, or marketing.")
+        if payload.role not in ("crew", "sales", "owner", "marketing", "quality"):
+            raise HTTPException(status_code=422, detail="Role must be crew, sales, owner, marketing, or quality.")
         updates["role"] = payload.role
         updates["roles"] = [payload.role]
         changes.append(f"role → {payload.role}")

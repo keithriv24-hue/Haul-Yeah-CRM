@@ -62,7 +62,7 @@ export const PortalBalance = ({ data }) => {
   );
 };
 
-export const PortalDetails = ({ token, initial }) => {
+export const PortalDetails = ({ token, initial, readOnly }) => {
   const [f, setF] = useState({
     gate_code: initial?.gate_code || "", elevator: initial?.elevator || "", parking: initial?.parking || "",
     special_requests: initial?.special_requests || "", inventory_notes: initial?.inventory_notes || "",
@@ -79,6 +79,26 @@ export const PortalDetails = ({ token, initial }) => {
     }
     setBusy(false);
   };
+  if (readOnly) {
+    const rows = [
+      ["Gate / door code", f.gate_code], ["Elevator", f.elevator], ["Parking", f.parking],
+      ["Special requests", f.special_requests], ["Inventory notes", f.inventory_notes],
+    ].filter(([, v]) => v);
+    return (
+      <Card title="Move details" testId="portal-details">
+        {rows.length ? (
+          <div className="space-y-1.5 text-sm text-white/80">
+            {rows.map(([label, v]) => (
+              <p key={label}><span className="text-white/50">{label}:</span> {v}</p>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-white/50">No move details were added.</p>
+        )}
+        <p className="mt-3 text-[11px] text-white/40">This move is complete — details are locked.</p>
+      </Card>
+    );
+  }
   return (
     <Card title="Help your crew — move details" testId="portal-details">
       <div className="space-y-2.5">
@@ -95,7 +115,7 @@ export const PortalDetails = ({ token, initial }) => {
   );
 };
 
-export const PortalUploads = ({ token, initial }) => {
+export const PortalUploads = ({ token, initial, readOnly }) => {
   const [uploads, setUploads] = useState(initial || []);
   const [busy, setBusy] = useState(false);
   const pick = (kind) => async (e) => {
@@ -114,23 +134,28 @@ export const PortalUploads = ({ token, initial }) => {
     toast.success("Uploaded — thanks!");
     e.target.value = "";
   };
+  if (readOnly && uploads.length === 0) return null;
   return (
     <Card title="Photos & inventory" testId="portal-uploads">
-      <p className="text-xs text-white/50 mb-2.5">Snap your rooms, big furniture, or upload an inventory list (photos or PDF). It helps us show up ready.</p>
-      <div className="flex gap-2">
-        <label className="flex-1">
-          <input data-testid="portal-photo-input" type="file" accept="image/*" multiple className="hidden" onChange={pick("photo")} />
-          <span className="flex items-center justify-center gap-1.5 cursor-pointer rounded-lg border border-white/20 bg-white/10 hover:bg-surface/15 px-3 py-2 text-sm font-semibold">
-            <Upload className="w-4 h-4" /> Photos
-          </span>
-        </label>
-        <label className="flex-1">
-          <input data-testid="portal-inventory-input" type="file" accept="image/*,application/pdf" multiple className="hidden" onChange={pick("inventory")} />
-          <span className="flex items-center justify-center gap-1.5 cursor-pointer rounded-lg border border-white/20 bg-white/10 hover:bg-surface/15 px-3 py-2 text-sm font-semibold">
-            <FileText className="w-4 h-4" /> Inventory
-          </span>
-        </label>
-      </div>
+      {!readOnly && (
+        <>
+          <p className="text-xs text-white/50 mb-2.5">Snap your rooms, big furniture, or upload an inventory list (photos or PDF). It helps us show up ready.</p>
+          <div className="flex gap-2">
+            <label className="flex-1">
+              <input data-testid="portal-photo-input" type="file" accept="image/*" multiple className="hidden" onChange={pick("photo")} />
+              <span className="flex items-center justify-center gap-1.5 cursor-pointer rounded-lg border border-white/20 bg-white/10 hover:bg-surface/15 px-3 py-2 text-sm font-semibold">
+                <Upload className="w-4 h-4" /> Photos
+              </span>
+            </label>
+            <label className="flex-1">
+              <input data-testid="portal-inventory-input" type="file" accept="image/*,application/pdf" multiple className="hidden" onChange={pick("inventory")} />
+              <span className="flex items-center justify-center gap-1.5 cursor-pointer rounded-lg border border-white/20 bg-white/10 hover:bg-surface/15 px-3 py-2 text-sm font-semibold">
+                <FileText className="w-4 h-4" /> Inventory
+              </span>
+            </label>
+          </div>
+        </>
+      )}
       {busy && <p className="text-xs text-white/50 mt-2">Uploading…</p>}
       {uploads.length > 0 && (
         <div className="flex flex-wrap gap-2 mt-3">
@@ -211,7 +236,7 @@ export const PortalReview = ({ token, reviewLink, alreadyDone }) => {
     return (
       <Card title="Your review" testId="portal-review">
         <p className="text-sm text-white/80">Thanks — we read every single one. 🧡</p>
-        {(shareLink || (rating >= 4 && reviewLink)) && (
+        {(shareLink || reviewLink) && (
           <a data-testid="portal-google-review-link" href={shareLink || reviewLink} target="_blank" rel="noreferrer"
             className="mt-2 inline-flex items-center gap-1.5 text-sm font-bold text-info hover:underline">
             Share it on Google too <ExternalLink className="w-3.5 h-3.5" />

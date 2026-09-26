@@ -168,6 +168,11 @@ export const portalUploadUrl = (token, id) => `${API}/track/${token}/uploads/${i
 export const portalTipApi = (token, payload) => axios.post(`${API}/track/${token}/tip`, payload).then((r) => r.data);
 export const portalReviewApi = (token, payload) => axios.post(`${API}/track/${token}/review`, payload).then((r) => r.data);
 export const jobPortalUploadsApi = (jobId) => axios.get(`${API}/jobs/${jobId}/portal-uploads`).then((r) => r.data);
+export const jobPortalApi = (jobId) => axios.get(`${API}/jobs/${jobId}/portal`).then((r) => r.data);
+export const jobPortalSendApi = (jobId, payload) => axios.post(`${API}/jobs/${jobId}/portal/send`, payload).then((r) => r.data);
+export const jobPortalResetApi = (jobId) => axios.post(`${API}/jobs/${jobId}/portal/reset`).then((r) => r.data);
+export const getPortalSettingsApi = () => axios.get(`${API}/settings/portal`).then((r) => r.data);
+export const savePortalSettingsApi = (payload) => axios.put(`${API}/settings/portal`, payload).then((r) => r.data);
 export const opsBriefApi = (refresh) => axios.get(`${API}/ai/ops-brief`, { params: refresh ? { refresh: 1 } : {} }).then((r) => r.data);
 
 export const teamMembersApi = () => axios.get(`${API}/team/members`).then((r) => r.data);

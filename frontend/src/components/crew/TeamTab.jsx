@@ -26,6 +26,7 @@ const ROLE_BADGE = {
   sales: "bg-info/12 text-info border-info/30",
   crew: "bg-accent/12 text-accent-ink border-accent/30",
   marketing: "bg-success/12 text-success border-success/30",
+  quality: "bg-violet-500/12 text-violet-700 border-violet-500/40",
 };
 
 /* Owner-only control: grant / toggle / remove Job Scope Calculator access */
@@ -132,7 +133,7 @@ const RoleChecks = ({ roles, onToggle, idPrefix }) => (
   <div>
     <Label>Roles (pick all that apply)</Label>
     <div className="space-y-1.5 mt-1">
-      {["crew", "sales", "marketing", "owner"].map((r) => (
+      {["crew", "sales", "marketing", "quality", "owner"].map((r) => (
         <label key={r} className="flex items-center gap-2 text-sm cursor-pointer">
           <Checkbox data-testid={`${idPrefix}-role-${r}`} checked={roles.includes(r)} onCheckedChange={() => onToggle(r)} />
           <span className="capitalize text-primary">{r}</span>

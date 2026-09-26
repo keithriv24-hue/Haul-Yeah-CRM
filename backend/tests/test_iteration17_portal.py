@@ -176,15 +176,15 @@ def test_review_bad_ratings():
         assert r.status_code == 422, (bad, r.text)
 
 
-def test_review_three_stars_no_link():
-    r = requests.post(f"{BASE}/api/track/{TOKEN}/review",
-                      json={"rating": 3, "text": "meh"})
-    assert r.status_code == 200
-    assert r.json().get("review_link", "") == ""
-    # restore 5-star
-    r = requests.post(f"{BASE}/api/track/{TOKEN}/review",
-                      json={"rating": 5, "text": "Great crew!"})
-    assert r.status_code == 200
+def test_review_link_returned_for_every_rating():
+    """C2: the Google review link is offered for EVERY rating (1–5), never gated to >=4."""
+    r3 = requests.post(f"{BASE}/api/track/{TOKEN}/review", json={"rating": 3, "text": "meh"})
+    assert r3.status_code == 200
+    assert "review_link" in r3.json()
+    link3 = r3.json().get("review_link")
+    r5 = requests.post(f"{BASE}/api/track/{TOKEN}/review", json={"rating": 5, "text": "Great crew!"})
+    assert r5.status_code == 200
+    assert r5.json().get("review_link") == link3, "review link must not change with the star rating"
 
 
 # ---------- Owner /api/jobs/{id}/portal-uploads
