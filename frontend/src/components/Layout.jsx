@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import {
@@ -27,11 +27,11 @@ import { CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, C
 const NAV = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, roles: ["owner"], group: "Today" },
   { to: "/dispatch", label: "Dispatch", icon: Radio, roles: ["owner"], group: "Today" },
-  { to: "/jobs", label: "Jobs", icon: Briefcase, roles: ["owner"], group: "Today" },
+  { to: "/jobs", label: "Crew Assign", icon: Briefcase, roles: ["owner"], group: "Today" },
   { to: "/day-sheet", label: "Day Sheet", icon: ClipboardList, roles: ["owner", "employee"], group: "Today" },
   { to: "/crew", label: "Crew", icon: HardHat, roles: ["owner"], group: "Today" },
   { to: "/fleet", label: "Fleet", icon: Wrench, roles: ["owner"], group: "Today" },
-  { to: "/projects", label: "Projects", icon: Truck, roles: ["owner", "employee"], group: "Today" },
+  { to: "/projects", label: "Jobs", icon: Truck, roles: ["owner", "employee"], group: "Today" },
 
   { to: "/today", label: "Today", icon: Sun, roles: ["crew"], group: "My day" },
   { to: "/jobs", label: "My Jobs", icon: ClipboardList, roles: ["crew"], group: "My day" },

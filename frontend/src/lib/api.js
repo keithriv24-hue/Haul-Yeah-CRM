@@ -51,6 +51,14 @@ export const updateRecordApi = (table, id, fields) =>
   axios.patch(`${API}/tables/${table}/${id}`, { fields }).then((r) => r.data);
 export const deleteRecordApi = (table, id) => axios.delete(`${API}/tables/${table}/${id}`).then((r) => r.data);
 
+export const jobMgmtListApi = (refresh = 0) =>
+  axios.get(`${API}/job-mgmt/list`, { params: refresh ? { refresh: 1 } : {} }).then((r) => r.data);
+export const jobMgmtDetailApi = (projectId) => axios.get(`${API}/job-mgmt/${projectId}`).then((r) => r.data);
+export const jobMgmtUpdateApi = (projectId, changes, note) =>
+  axios.patch(`${API}/job-mgmt/${projectId}`, { changes, note: note || null }).then((r) => r.data);
+export const jobMgmtHistoryApi = (projectId) =>
+  axios.get(`${API}/job-mgmt/${projectId}/history`).then((r) => r.data);
+
 // Quality & Compliance module
 export const qualityAuditQueueApi = () => axios.get(`${API}/quality/audit-queue`).then((r) => r.data);
 export const qualityQuoteAccuracyApi = (params) => axios.get(`${API}/quality/quote-accuracy`, { params }).then((r) => r.data);
@@ -167,6 +175,9 @@ export const portalUploadApi = (token, file, kind) => {
 export const portalUploadUrl = (token, id) => `${API}/track/${token}/uploads/${id}`;
 export const portalTipApi = (token, payload) => axios.post(`${API}/track/${token}/tip`, payload).then((r) => r.data);
 export const portalReviewApi = (token, payload) => axios.post(`${API}/track/${token}/review`, payload).then((r) => r.data);
+export const acknowledgePaperworkApi = (token, name) => axios.post(`${API}/track/${token}/acknowledge-paperwork`, { name }).then((r) => r.data);
+export const confirmMoveApi = (token) => axios.post(`${API}/track/${token}/confirm-move`).then((r) => r.data);
+export const recordDeliveredApi = (projectId) => axios.post(`${API}/job-mgmt/${projectId}/record-delivered`).then((r) => r.data);
 export const jobPortalUploadsApi = (jobId) => axios.get(`${API}/jobs/${jobId}/portal-uploads`).then((r) => r.data);
 export const jobPortalApi = (jobId) => axios.get(`${API}/jobs/${jobId}/portal`).then((r) => r.data);
 export const jobPortalSendApi = (jobId, payload) => axios.post(`${API}/jobs/${jobId}/portal/send`, payload).then((r) => r.data);

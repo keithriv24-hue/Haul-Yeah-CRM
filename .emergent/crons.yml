@@ -1,0 +1,16 @@
+crons:
+  - name: customer-reminders
+    description: "Daily 9am ET: text customers a T-48h move reminder and alert the owner on failures"
+    cron: "0 9 * * *"
+    timezone: "America/New_York"
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    endpoint: "{{BASE_URL}}/api/cron/customer-reminders"
+    method: POST
+    enabled: true
+  - name: monthly-metrics
+    description: "Freeze last month's business metrics snapshot on the 1st (05:10 UTC)"
+    cron: "10 5 1 * *"
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    endpoint: "{{BASE_URL}}/api/cron/monthly-metrics-snapshot"
+    method: POST
+    enabled: true

@@ -11,9 +11,10 @@ const TPL = [
   { key: "booked", label: "Booked", hint: "Right after the deposit is paid." },
   { key: "move_day", label: "Move day", hint: "Auto-sent when the first crew clocks in." },
   { key: "wrap_up", label: "Wrap-up", hint: "After the move — receipt, tip, review." },
+  { key: "reminder", label: "T-48h reminder", hint: "Auto-sent ~2 days before the move. Use {arrival_window} & {paperwork_line}." },
 ];
 
-const VARS = "{first_name} · {move_date} · {link} · {job_number} · {business_phone}";
+const VARS = "{first_name} · {move_date} · {arrival_window} · {start_time} · {link} · {job_number} · {business_phone} · {paperwork_line}";
 
 export const CustomerPageCard = () => {
   const [f, setF] = useState(null);
@@ -37,6 +38,7 @@ export const CustomerPageCard = () => {
         business_phone: f.business_phone || "",
         license_number: f.license_number || "",
         brochure_url: f.brochure_url || "",
+        arrival_window_minutes: Number(f.arrival_window_minutes ?? 30),
         templates: f.templates || {},
       });
       setF(res);
@@ -78,6 +80,11 @@ export const CustomerPageCard = () => {
         <div>
           <Label>Brochure link (NJ Notice to Consumers)</Label>
           <Input data-testid="portal-brochure-input" type="url" value={f.brochure_url || ""} onChange={set("brochure_url")} placeholder="https://…" />
+        </div>
+        <div>
+          <Label>Arrival window (minutes)</Label>
+          <Input data-testid="portal-arrival-window-input" type="number" min="0" max="240" value={f.arrival_window_minutes ?? 30} onChange={set("arrival_window_minutes")} />
+          <p className="text-[11px] text-faint mt-1">Customers see "crew arrives between {"{start}"} and {"{start + this}"}". Default 30.</p>
         </div>
 
         <div>

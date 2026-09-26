@@ -4,6 +4,7 @@ import { Truck, MapPin, Users, CalendarDays, Archive, Phone } from "lucide-react
 import { trackApi } from "@/lib/api";
 import { fmtTime12 } from "@/lib/maps";
 import { PortalBalance, PortalDetails, PortalUploads, PortalTip, PortalReview } from "@/components/portal/PortalSections";
+import { PortalTimeline, PortalPaperwork, PortalMoveConfirm, PortalPrep } from "@/components/portal/PortalPhaseD";
 
 const fmtDay = (d) =>
   d ? new Date(`${d}T12:00:00`).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" }) : "";
@@ -93,6 +94,24 @@ export default function Track() {
     );
   }
 
+  if (data && data.cancelled) {
+    return (
+      <Shell>
+        <div data-testid="track-cancelled" className="w-full max-w-md mt-4 bg-white/5 border border-white/10 rounded-2xl p-6 text-center">
+          <MapPin className="w-10 h-10 text-white/30 mx-auto" />
+          <p className="mt-3 text-lg font-bold">This move has been cancelled</p>
+          <p className="mt-1 text-sm text-white/70">If you think this is a mistake, reach out and we'll sort it out.</p>
+          {data.business_phone && (
+            <a data-testid="track-cancelled-call" href={telHref(data.business_phone)}
+              className="mt-4 inline-flex items-center gap-2 rounded-full bg-accent hover:bg-accent-press text-white font-bold text-sm px-4 py-2">
+              <Phone className="w-4 h-4" /> Text us at {data.business_phone}
+            </a>
+          )}
+        </div>
+      </Shell>
+    );
+  }
+
   return (
     <Shell>
       <div className="w-full max-w-md mt-4 bg-white/5 border border-white/10 rounded-2xl p-6 text-center">
@@ -109,19 +128,22 @@ export default function Track() {
             <p data-testid="track-invoice" className="text-3xl font-bold mt-1">Job #{data.invoice_number}</p>
             {data.job_date && (
               <p className="text-sm text-white/60 mt-1">
-                {fmtDay(data.job_date)}{data.start_time ? ` · crew starts ${fmtTime12(data.start_time)}` : ""}
+                {fmtDay(data.job_date)}{data.arrival_window ? ` · crew arrives ${data.arrival_window}` : (data.start_time ? ` · crew starts ${fmtTime12(data.start_time)}` : "")}
               </p>
             )}
-            {days != null && days > 0 && (
+            {data.timeline?.paperwork_action_needed ? (
+              <p data-testid="track-paperwork-banner" className="mt-3 inline-flex items-center gap-2 rounded-full bg-warning/20 border border-warning/40 text-warning font-bold text-sm px-4 py-1.5">
+                <CalendarDays className="w-4 h-4" /> Action needed — confirm your paperwork below
+              </p>
+            ) : days != null && days > 0 ? (
               <p data-testid="track-countdown" className="mt-3 inline-flex items-center gap-2 rounded-full bg-accent/20 border border-accent/40 text-accent-ink font-bold text-sm px-4 py-1.5">
                 <CalendarDays className="w-4 h-4" /> {days} day{days === 1 ? "" : "s"} until your move
               </p>
-            )}
-            {days === 0 && (
+            ) : days === 0 ? (
               <p data-testid="track-countdown" className="mt-3 inline-flex items-center gap-2 rounded-full bg-success/20 border border-success/30 text-success font-bold text-sm px-4 py-1.5">
                 <Truck className="w-4 h-4" /> Move day is today!
               </p>
-            )}
+            ) : null}
             {data.status && (
               <p data-testid="track-job-status" className="mt-2 text-sm font-semibold text-white/80">{STATUS_LABEL[data.status] || data.status}</p>
             )}
@@ -134,6 +156,9 @@ export default function Track() {
                   <p className="flex items-start gap-2"><MapPin className="w-4 h-4 text-accent-ink mt-0.5 shrink-0" /><span><span className="text-white/45">To </span>{data.dropoff_address}</span></p>
                 )}
               </div>
+            )}
+            {data.confirm && !data.is_complete && (
+              <PortalMoveConfirm token={token} confirm={data.confirm} businessPhone={data.business_phone} jobNumber={data.invoice_number} onDone={load} />
             )}
             <div className="mt-5">
               {data.live && pos ? (
@@ -185,8 +210,11 @@ export default function Track() {
 
       {data && !error && (
         <>
+          {data.timeline && <PortalTimeline timeline={data.timeline} />}
+          <PortalPaperwork token={token} timeline={data.timeline} brochureUrl={data.brochure_url} onDone={load} />
           <PortalBalance data={data} />
           <PortalDetails token={token} initial={data.details} readOnly={!data.editable} />
+          {!data.is_complete && <PortalPrep items={data.prep_checklist} />}
           <PortalUploads token={token} initial={data.uploads} readOnly={!data.editable} />
           {data.show_tip && data.tips_enabled && <PortalTip token={token} crewNames={crewNames} />}
           {data.show_review && <PortalReview token={token} reviewLink={data.review_link} alreadyDone={data.review_submitted} />}

@@ -10,8 +10,8 @@ const Card = ({ title, children, testId }) => (
   </div>
 );
 
-const Field = ({ label, value, onChange, placeholder, testId, textarea }) => (
-  <div>
+const Field = ({ label, value, onChange, placeholder, testId, textarea, id }) => (
+  <div id={id}>
     <label className="text-[11px] font-semibold text-white/60">{label}</label>
     {textarea ? (
       <textarea data-testid={testId} rows={2} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
@@ -103,8 +103,8 @@ export const PortalDetails = ({ token, initial, readOnly }) => {
     <Card title="Help your crew — move details" testId="portal-details">
       <div className="space-y-2.5">
         <Field label="Gate / door code" value={f.gate_code} onChange={set("gate_code")} placeholder="#4321" testId="portal-gate-code" />
-        <Field label="Elevator reservation" value={f.elevator} onChange={set("elevator")} placeholder="Booked 9–11am, service elevator on the left" testId="portal-elevator" />
-        <Field label="Parking instructions" value={f.parking} onChange={set("parking")} placeholder="Loading dock behind the building on Oak St" testId="portal-parking" textarea />
+        <Field label="Elevator reservation" value={f.elevator} onChange={set("elevator")} placeholder="Booked 9–11am, service elevator on the left" testId="portal-elevator" id="portal-field-elevator" />
+        <Field label="Parking instructions" value={f.parking} onChange={set("parking")} placeholder="Loading dock behind the building on Oak St" testId="portal-parking" id="portal-field-parking" textarea />
         <Field label="Special requests" value={f.special_requests} onChange={set("special_requests")} placeholder="Please wrap the piano extra well" testId="portal-special" textarea />
         <Field label="Inventory notes" value={f.inventory_notes} onChange={set("inventory_notes")} placeholder="3 beds, 2 dressers, ~40 boxes, 1 treadmill" testId="portal-inventory" textarea />
         <Btn testId="portal-details-save" onClick={save} disabled={busy} className="w-full">

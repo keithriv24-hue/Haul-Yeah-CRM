@@ -936,7 +936,7 @@ async def save_business(payload: BusinessPayload, role: str = Depends(require_au
 
 
 # ------- Customer Page (portal) settings + message templates (settings _id "portal")
-PORTAL_TEMPLATE_KEYS = ("booked", "move_day", "wrap_up")
+PORTAL_TEMPLATE_KEYS = ("booked", "move_day", "wrap_up", "reminder")
 PORTAL_DEFAULTS = {
     "booked": ("Hi {first_name}, thanks for choosing Haul Yeah Moving! Here's your move page for {move_date}: {link}\n"
                "See your crew, track the truck on move day, add gate/parking details, and view your balance. "
@@ -945,6 +945,8 @@ PORTAL_DEFAULTS = {
                  "Reply here if you need us."),
     "wrap_up": ("Thanks for moving with Haul Yeah, {first_name}! Your receipt, crew tip, and review link are all here: {link}\n"
                 "We appreciate you!"),
+    "reminder": ("Hi {first_name}, your Haul Yeah move is {move_date} at {arrival_window}. {paperwork_line}"
+                 "Add gate, elevator, or parking details here: {link} Reply STOP to opt out."),
 }
 
 
@@ -979,9 +981,11 @@ def _fmt_move_date(d: Any) -> str:
     return f"{dt.strftime('%a, %b')} {dt.day}" if dt else ""
 
 
-def _render_portal_message(tmpl: str, job: Dict[str, Any], link: str, business_phone: str = "") -> str:
-    """Fill {first_name} {move_date} {link} {job_number} {business_phone}. Unknown or empty
-    variables render as empty strings — never '{undefined}' or 'None'."""
+def _render_portal_message(tmpl: str, job: Dict[str, Any], link: str, business_phone: str = "",
+                           extra: Optional[Dict[str, Any]] = None) -> str:
+    """Fill {first_name} {move_date} {link} {job_number} {business_phone} {start_time}
+    {arrival_window} {paperwork_line}. Unknown or empty variables render as empty strings —
+    never '{undefined}' or 'None'."""
     cust = job.get("customer") or {}
     vals = {
         "first_name": (cust.get("name") or "").split(" ")[0] or "",
@@ -989,7 +993,12 @@ def _render_portal_message(tmpl: str, job: Dict[str, Any], link: str, business_p
         "link": link or "",
         "job_number": str(job.get("invoice_number") or ""),
         "business_phone": business_phone or "",
+        "start_time": _fmt_time12(job.get("start_time")),
+        "arrival_window": "",
+        "paperwork_line": "",
     }
+    if extra:
+        vals.update({k: ("" if v is None else str(v)) for k, v in extra.items()})
     out = tmpl or ""
     for k, v in vals.items():
         out = out.replace("{" + k + "}", str(v))
@@ -1003,6 +1012,7 @@ class PortalSettingsPayload(BaseModel):
     brochure_url: Optional[str] = None
     templates: Optional[Dict[str, str]] = None
     prep_checklist: Optional[List[str]] = None
+    arrival_window_minutes: Optional[int] = None
     policy_cancellation: Optional[str] = None
     policy_protection: Optional[str] = None
     policy_claims: Optional[str] = None
@@ -1019,6 +1029,7 @@ async def _portal_settings_out(portal: Optional[Dict[str, Any]] = None) -> Dict[
         "base_effective": await _portal_base(portal),
         "env_base_set": bool(os.environ.get("PUBLIC_BASE_URL", "").strip()),
         "prep_checklist": portal.get("prep_checklist") or [],
+        "arrival_window_minutes": int(portal.get("arrival_window_minutes") or 30),
         "policy_cancellation": portal.get("policy_cancellation") or "",
         "policy_protection": portal.get("policy_protection") or "",
         "policy_claims": portal.get("policy_claims") or "",
@@ -1048,6 +1059,11 @@ async def save_portal_settings(payload: PortalSettingsPayload, p: Dict[str, Any]
                                 for k in PORTAL_TEMPLATE_KEYS if isinstance(data["templates"].get(k), str)}
     if isinstance(data.get("prep_checklist"), list):
         updates["prep_checklist"] = [str(x).strip()[:300] for x in data["prep_checklist"] if str(x).strip()][:30]
+    if data.get("arrival_window_minutes") is not None:
+        try:
+            updates["arrival_window_minutes"] = max(0, min(240, int(data["arrival_window_minutes"])))
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=422, detail="Arrival window must be a whole number of minutes.")
     if updates:
         await mongo_db.settings.update_one({"_id": "portal"}, {"$set": updates}, upsert=True)
         await audit(p, "updated customer page settings", "settings", {"fields": list(updates.keys())})
@@ -2128,6 +2144,10 @@ async def track_job(token: str, request: Request) -> Dict[str, Any]:
                     position = {"lat": pings[0]["lat"], "lng": pings[0]["lng"]}
     money = _track_money(job)
     portal = await _track_portal_bits(job)
+    timeline = await _customer_timeline(job, status, stage)
+    confirm = _move_confirmation_state(job)
+    arrival_window = _arrival_window_str(job.get("start_time"), int(portal_settings.get("arrival_window_minutes") or 30))
+    cancelled = (job.get("status") or "").lower() == "cancelled" or bool(job.get("cancelled_at"))
     return {"invoice_number": job.get("invoice_number"), "job_date": job.get("job_date"),
             "start_time": job.get("start_time"), "live": live, "position": position,
             "updated_minutes_ago": minutes_ago, "business_phone": business_phone,
@@ -2137,6 +2157,10 @@ async def track_job(token: str, request: Request) -> Dict[str, Any]:
             "crew": [{"name": c.get("name", "Crew member"), "position": c.get("position", "Helper")}
                      for c in job.get("crew", [])],
             "truck_name": job.get("truck_name") or "",
+            "timeline": timeline, "confirm": confirm, "arrival_window": arrival_window,
+            "prep_checklist": portal_settings.get("prep_checklist") or [],
+            "brochure_url": (portal_settings.get("brochure_url") or "").strip(),
+            "cancelled": cancelled,
             **stage, **money, **portal}
 
 
@@ -2204,6 +2228,251 @@ async def _owner_portal_ping(job: Dict[str, Any], title: str, body: str):
             await openphone_send_sms(phone, f"{title} — {body}")
     except Exception as exc:
         logger.warning("owner portal sms failed: %s", exc)
+
+
+# ===================== Phase D — customer portal timeline, paperwork, reminders =====================
+
+def _fmt_time12(t: Optional[str]) -> str:
+    if not t:
+        return ""
+    try:
+        hh, mm = str(t).split(":")[:2]
+        h, m = int(hh), int(mm)
+        return f"{h % 12 or 12}:{m:02d} {'AM' if h < 12 else 'PM'}"
+    except (ValueError, TypeError):
+        return str(t)
+
+
+def _arrival_window_str(start_time: Optional[str], minutes: int) -> str:
+    start = _fmt_time12(start_time)
+    if not start or not minutes:
+        return start
+    try:
+        hh, mm = str(start_time).split(":")[:2]
+        total = (int(hh) * 60 + int(mm) + int(minutes)) % (24 * 60)
+        end = _fmt_time12(f"{total // 60:02d}:{total % 60:02d}")
+        return f"{start} – {end}"
+    except (ValueError, TypeError):
+        return start
+
+
+async def _mirror_gates(job: Dict[str, Any], fields: Dict[str, Any]) -> Dict[str, Any]:
+    """Copy the 3 Airtable Projects gate timestamps onto the Mongo job so /track never calls
+    Airtable. Airtable wins when present; an ack-set brochure/estimate stamp is preserved while
+    Airtable is still empty. ofs_signed_at mirrors Airtable exactly (owner-entered only)."""
+    prev = job.get("gates") or {}
+    gates = {
+        "brochure_sent_at": fields.get(PROJECT_BROCHURE_SENT_F) or prev.get("brochure_sent_at"),
+        "estimate_delivered_at": fields.get(PROJECT_ESTIMATE_DELIVERED_F) or prev.get("estimate_delivered_at"),
+        "ofs_signed_at": fields.get(PROJECT_OFS_SIGNED_F),
+    }
+    if gates != prev:
+        await mongo_db.jobs.update_one({"_id": job["_id"]}, {"$set": {"gates": gates}})
+        job["gates"] = gates
+    return gates
+
+
+def _move_snapshot(job: Dict[str, Any]) -> Dict[str, Any]:
+    return {"job_date": job.get("job_date"), "start_time": job.get("start_time"),
+            "pickup_address": job.get("pickup_address"), "dropoff_address": job.get("dropoff_address")}
+
+
+async def _latest_ack(job_id: str) -> Optional[Dict[str, Any]]:
+    return await mongo_db.paperwork_acks.find_one({"job_id": job_id}, sort=[("at", -1)])
+
+
+async def _customer_timeline(job: Dict[str, Any], status: str, stage: Dict[str, Any]) -> Dict[str, Any]:
+    gates = job.get("gates") or {}
+    ack = await _latest_ack(job["_id"])
+    acked = bool(ack)
+    brochure_done = bool(gates.get("brochure_sent_at")) or acked
+    estimate_done = bool(gates.get("estimate_delivered_at")) or acked
+    ofs_done = bool(gates.get("ofs_signed_at"))
+    items = [
+        {"key": "brochure", "label": "Consumer brochure", "done": brochure_done},
+        {"key": "estimate", "label": "Written estimate", "done": estimate_done},
+        {"key": "ofs", "label": "Order for Service signed", "done": ofs_done},
+    ]
+    paperwork_all = brochure_done and estimate_done and ofs_done
+    action_needed = (not acked) and not (bool(gates.get("brochure_sent_at")) and bool(gates.get("estimate_delivered_at")))
+    paperwork_state = "done" if paperwork_all else ("action" if action_needed else "current")
+
+    is_complete = stage.get("is_complete")
+    days_after = stage.get("days_after_move")
+    if is_complete:
+        move_state, complete_state = "done", "done"
+    elif days_after == 0 or status in ("En Route", "Arrived", "In Progress"):
+        move_state, complete_state = "current", "upcoming"
+    else:
+        move_state, complete_state = "upcoming", "upcoming"
+    steps = [
+        {"key": "booked", "label": "Booked", "state": "done"},
+        {"key": "paperwork", "label": "Paperwork", "state": paperwork_state, "items": items},
+        {"key": "crew", "label": "Crew assigned", "state": "done" if job.get("crew") else "upcoming"},
+        {"key": "move_day", "label": "Move day", "state": move_state},
+        {"key": "complete", "label": "Complete", "state": complete_state},
+    ]
+    return {"steps": steps, "paperwork_acknowledged": acked, "paperwork_action_needed": action_needed,
+            "paperwork_all_done": paperwork_all, "acknowledged_at": (ack or {}).get("at"),
+            "acknowledged_name": (ack or {}).get("name")}
+
+
+def _move_confirmation_state(job: Dict[str, Any]) -> Dict[str, Any]:
+    confs = job.get("move_confirmations") or []
+    if not confs:
+        return {"confirmed": False, "at": None, "needs_reconfirm": False}
+    last = confs[-1]
+    return {"confirmed": True, "at": last.get("at"),
+            "needs_reconfirm": (last.get("snapshot") or {}) != _move_snapshot(job)}
+
+
+async def _paperwork_ack_summary(job: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    ack = await _latest_ack(job["_id"])
+    if not ack:
+        return None
+    return {"name": ack.get("name"), "at": ack.get("at"), "ip": ack.get("ip"),
+            "brochure_url": ack.get("brochure_url"),
+            "documents": [{"filename": d.get("filename"), "sha256": d.get("sha256"), "kind": d.get("kind")}
+                          for d in (ack.get("documents") or [])]}
+
+
+class PaperworkAckPayload(BaseModel):
+    name: str
+
+
+@public_router.post("/track/{token}/acknowledge-paperwork")
+async def portal_acknowledge_paperwork(token: str, payload: PaperworkAckPayload, request: Request) -> Dict[str, Any]:
+    job = await _job_by_token(token)
+    name = (payload.name or "").strip()
+    if len(name) < 2:
+        raise HTTPException(status_code=422, detail="Please type your full name to confirm.")
+    portal = await _portal_settings()
+    brochure_url = (portal.get("brochure_url") or "").strip()
+    documents: List[Dict[str, Any]] = []
+    if brochure_url:
+        sha, size = None, None
+        try:
+            async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
+                r = await client.get(brochure_url)
+            if r.status_code < 300:
+                sha, size = hashlib.sha256(r.content).hexdigest(), len(r.content)
+        except Exception as exc:
+            logger.warning("brochure hash failed: %s", exc)
+        documents.append({"id": str(uuid4()), "kind": "brochure",
+                          "filename": (brochure_url.rsplit("/", 1)[-1] or "brochure")[:120],
+                          "url": brochure_url, "sha256": sha, "bytes": size})
+    rec = {"_id": str(uuid4()), "job_id": job["_id"], "invoice_number": job.get("invoice_number"),
+           "name": name, "ip": (request.client.host if request.client else None),
+           "user_agent": (request.headers.get("user-agent") or "")[:400],
+           "brochure_url": brochure_url or None, "documents": documents, "at": now_iso()}
+    await mongo_db.paperwork_acks.insert_one(rec)   # append-only; never updated or deleted
+    gates = job.get("gates") or {}
+    gset = {}
+    if not gates.get("brochure_sent_at"):
+        gset["gates.brochure_sent_at"] = rec["at"]
+    if not gates.get("estimate_delivered_at"):
+        gset["gates.estimate_delivered_at"] = rec["at"]
+    if gset:
+        await mongo_db.jobs.update_one({"_id": job["_id"]}, {"$set": gset})
+    await _owner_portal_ping(job, "Paperwork acknowledged",
+                             f"{name} confirmed receipt of the brochure & estimate for Job #{job.get('invoice_number')}.")
+    return {"ok": True, "at": rec["at"], "name": name}
+
+
+@public_router.post("/track/{token}/confirm-move")
+async def portal_confirm_move(token: str, request: Request) -> Dict[str, Any]:
+    job = await _job_by_token(token)
+    entry = {"at": now_iso(), "ip": (request.client.host if request.client else None),
+             "user_agent": (request.headers.get("user-agent") or "")[:400], "snapshot": _move_snapshot(job)}
+    await mongo_db.jobs.update_one({"_id": job["_id"]}, {"$push": {"move_confirmations": entry}})
+    await _owner_portal_ping(job, "Move details confirmed",
+                             f"{(job.get('customer') or {}).get('name') or 'The customer'} confirmed their "
+                             f"move details for Job #{job.get('invoice_number')}.")
+    return {"ok": True, "at": entry["at"]}
+
+
+# ---- T-48h customer reminder (daily 9am ET cron; sends ONE text per job) ----
+
+async def _reminder_paperwork_line(job: Dict[str, Any]) -> str:
+    ack = await _latest_ack(job["_id"])
+    gates = job.get("gates") or {}
+    acked = bool(ack) or (bool(gates.get("brochure_sent_at")) and bool(gates.get("estimate_delivered_at")))
+    if acked:
+        return ""
+    return "Please review and confirm your paperwork today — we need it at least 24 hours before your move. "
+
+
+def _move_datetime_et(job: Dict[str, Any]) -> Optional[datetime]:
+    jd = (job.get("job_date") or "")[:10]
+    if not jd:
+        return None
+    for st in (job.get("start_time") or "08:00", "08:00"):
+        try:
+            return datetime.fromisoformat(f"{jd}T{st}:00").replace(tzinfo=ZoneInfo("America/New_York"))
+        except (ValueError, TypeError):
+            continue
+    return None
+
+
+async def _send_customer_reminder(job: Dict[str, Any], portal: Dict[str, Any]) -> None:
+    base = await _portal_base(portal)
+    if not base:
+        raise HTTPException(status_code=503, detail="Customer page URL isn't set in Settings.")
+    token = await _ensure_tracking_token(job)
+    link = f"{base}/track/{token}"
+    aw = _arrival_window_str(job.get("start_time"), int(portal.get("arrival_window_minutes") or 30))
+    extra = {"arrival_window": aw or _fmt_time12(job.get("start_time")),
+             "paperwork_line": await _reminder_paperwork_line(job)}
+    text = _render_portal_message(_portal_template(portal, "reminder"), job, link,
+                                  await _business_phone(portal), extra)
+    await openphone_send_sms((job.get("customer") or {}).get("phone"), text)
+    await mongo_db.jobs.update_one({"_id": job["_id"]}, {"$set": {"reminder_sent_at": now_iso()}})
+    await _log_portal_send(job, "sms", "reminder", "Auto — T-48h reminder")
+
+
+async def _run_customer_reminders() -> Dict[str, Any]:
+    portal = await _portal_settings()
+    now = datetime.now(ZoneInfo("America/New_York"))
+    horizon = now + timedelta(hours=48)
+    sent = skipped = failed = 0
+    async for job in mongo_db.jobs.find({"reminder_sent_at": {"$exists": False}}):
+        if not (job.get("customer") or {}).get("phone"):
+            skipped += 1; continue
+        if (job.get("status") or "").lower() == "cancelled" or job.get("cancelled_at"):
+            skipped += 1; continue
+        move_dt = _move_datetime_et(job)
+        if not move_dt or move_dt <= now or move_dt > horizon:
+            skipped += 1; continue
+        booked_raw = (job.get("deposit_paid") or {}).get("at") or job.get("created_at")
+        try:
+            booked = (datetime.fromisoformat(str(booked_raw).replace("Z", "+00:00"))
+                      .astimezone(ZoneInfo("America/New_York"))) if booked_raw else None
+        except (ValueError, TypeError):
+            booked = None
+        if booked and (move_dt - booked) < timedelta(hours=48):
+            skipped += 1; continue   # booked inside the 48h window — no T-48h send
+        try:
+            await _send_customer_reminder(job, portal)
+            sent += 1
+        except Exception as exc:
+            failed += 1
+            detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
+            await notify(None, "owner", "Customer reminder NOT sent",
+                         f"Job #{job.get('invoice_number')}: {detail}", "warning")
+    logger.info("customer reminders: sent=%s skipped=%s failed=%s", sent, skipped, failed)
+    return {"sent": sent, "skipped": skipped, "failed": failed}
+
+
+@public_router.post("/cron/customer-reminders")
+async def cron_customer_reminders(request: Request) -> Dict[str, Any]:
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    secret = os.environ.get("WEBHOOK_CRON_SECRET", "")
+    auth = request.headers.get("Authorization", "")
+    token = auth[7:] if auth.startswith("Bearer ") else ""
+    if not secret or not token or not hmac.compare_digest(token, secret):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    asyncio.create_task(_run_customer_reminders())
+    return {"ok": True}
 
 
 class PortalDetailsPayload(BaseModel):
@@ -5093,6 +5362,508 @@ async def team_status(p: Dict[str, Any] = Depends(require_owner)):
         })
     crew.sort(key=lambda c: (not c["clocked_in"], not c["late"], c["name"]))
     return {"crew": crew}
+
+
+# ------- Job Management (owner + role-aware read views over the canonical Project record)
+# The Airtable Project is the ONE lifecycle record. This layer briefly caches the project
+# list (shared across roles so search/filtering never hits Airtable per keystroke) and merges
+# the linked Mongo job (payment / customer page / crew) + assignments (timeline) by
+# project_record_id, else the linked lead. Money fields are stripped SERVER-SIDE per role.
+
+JOB_MGMT_ROLES = ("owner", "sales", "employee", "quality")
+_projects_list_cache: Dict[str, Any] = {"data": None, "at": 0.0}
+_PROJECTS_CACHE_TTL = 30.0
+
+
+async def _require_job_mgmt(request: Request) -> Dict[str, Any]:
+    p = await current_principal(request)
+    if p["role"] not in JOB_MGMT_ROLES:
+        raise HTTPException(status_code=403, detail="Your role can't open Jobs.")
+    return p
+
+
+async def _cached_projects(force: bool = False) -> List[Dict[str, Any]]:
+    """Raw Airtable project records, cached briefly and shared across roles/requests so the
+    list + client-side search/filtering never triggers a per-keystroke Airtable call."""
+    now = time.monotonic()
+    cached = _projects_list_cache["data"]
+    if not force and cached is not None and now - _projects_list_cache["at"] < _PROJECTS_CACHE_TTL:
+        return cached
+    records = await _airtable_all(TABLES["projects"])
+    _projects_list_cache["data"] = records
+    _projects_list_cache["at"] = now
+    return records
+
+
+def _compliance_status(comp: Optional[Dict[str, Any]]) -> str:
+    """One word for the list chip/filter, from a cached job_compliance doc (never re-evaluates)."""
+    if not comp:
+        return "unknown"
+    if comp.get("override"):
+        return "overridden"
+    summary = comp.get("summary") or {}
+    if summary.get("all_green"):
+        return "compliant"
+    if summary.get("worst_severity") in ("Liability risk", "Regulatory", "Major"):
+        return "failed"
+    if summary.get("failing"):
+        return "warning"
+    return "compliant"
+
+
+def _job_payment_summary(job: Optional[Dict[str, Any]], money: bool) -> Dict[str, Any]:
+    if not job:
+        return {"deposit": "unknown", "full": "unknown"}
+    out = {
+        "deposit": (job.get("deposit_paid") or {}).get("status") or "unpaid",
+        "full": (job.get("paid_in_full") or {}).get("status") or "unpaid",
+    }
+    if money:
+        out["quote_total"] = job.get("quote_total")
+        out["deposit_amount"] = (job.get("deposit_paid") or {}).get("amount")
+        out["paid_amount"] = (job.get("paid_in_full") or {}).get("amount")
+    return out
+
+
+async def _jobs_index() -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """Mongo jobs keyed by their linked Airtable project record id and by linked lead id."""
+    by_recid: Dict[str, Any] = {}
+    by_lead: Dict[str, Any] = {}
+    for j in await mongo_db.jobs.find({}).to_list(1000):
+        if j.get("project_record_id"):
+            by_recid[j["project_record_id"]] = j
+        if j.get("lead_id"):
+            by_lead[j["lead_id"]] = j
+    return by_recid, by_lead
+
+
+def _match_job(project: Dict[str, Any], by_recid: Dict[str, Any], by_lead: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    job = by_recid.get(project["id"])
+    if job:
+        return job
+    for lid in ((project.get("fields") or {}).get(PROJECT_LEAD_LINK_FIELD) or []):
+        if lid in by_lead:
+            return by_lead[lid]
+    return None
+
+
+def _job_customer_block(project_fields: Dict[str, Any], job: Optional[Dict[str, Any]], show_contact: bool) -> Dict[str, Any]:
+    cust = (job or {}).get("customer") or {}
+    block = {"name": cust.get("name") or project_fields.get(PROJECT_NAME_FIELD) or ""}
+    if show_contact:
+        block["phone"] = cust.get("phone") or ""
+        block["email"] = cust.get("email") or ""
+    return block
+
+
+# Owner-editable job fields -> canonical Airtable Projects field ids (no duplicate records; the
+# Projects record stays the single source of truth). Every change is written to job_audit_log.
+JOB_EDIT_FIELDS: Dict[str, Dict[str, Any]] = {
+    "status":        {"field": PROJECT_STATUS_FIELD, "label": "Status", "type": "select",
+                      "options": ["Pending Deposit", "Scheduled", "In Progress", "Completed", "Cancelled"],
+                      "financial": False},
+    "move_date":     {"field": PROJECT_DATE_FIELD, "label": "Move date", "type": "date", "financial": False},
+    "crew_size":     {"field": PROJECT_CREW_FIELD, "label": "Crew size", "type": "number", "financial": False},
+    "est_hours":     {"field": PROJECT_HOURS_FIELD, "label": "Est. hours", "type": "number", "financial": False},
+    "truck":         {"field": PROJECT_TRUCK_FIELD, "label": "Truck", "type": "text", "financial": False},
+    "from_addr":     {"field": PROJECT_FROM_FIELD, "label": "From address", "type": "text", "financial": False},
+    "to_addr":       {"field": PROJECT_TO_FIELD, "label": "To address", "type": "text", "financial": False},
+    "quote":         {"field": PROJECT_QUOTE_FIELD, "label": "Quote", "type": "currency", "financial": True},
+    "final_revenue": {"field": PROJECT_REVENUE_FIELD, "label": "Final revenue", "type": "currency", "financial": True},
+}
+
+
+def _coerce_edit_value(spec: Dict[str, Any], raw: Any) -> Any:
+    t = spec["type"]
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        return None
+    if t in ("number", "currency"):
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=422, detail=f"{spec['label']} must be a number.")
+    if t == "select":
+        if raw not in spec.get("options", []):
+            raise HTTPException(status_code=422,
+                                detail=f"{spec['label']} must be one of: {', '.join(spec['options'])}.")
+        return raw
+    if t == "date":
+        return str(raw)[:10]
+    return str(raw).strip()
+
+
+def _norm_for_compare(spec: Dict[str, Any], val: Any) -> Any:
+    if val in (None, ""):
+        return None
+    if spec["type"] in ("number", "currency"):
+        try:
+            return float(val)
+        except (TypeError, ValueError):
+            return None
+    if spec["type"] == "date":
+        return str(val)[:10]
+    return str(val).strip()
+
+
+async def _job_history(project_id: str, money: bool) -> List[Dict[str, Any]]:
+    docs = await mongo_db.job_audit_log.find({"project_id": project_id}).sort("at", -1).to_list(500)
+    out: List[Dict[str, Any]] = []
+    for d in docs:
+        mask = bool(d.get("financial")) and not money
+        out.append({
+            "id": d["_id"], "field_key": d.get("field_key"), "label": d.get("label"),
+            "old": ("•••" if mask else d.get("old")), "new": ("•••" if mask else d.get("new")),
+            "by": d.get("by"), "at": d.get("at"), "note": d.get("note"),
+            "financial": bool(d.get("financial")),
+        })
+    return out
+
+
+@api_router.get("/job-mgmt/list")
+async def job_mgmt_list(request: Request, refresh: int = 0) -> Dict[str, Any]:
+    p = await _require_job_mgmt(request)
+    role = p["role"]
+    money = role == "owner"
+    show_contact = role in ("owner", "sales")
+    projects = await _cached_projects(force=bool(refresh))
+    by_recid, by_lead = await _jobs_index()
+    comp_docs = {c["_id"]: c for c in await mongo_db.job_compliance.find({}).to_list(2000)}
+    out: List[Dict[str, Any]] = []
+    for pr in projects:
+        rec = filter_record(pr, role, "projects")
+        f = rec.get("fields") or {}
+        job = _match_job(pr, by_recid, by_lead)
+        if job:
+            await _mirror_gates(job, pr.get("fields") or {})
+        crew = (job or {}).get("crew") or []
+        out.append({
+            "id": pr["id"],
+            "fields": rec.get("fields"),
+            "internal": rec.get("internal"),
+            "mgmt": {
+                "invoice_number": (job or {}).get("invoice_number"),
+                "job_id": (job or {}).get("_id"),
+                "crew": [{"name": c.get("name"), "position": c.get("position")} for c in crew],
+                "crew_count": len(crew),
+                "truck_name": (job or {}).get("truck_name") or f.get(PROJECT_TRUCK_FIELD),
+                "payment": _job_payment_summary(job, money),
+                "has_portal": bool(((job or {}).get("tracking") or {}).get("token")),
+                "portal_review": (job or {}).get("portal_review"),
+                "compliance": _compliance_status(comp_docs.get(pr["id"])),
+                "customer": _job_customer_block(f, job, show_contact),
+            },
+        })
+    return {"jobs": out, "count": len(out), "can_see_money": money,
+            "cached_at": _projects_list_cache["at"]}
+
+
+async def _job_timeline_events(project_id: str) -> List[Dict[str, Any]]:
+    """Compact merged timeline across every assignment tied to this project (no per-role RBAC
+    barrier — the Job Management gate already applies)."""
+    assignments = await mongo_db.assignments.find({"project_id": project_id}).to_list(50)
+    events: List[Dict[str, Any]] = []
+    for a in assignments:
+        aid = a["_id"]
+        if a.get("created_at"):
+            events.append({"at": a["created_at"], "kind": "created", "title": "Job put on the schedule", "by": ""})
+        for ev in a.get("status_history", []):
+            events.append({"at": ev.get("at"), "kind": "status",
+                           "title": f"Status: {ev.get('status')}", "by": ev.get("by", "")})
+        for d in await mongo_db.job_events.find({"assignment_id": aid}).to_list(200):
+            events.append({"at": d.get("at"), "kind": d.get("kind", "event"),
+                           "title": d.get("title", ""), "by": d.get("by", ""), "detail": d.get("detail", "")})
+        for e in await mongo_db.time_entries.find({"assignment_id": aid}).to_list(100):
+            if e.get("clock_in"):
+                events.append({"at": e["clock_in"]["at"], "kind": "clock",
+                               "title": f"{e.get('user_name')} clocked in", "by": e.get("user_name", "")})
+            if e.get("clock_out"):
+                hrs = e.get("hours")
+                events.append({"at": e["clock_out"]["at"], "kind": "clock",
+                               "title": f"{e.get('user_name')} clocked out" + (f" — {hrs:.1f}h" if hrs else ""),
+                               "by": e.get("user_name", "")})
+        for ph in await mongo_db.job_photos.find({"assignment_id": aid}).to_list(100):
+            events.append({"at": ph.get("created_at"), "kind": "photo",
+                           "title": f"Photo added by {ph.get('user_name')}", "by": ph.get("user_name", "")})
+    events = [e for e in events if e.get("at")]
+    events.sort(key=lambda e: e["at"], reverse=True)
+    return events[:200]
+
+
+def _actual_onsite_for_assignments(assignments: List[Dict[str, Any]],
+                                   entries_by_a: Dict[str, List[Dict[str, Any]]]) -> Optional[float]:
+    ins, outs, open_left = [], [], 0
+    for a in assignments:
+        for e in entries_by_a.get(a["_id"], []):
+            if e.get("clock_in"):
+                ins.append(e["clock_in"]["at"])
+            if e.get("clock_out"):
+                outs.append(e["clock_out"]["at"])
+            else:
+                open_left += 1
+    if not ins or not outs or open_left:
+        return None
+    try:
+        span = (datetime.fromisoformat(max(outs)) - datetime.fromisoformat(min(ins))).total_seconds() / 3600
+        return round(max(0.0, span), 2)
+    except (ValueError, TypeError):
+        return None
+
+
+async def _job_quality_links(project_id: str, name: str) -> Dict[str, Any]:
+    """Claims / nonconformances / audits / review tied to this project (Airtable-backed).
+    Best-effort; returns empty lists if Airtable is unavailable."""
+    out: Dict[str, Any] = {"claims": [], "nonconformances": [], "audits": [], "review": None}
+    try:
+        ncs = await _airtable_all(TABLES["nonconformances"])
+        out["nonconformances"] = [{
+            "id": r["id"], "number": (r.get("fields") or {}).get(NC_NUMBER_F),
+            "type": (r.get("fields") or {}).get(NC_TYPE_F),
+            "severity": (r.get("fields") or {}).get(NC_SEVERITY_F),
+            "status": (r.get("fields") or {}).get(NC_STATUS_F),
+            "what": (r.get("fields") or {}).get(NC_WHAT_F),
+        } for r in ncs if project_id in ((r.get("fields") or {}).get(NC_LINKED_JOB_F) or [])]
+    except HTTPException:
+        pass
+    try:
+        audits = await _airtable_all(TABLES["job_audits"])
+        out["audits"] = [{
+            "id": r["id"], "number": (r.get("fields") or {}).get(JA_NUMBER_F),
+            "result": (r.get("fields") or {}).get(JA_RESULT_F),
+            "completed": (r.get("fields") or {}).get(JA_COMPLETED_DATE_F),
+            "findings": (r.get("fields") or {}).get(JA_FINDINGS_F),
+        } for r in audits if project_id in ((r.get("fields") or {}).get(JA_LINKED_JOB_F) or [])]
+    except HTTPException:
+        pass
+    try:
+        claims = await _airtable_all(CLAIMS_TABLE)
+        out["claims"] = [{
+            "id": r["id"], "number": (r.get("fields") or {}).get(CLAIM_NUMBER_F),
+            "status": (r.get("fields") or {}).get(CLAIM_STATUS_F),
+            "notice_date": (r.get("fields") or {}).get(CLAIM_NOTICE_DATE_F),
+        } for r in claims if project_id in ((r.get("fields") or {}).get(CLAIM_LINKED_JOB_F) or [])]
+    except HTTPException:
+        pass
+    rv = await mongo_db.project_reviews.find_one({"_id": project_id})
+    if rv:
+        out["review"] = {"state": rv.get("state"), "rating": rv.get("rating"),
+                         "google_review_received": rv.get("google_review_received")}
+    return out
+
+
+@api_router.get("/job-mgmt/{project_id}")
+async def job_mgmt_detail(project_id: str, request: Request) -> Dict[str, Any]:
+    p = await _require_job_mgmt(request)
+    role = p["role"]
+    money = role == "owner"
+    show_contact = role in ("owner", "sales")
+    try:
+        record = await _fetch_project(project_id)
+    except HTTPException as exc:
+        if exc.status_code == 404:
+            raise HTTPException(status_code=404, detail="No such job.")
+        raise
+    rec = filter_record(record, role, "projects")
+    f = record.get("fields") or {}
+    by_recid, by_lead = await _jobs_index()
+    job = _match_job(record, by_recid, by_lead)
+    if job:
+        await _mirror_gates(job, f)
+
+    portal = None
+    if job:
+        base = await _portal_base()
+        token = (job.get("tracking") or {}).get("token")
+        tr = job.get("tracking") or {}
+        uploads = await mongo_db.portal_uploads.find({"job_id": job["_id"]}).sort("created_at", -1).to_list(50)
+        tips = await mongo_db.portal_tips.find({"job_id": job["_id"]}).sort("created_at", -1).to_list(20)
+        portal = {
+            "job_id": job["_id"],
+            "invoice_number": job.get("invoice_number"),
+            "token": token,
+            "link": f"{base}/track/{token}" if base and token else None,
+            "sends": job.get("portal_sends") or [],
+            "details": job.get("portal_details") or {},
+            "review": job.get("portal_review"),
+            "onway_sms_sent": bool(tr.get("onway_sms_sent") or tr.get("sms_sent")),
+            "uploads": [{"id": u["_id"], "filename": u.get("filename"),
+                         "content_type": u.get("content_type"), "kind": u.get("kind"),
+                         "created_at": u.get("created_at")} for u in uploads],
+            "tips": [{"name": t.get("tipper_name"),
+                      "amount": (t.get("amount") if money else None),
+                      "created_at": t.get("created_at"), "status": t.get("status")} for t in tips],
+            "payment": _job_payment_summary(job, money),
+        }
+
+    assignments = await mongo_db.assignments.find({"project_id": project_id}).to_list(50)
+    entries = await mongo_db.time_entries.find(
+        {"assignment_id": {"$in": [a["_id"] for a in assignments]}}).to_list(500) if assignments else []
+    entries_by_a: Dict[str, List[Dict[str, Any]]] = {}
+    for e in entries:
+        entries_by_a.setdefault(e.get("assignment_id"), []).append(e)
+    crew_clock = []
+    for a in assignments:
+        for e in entries_by_a.get(a["_id"], []):
+            crew_clock.append({
+                "name": e.get("user_name"),
+                "clock_in": (e.get("clock_in") or {}).get("at"),
+                "clock_out": (e.get("clock_out") or {}).get("at"),
+                "hours": e.get("hours"),
+                "position": next((c.get("position") for c in a.get("crew", [])
+                                  if c.get("user_id") == e.get("user_id")), None),
+            })
+    assignment_summaries = [{
+        "id": a["_id"], "job_name": a.get("job_name"),
+        "job_date": a.get("job_date"), "arrival_time": a.get("arrival_time"),
+        "exec_status": a.get("exec_status") or a.get("status"),
+        "truck_name": a.get("truck_name"),
+        "crew": [{"name": c.get("name"), "position": c.get("position")} for c in a.get("crew", [])],
+    } for a in assignments]
+
+    scope = None
+    if job and job.get("lead_id"):
+        tier = await scope_tier_for(p)
+        if tier:
+            sdoc = await mongo_db.lead_scopes.find({"lead_id": job["lead_id"]}).sort("created_at", -1).to_list(1)
+            if sdoc:
+                scope = redact_scope_doc(sdoc[0], tier)
+
+    quality = None
+    if role in ("owner", "sales", "quality"):
+        quality = await _job_quality_links(project_id, str(f.get(PROJECT_NAME_FIELD) or ""))
+
+    return {
+        "id": project_id,
+        "fields": rec.get("fields"),
+        "internal": rec.get("internal"),
+        "customer": _job_customer_block(f, job, show_contact),
+        "portal": portal,
+        "assignments": assignment_summaries,
+        "crew_clock": crew_clock,
+        "actual_onsite_hours": _actual_onsite_for_assignments(assignments, entries_by_a),
+        "timeline": await _job_timeline_events(project_id),
+        "scope": scope,
+        "quality": quality,
+        "paperwork_ack": (await _paperwork_ack_summary(job)) if job else None,
+        "move_confirmation": (_move_confirmation_state(job) if job else None),
+        "history": await _job_history(project_id, money),
+        "can_edit": role == "owner",
+        "can_see_money": money,
+        "can_see_quality": role in ("owner", "sales", "quality"),
+        "can_see_compliance": role in ("owner", "sales", "quality"),
+    }
+
+
+class JobEditPayload(BaseModel):
+    changes: Dict[str, Any]
+    note: Optional[str] = None
+
+
+@api_router.patch("/job-mgmt/{project_id}")
+async def job_mgmt_update(project_id: str, payload: JobEditPayload, request: Request) -> Dict[str, Any]:
+    p = await current_principal(request)
+    if p["role"] != "owner":
+        raise HTTPException(status_code=403, detail="Only the owner can edit job records.")
+    changes = payload.changes or {}
+    unknown = [k for k in changes if k not in JOB_EDIT_FIELDS]
+    if unknown:
+        raise HTTPException(status_code=422, detail=f"These fields can't be edited: {', '.join(unknown)}.")
+    if not changes:
+        raise HTTPException(status_code=422, detail="No changes provided.")
+
+    try:
+        record = await _fetch_project(project_id)
+    except HTTPException as exc:
+        if exc.status_code == 404:
+            raise HTTPException(status_code=404, detail="No such job.")
+        raise
+    cur = record.get("fields") or {}
+
+    air_fields: Dict[str, Any] = {}
+    diffs: List[Tuple[str, Dict[str, Any], Any, Any]] = []
+    for key, raw in changes.items():
+        spec = JOB_EDIT_FIELDS[key]
+        new_val = _coerce_edit_value(spec, raw)
+        old_val = _norm_for_compare(spec, cur.get(spec["field"]))
+        if new_val == old_val:
+            continue
+        air_fields[spec["field"]] = new_val
+        diffs.append((key, spec, old_val, new_val))
+
+    if not diffs:
+        return {"updated": False, "count": 0, "message": "Nothing changed.",
+                "history": await _job_history(project_id, True)}
+
+    # Canonical write — the read-only staging token intentionally returns 403 here, so no audit is logged.
+    await airtable_request("PATCH", TABLES["projects"],
+                           json_body={"records": [{"id": project_id, "fields": air_fields}], "typecast": True})
+
+    at = now_iso()
+    by = p.get("name") or p.get("email") or "owner"
+    note = (payload.note or "").strip() or None
+    entries = [{
+        "_id": str(uuid4()), "project_id": project_id, "field_key": key, "label": spec["label"],
+        "old": old_val, "new": new_val, "financial": spec["financial"],
+        "by": by, "by_id": p.get("user_id"), "note": note, "at": at,
+    } for key, spec, old_val, new_val in diffs]
+    await mongo_db.job_audit_log.insert_many(entries)
+
+    if air_fields.get(PROJECT_STATUS_FIELD) == PROJECT_COMPLETED_STATUS:
+        await _mark_review_requested(project_id, source="observed")
+    _projects_list_cache["at"] = 0.0  # force the list to refresh from Airtable on next load
+
+    return {"updated": True, "count": len(diffs), "history": await _job_history(project_id, True)}
+
+
+@api_router.get("/job-mgmt/{project_id}/history")
+async def job_mgmt_history(project_id: str, request: Request) -> Dict[str, Any]:
+    p = await _require_job_mgmt(request)
+    return {"history": await _job_history(project_id, p["role"] == "owner"),
+            "can_edit": p["role"] == "owner"}
+
+
+@api_router.post("/job-mgmt/{project_id}/record-delivered")
+async def job_mgmt_record_delivered(project_id: str, request: Request) -> Dict[str, Any]:
+    """Owner copies the customer's paperwork-acknowledgment time into the Airtable brochure/estimate
+    gate fields (only when empty). Never touches ofs_signed_at. Every write is audited."""
+    p = await current_principal(request)
+    if p["role"] != "owner":
+        raise HTTPException(status_code=403, detail="Only the owner can record delivery.")
+    try:
+        record = await _fetch_project(project_id)
+    except HTTPException as exc:
+        if exc.status_code == 404:
+            raise HTTPException(status_code=404, detail="No such job.")
+        raise
+    by_recid, by_lead = await _jobs_index()
+    job = _match_job(record, by_recid, by_lead)
+    if not job:
+        raise HTTPException(status_code=404, detail="No linked job for this project.")
+    ack = await _latest_ack(job["_id"])
+    if not ack:
+        raise HTTPException(status_code=422, detail="No customer acknowledgment on file yet.")
+    cur = record.get("fields") or {}
+    at = ack.get("at")
+    air: Dict[str, Any] = {}
+    labels: List[Tuple[str, str]] = []
+    if not cur.get(PROJECT_BROCHURE_SENT_F):
+        air[PROJECT_BROCHURE_SENT_F] = at
+        labels.append(("brochure_sent_at", "Brochure delivered"))
+    if not cur.get(PROJECT_ESTIMATE_DELIVERED_F):
+        air[PROJECT_ESTIMATE_DELIVERED_F] = at
+        labels.append(("estimate_delivered_at", "Estimate delivered"))
+    if not air:
+        return {"updated": False, "message": "Both gates already have delivery dates."}
+    await airtable_request("PATCH", TABLES["projects"],
+                           json_body={"records": [{"id": project_id, "fields": air}], "typecast": True})
+    entries = [{"_id": str(uuid4()), "project_id": project_id, "field_key": k, "label": lbl,
+                "old": None, "new": at, "financial": False,
+                "by": p.get("name") or p.get("email") or "owner", "by_id": p.get("user_id"),
+                "note": "Recorded from customer paperwork acknowledgment", "at": now_iso()}
+               for k, lbl in labels]
+    await mongo_db.job_audit_log.insert_many(entries)
+    _projects_list_cache["at"] = 0.0
+    return {"updated": True, "count": len(entries)}
+
 
 
 # ------- users management (owner)

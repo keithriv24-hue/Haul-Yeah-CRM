@@ -13,6 +13,7 @@ import Leads from "@/pages/Leads";
 import LeadDetail from "@/pages/LeadDetail";
 import Contacts from "@/pages/Contacts";
 import Projects from "@/pages/Projects";
+import JobDetail from "@/pages/JobDetail";
 import DaySheet from "@/pages/DaySheet";
 import Tasks from "@/pages/Tasks";
 import Blog from "@/pages/Blog";
@@ -59,6 +60,7 @@ function RoleRoutes() {
           <Route path="/commissions" element={<Commissions />} />
           <Route path="/notifications" element={<Notifications />} />
           <Route path="/projects" element={<Projects />} />
+          <Route path="/projects/:id" element={<JobDetail />} />
           <Route path="/tasks" element={<Tasks />} />
           <Route path="/blog" element={<Blog />} />
           <Route path="/team" element={<Team />} />
@@ -113,6 +115,7 @@ function RoleRoutes() {
       <Routes>
         <Route element={<Layout />}>
           <Route path="/projects" element={<Projects />} />
+          <Route path="/projects/:id" element={<JobDetail />} />
           <Route path="/day-sheet" element={<DaySheet />} />
           <Route path="/tasks" element={<Tasks />} />
           <Route path="/blog" element={<Blog />} />
@@ -137,6 +140,7 @@ function RoleRoutes() {
           <Route path="/quality/quote-accuracy" element={<QualityQuoteAccuracy />} />
           <Route path="/quality/monthly" element={<QualityMonthly />} />
           <Route path="/projects" element={<Projects />} />
+          <Route path="/projects/:id" element={<JobDetail />} />
           <Route path="/tasks" element={<Tasks />} />
           <Route path="/blog" element={<Blog />} />
           <Route path="*" element={<Navigate to="/quality" replace />} />
@@ -155,6 +159,7 @@ function RoleRoutes() {
         <Route path="/commissions" element={<Commissions />} />
         <Route path="/contacts" element={<Contacts />} />
         <Route path="/projects" element={<Projects />} />
+        <Route path="/projects/:id" element={<JobDetail />} />
         <Route path="/crew" element={<Crew />} />
         <Route path="/dispatch" element={<Dispatch />} />
         <Route path="/fleet" element={<Fleet />} />

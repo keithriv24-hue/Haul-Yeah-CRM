@@ -1,217 +1,131 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
-import { ChevronDown, ChevronUp, Truck, ShieldAlert, CalendarPlus, Star, Check, ClipboardList, Plus, AlertTriangle } from "lucide-react";
+import { Truck, Plus, ClipboardList, Users, ShieldCheck, ShieldAlert, ShieldQuestion, Send, ChevronRight, AlertTriangle, RefreshCw } from "lucide-react";
 import { useApp } from "@/context/AppContext";
+import { useAuth } from "@/components/AuthGate";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { InstructionBanner, PageTitle, Private, Money, EmptyState, LoadingRows, SearchBar, searchMatch, ConfirmDeleteButton } from "@/components/Bits";
-import { PF, LF, f, PROJECT_STATUSES, TRUCKS, STATUS_PILL } from "@/lib/fields";
-import { fmtDate, fmtMoney, calendarTemplate, smsLink, reviewSmsBody, mapsLink } from "@/lib/format";
-import { useAuth } from "@/components/AuthGate";
-import { listUsersApi, listTrucksApi, createAssignmentApi, apiErrorMessage } from "@/lib/api";
-import JobsCalendar from "@/components/JobsCalendar";
-import { ComplianceSection } from "@/components/ComplianceSection";
+import { InstructionBanner, PageTitle, EmptyState, LoadingRows, SearchBar, searchMatch } from "@/components/Bits";
+import { PF, PROJECT_STATUSES, TRUCKS, STATUS_PILL } from "@/lib/fields";
+import { fmtDate, fmtMoney } from "@/lib/format";
+import { jobMgmtListApi, updateRecordApi, listUsersApi, listTrucksApi, createAssignmentApi, apiErrorMessage } from "@/lib/api";
 
-const NumField = ({ record, fieldId, label, testId, disabled = false }) => {
-  const { updateRecord } = useApp();
-  const [val, setVal] = useState(f(record, fieldId) ?? "");
-  useEffect(() => setVal(f(record, fieldId) ?? ""), [record, fieldId]);
-  const save = () => {
-    const n = val === "" ? null : Number(val);
-    if (n === (f(record, fieldId) ?? null)) return;
-    updateRecord("projects", record.id, { [fieldId]: n }).catch(() => setVal(f(record, fieldId) ?? ""));
-  };
+const g = (job, id) => job.fields?.[id];
+
+const LIFECYCLE = [
+  { key: "upcoming", label: "Upcoming", statuses: ["Pending Deposit", "Scheduled"] },
+  { key: "in_progress", label: "In Progress", statuses: ["In Progress"] },
+  { key: "completed", label: "Completed", statuses: ["Completed"] },
+  { key: "cancelled", label: "Cancelled", statuses: ["Cancelled"] },
+  { key: "all", label: "All Jobs", statuses: null },
+];
+
+const localDate = (offset = 0) => {
+  const d = new Date();
+  d.setDate(d.getDate() + offset);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+const weekBounds = () => {
+  const d = new Date();
+  const start = new Date(d); start.setDate(d.getDate() - d.getDay());
+  const end = new Date(start); end.setDate(start.getDate() + 6);
+  const iso = (x) => `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`;
+  return [iso(start), iso(end)];
+};
+const dateInRange = (jobDate, mode) => {
+  const jd = (jobDate || "").slice(0, 10);
+  if (!mode || mode === "all") return true;
+  if (!jd) return false;
+  if (mode === "today") return jd === localDate(0);
+  if (mode === "tomorrow") return jd === localDate(1);
+  if (mode === "week") { const [s, e] = weekBounds(); return jd >= s && jd <= e; }
+  if (mode === "month") return jd.slice(0, 7) === localDate(0).slice(0, 7);
+  return true;
+};
+
+const COMPLIANCE_CHIP = {
+  compliant: { tone: "bg-success/12 text-success border-success/30", Icon: ShieldCheck, label: "Compliant" },
+  warning: { tone: "bg-warning/12 text-warning border-warning/30", Icon: ShieldAlert, label: "Warning" },
+  failed: { tone: "bg-destructive/12 text-destructive border-destructive/30", Icon: ShieldAlert, label: "Failed" },
+  overridden: { tone: "bg-primary/10 text-primary border-primary/30", Icon: ShieldCheck, label: "Overridden" },
+  unknown: { tone: "bg-surface-sunk text-faint border-border", Icon: ShieldQuestion, label: "Not checked" },
+};
+
+const ComplianceChip = ({ status }) => {
+  const c = COMPLIANCE_CHIP[status] || COMPLIANCE_CHIP.unknown;
   return (
-    <label className="text-xs text-faint flex flex-col gap-1">
-      {label}
-      <Input data-testid={testId} type="number" className="h-8 w-24" value={val} disabled={disabled} onChange={(e) => setVal(e.target.value)} onBlur={save} />
-    </label>
+    <Badge variant="outline" data-testid="job-compliance-chip" className={`text-[10px] gap-1 ${c.tone}`}>
+      <c.Icon className="w-3 h-3" /> {c.label}
+    </Badge>
   );
 };
 
-const ProjectCard = ({ project }) => {
-  const { updateRecord, deleteRecord, records, business } = useApp();
-  const { role } = useAuth();
-  const isOwner = (role || "owner") === "owner";
-  const canEditOps = ["owner", "employee"].includes(role || "owner");
-  const canEditCompliance = ["owner", "sales"].includes(role || "owner");
-  const [open, setOpen] = useState(false);
-  const status = f(project, PF.status) || "Pending Deposit";
-  const crew = Number(f(project, PF.crewSize)) || 0;
-  const hours = Number(f(project, PF.estHours)) || 0;
-  const quote = Number(f(project, PF.quote)) || 0;
-  const finalRev = Number(f(project, PF.finalRevenue)) || 0;
-  const internal = project.internal || null;
-  const linkedLead = isOwner ? records("leads").find((r) => r.id === (f(project, PF.lead) || [])[0]) : null;
-  const custPhone = linkedLead ? f(linkedLead, LF.phone) : null;
-  const custName = linkedLead ? f(linkedLead, LF.name) : "";
-  const reviewAsked = /review asked/i.test(f(project, PF.notes) || "");
+const PaymentChip = ({ payment }) => {
+  const full = payment?.full === "paid";
+  const dep = payment?.deposit === "paid";
+  const label = full ? "Paid in full" : dep ? "Deposit paid" : payment?.deposit === "pending" ? "Payment pending" : "Unpaid";
+  const tone = full ? "bg-success/12 text-success border-success/30"
+    : dep ? "bg-info/12 text-info border-info/30"
+    : "bg-surface-sunk text-faint border-border";
+  return <Badge variant="outline" data-testid="job-payment-chip" className={`text-[10px] ${tone}`}>{label}</Badge>;
+};
 
-  const markReviewAsked = () => {
-    if (reviewAsked) return;
-    const old = f(project, PF.notes) || "";
-    const line = `Review asked ${new Date().toLocaleDateString("en-US")}.`;
-    updateRecord("projects", project.id, { [PF.notes]: old ? `${old}\n${line}` : line })
-      .then(() => toast.success("Marked as asked — you won't text them twice."))
-      .catch(() => {});
-  };
-
+const JobRow = ({ job, canSeeMoney, canEditStatus, onStatusChange }) => {
+  const m = job.mgmt || {};
+  const status = g(job, PF.status) || "Pending Deposit";
+  const quote = g(job, PF.quote);
   return (
-    <div data-testid="project-card" className="surface p-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="min-w-0">
-          <Private className="font-display font-bold text-lg text-primary truncate block">{f(project, PF.jobName) || "Job"}</Private>
+    <div data-testid="job-row" className="surface p-4 hover:border-accent/40 transition-colors">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Link to={`/projects/${job.id}`} data-testid={`job-open-${job.id}`} className="font-display font-bold text-primary hover:text-accent-ink truncate">
+              {g(job, PF.jobName) || m.customer?.name || "Job"}
+            </Link>
+            {m.invoice_number && <span className="text-xs text-faint">#{m.invoice_number}</span>}
+          </div>
           <div className="text-xs text-faint mt-0.5">
-            {fmtDate(f(project, PF.jobDate))} · {crew || "?"} crew × {hours || "?"} hrs · {f(project, PF.truck) || "No truck set"}
+            {m.customer?.name || "—"}{m.customer?.phone ? ` · ${m.customer.phone}` : ""} · {fmtDate(g(job, PF.jobDate))}
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5 mt-2">
+            <Badge variant="outline" className={`text-[10px] ${STATUS_PILL[status] || ""}`}>{status}</Badge>
+            <PaymentChip payment={m.payment} />
+            <ComplianceChip status={m.compliance} />
+            {m.has_portal && <Badge variant="outline" className="text-[10px] gap-1 bg-accent/10 text-accent-ink border-accent/25"><Send className="w-3 h-3" /> Customer page</Badge>}
+            {m.portal_review && <Badge variant="outline" className="text-[10px] bg-warning/12 text-warning border-warning/30">{m.portal_review.rating}★</Badge>}
+          </div>
+          <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-sm text-ink-2">
+            <span className="inline-flex items-center gap-1.5"><Users className="w-3.5 h-3.5 text-faint" />{m.crew_count ? m.crew.map((c) => c.name?.split(" ")[0]).join(", ") : <span className="text-faint">No crew</span>}</span>
+            <span className="inline-flex items-center gap-1.5"><Truck className="w-3.5 h-3.5 text-faint" />{m.truck_name || <span className="text-faint">No truck</span>}</span>
+            {canSeeMoney && quote != null && <span className="font-semibold text-primary">{fmtMoney(quote)}</span>}
           </div>
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          {isOwner && (
-            <div className="text-right">
-              <div className="text-sm font-bold text-primary">Quote: <Money value={quote || null} /></div>
-              <div className={`text-xs font-semibold ${f(project, PF.depositCollected) ? "text-success" : "text-warning"}`}>
-                {f(project, PF.depositCollected) ? "Deposit in" : "Deposit not in"}
-              </div>
-            </div>
+        <div className="flex items-center gap-2">
+          {canEditStatus && (
+            <Select value={status} onValueChange={(v) => onStatusChange(job.id, v)}>
+              <SelectTrigger data-testid="job-row-status-select" className={`w-[140px] h-8 text-xs font-semibold border ${STATUS_PILL[status] || ""}`}><SelectValue /></SelectTrigger>
+              <SelectContent>{PROJECT_STATUSES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
+            </Select>
           )}
-          <Select value={status} onValueChange={(v) => updateRecord("projects", project.id, { [PF.status]: v }).catch(() => {})} disabled={!canEditOps}>
-            <SelectTrigger data-testid="project-status-select" className={`w-[150px] h-8 text-xs font-semibold border ${STATUS_PILL[status] || ""}`}>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>{PROJECT_STATUSES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
-          </Select>
-          {isOwner && status === "Completed" && (
-            <Button
-              data-testid="project-review-btn"
-              asChild
-              variant="outline"
-              size="sm"
-              className={`gap-1 text-xs ${reviewAsked
-                ? "border-success/30 text-success hover:bg-success/10 hover:text-success"
-                : "border-warning/30 text-warning hover:bg-warning/10 hover:text-warning"}`}
-              disabled={!custPhone}
-              title={reviewAsked ? "You already asked — tapping texts them again" : custPhone ? "Text them a review ask" : "No phone on the linked lead"}
-            >
-              <a href={custPhone ? smsLink(custPhone, reviewSmsBody(custName, business.reviewLink)) : undefined} onClick={markReviewAsked}>
-                {reviewAsked ? <Check className="w-3.5 h-3.5" /> : <Star className="w-3.5 h-3.5" />}
-                {reviewAsked ? "Review asked" : "Ask for review"}
-              </a>
-            </Button>
-          )}
-          <Button data-testid="project-details-btn" variant="outline" size="sm" className="gap-1 text-xs" onClick={() => setOpen(!open)}>
-            {open ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />} Details
+          <Button data-testid="job-open-btn" asChild variant="outline" size="sm" className="gap-1">
+            <Link to={`/projects/${job.id}`}>Open <ChevronRight className="w-3.5 h-3.5" /></Link>
           </Button>
-          {isOwner && (
-            <ConfirmDeleteButton
-              what={`the "${f(project, PF.jobName) || "job"}" project`}
-              testId="project-delete-btn"
-              onConfirm={() => deleteRecord("projects", project.id).then(() => toast.success("Project deleted.")).catch(() => {})}
-            />
-          )}
         </div>
       </div>
-
-      {open && (
-        <>
-        <div className="mt-4 pt-4 border-t border-border grid md:grid-cols-2 gap-4">
-          <div className="space-y-3">
-            <div className="flex flex-wrap gap-3">
-              <NumField record={project} fieldId={PF.crewSize} label="Crew size" testId="project-crew-input" disabled={!canEditOps} />
-              <NumField record={project} fieldId={PF.estHours} label="Est. hours" testId="project-hours-input" disabled={!canEditOps} />
-              {isOwner && <NumField record={project} fieldId={PF.quote} label="Quote ($)" testId="project-quote-input" />}
-              {isOwner && <NumField record={project} fieldId={PF.finalRevenue} label="Final revenue ($)" testId="project-revenue-input" />}
-            </div>
-            <label className="text-xs text-faint flex flex-col gap-1 w-40">
-              Truck
-              <Select value={f(project, PF.truck) || ""} onValueChange={(v) => updateRecord("projects", project.id, { [PF.truck]: v }).catch(() => {})} disabled={!canEditOps}>
-                <SelectTrigger data-testid="project-truck-select" className="h-8 text-xs"><SelectValue placeholder="Pick truck" /></SelectTrigger>
-                <SelectContent>{TRUCKS.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
-              </Select>
-            </label>
-            {isOwner && (
-              <label className="flex items-center gap-2 text-sm">
-                <Checkbox
-                  data-testid="project-deposit-checkbox"
-                  checked={!!f(project, PF.depositCollected)}
-                  onCheckedChange={(v) => updateRecord("projects", project.id, { [PF.depositCollected]: !!v }).catch(() => {})}
-                />
-                Deposit collected
-              </label>
-            )}
-            <div className="text-xs text-ink-2 space-y-1">
-              <div>
-                From:{" "}
-                {f(project, PF.fromAddr) ? (
-                  <a
-                    data-testid="project-from-map-link"
-                    href={mapsLink(f(project, PF.fromAddr))}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-primary font-semibold underline decoration-dotted underline-offset-2 hover:text-accent-ink"
-                  >
-                    <Private>{f(project, PF.fromAddr)}</Private>
-                  </a>
-                ) : ("—")}
-              </div>
-              <div>
-                To:{" "}
-                {f(project, PF.toAddr) ? (
-                  <a
-                    data-testid="project-to-map-link"
-                    href={mapsLink(f(project, PF.toAddr))}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-primary font-semibold underline decoration-dotted underline-offset-2 hover:text-accent-ink"
-                  >
-                    <Private>{f(project, PF.toAddr)}</Private>
-                  </a>
-                ) : ("—")}
-              </div>
-              {f(project, PF.notes) && <div className="whitespace-pre-wrap">Notes: {f(project, PF.notes)}</div>}
-            </div>
-            <Button asChild variant="outline" size="sm" className="gap-1 text-xs" data-testid="project-calendar-btn">
-              <a
-                href={calendarTemplate(f(project, PF.jobName) || "Moving job", f(project, PF.jobDate), `From: ${f(project, PF.fromAddr) || ""} To: ${f(project, PF.toAddr) || ""}`)}
-                target="_blank"
-                rel="noreferrer"
-              >
-                <CalendarPlus className="w-3.5 h-3.5" /> Add to Google Calendar
-              </a>
-            </Button>
-          </div>
-          {isOwner && internal && (
-            <div className="border border-border bg-surface-sunk rounded-lg p-4 h-fit">
-              <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-faint mb-2">
-                <ShieldAlert className="w-3.5 h-3.5 text-destructive" /> Internal margin math — never show customers
-              </div>
-              <Private block>
-                <div className="text-sm space-y-1 text-ink-2">
-                  <div className="flex justify-between"><span>Crew cost ({crew} crew × {hours} hrs)</span><span>{fmtMoney(internal.crew_cost)}</span></div>
-                  <div className="flex justify-between"><span>Revenue ({finalRev ? "final" : "quoted"})</span><span>{fmtMoney(finalRev || quote)}</span></div>
-                  <div className={`flex justify-between font-bold pt-1 border-t border-border ${internal.margin >= 0 ? "text-success" : "text-destructive"}`}>
-                    <span>Est. margin</span><span data-testid="project-margin">{fmtMoney(internal.margin)}</span>
-                  </div>
-                </div>
-              </Private>
-            </div>
-          )}
-        </div>
-        <ComplianceSection projectId={project.id} canEdit={canEditCompliance} canOverride={isOwner} />
-        </>
-      )}
     </div>
   );
 };
 
 const blankProject = { jobName: "", jobDate: "", fromAddr: "", toAddr: "", crewSize: "", estHours: "", quote: "", truck: "", notes: "" };
 
-const NewProjectDialog = ({ open, onOpenChange }) => {
+const NewProjectDialog = ({ open, onOpenChange, onSaved }) => {
   const { createRecord } = useApp();
   const [form, setForm] = useState(blankProject);
   const [saving, setSaving] = useState(false);
@@ -224,85 +138,52 @@ const NewProjectDialog = ({ open, onOpenChange }) => {
 
   useEffect(() => {
     if (open) {
-      setForm(blankProject);
-      setCrewSel({});
-      setWarnings([]);
-      setCreatedId(null);
+      setForm(blankProject); setCrewSel({}); setWarnings([]); setCreatedId(null);
       listUsersApi().then(setUsers).catch(() => {});
       listTrucksApi().then(setTrucks).catch(() => {});
     }
   }, [open]);
 
   const crewUsers = users.filter((u) => (u.roles || [u.role]).includes("crew") && u.active);
-  const toggleCrew = (uid) =>
-    setCrewSel((s) => {
-      const next = { ...s };
-      if (next[uid]) delete next[uid];
-      else next[uid] = "Helper";
-      return next;
-    });
+  const toggleCrew = (uid) => setCrewSel((s) => { const n = { ...s }; if (n[uid]) delete n[uid]; else n[uid] = "Helper"; return n; });
 
   const save = async (ignoreWarnings = false) => {
-    if (!form.jobName.trim()) {
-      toast.error("Give the project a job name first.");
-      return;
-    }
+    if (!form.jobName.trim()) { toast.error("Give the project a job name first."); return; }
     const crew = Object.entries(crewSel).map(([user_id, position]) => ({ user_id, position }));
-    if (crew.length && !form.jobDate) {
-      toast.error("Pick a job date so it can go on the crew's schedule.");
-      return;
-    }
+    if (crew.length && !form.jobDate) { toast.error("Pick a job date so it can go on the crew's schedule."); return; }
     setSaving(true);
     try {
       let projId = createdId;
       if (!projId) {
         const rec = await createRecord("projects", {
-          [PF.jobName]: form.jobName.trim(),
-          [PF.status]: "Pending Deposit",
-          [PF.jobDate]: form.jobDate,
-          [PF.fromAddr]: form.fromAddr,
-          [PF.toAddr]: form.toAddr,
+          [PF.jobName]: form.jobName.trim(), [PF.status]: "Pending Deposit", [PF.jobDate]: form.jobDate,
+          [PF.fromAddr]: form.fromAddr, [PF.toAddr]: form.toAddr,
           [PF.crewSize]: form.crewSize === "" ? null : Number(form.crewSize),
           [PF.estHours]: form.estHours === "" ? null : Number(form.estHours),
-          [PF.quote]: form.quote === "" ? null : Number(form.quote),
-          [PF.truck]: form.truck,
-          [PF.notes]: form.notes,
+          [PF.quote]: form.quote === "" ? null : Number(form.quote), [PF.truck]: form.truck, [PF.notes]: form.notes,
         });
-        projId = rec.id;
-        setCreatedId(projId);
+        projId = rec.id; setCreatedId(projId);
       }
       if (crew.length) {
         const truck = trucks.find((t) => t.name === form.truck);
         try {
           await createAssignmentApi({
-            project_id: projId,
-            job_name: form.jobName.trim(),
-            job_date: form.jobDate,
-            arrival_time: "",
-            start_address: form.fromAddr,
-            end_address: form.toAddr,
-            truck_id: truck ? truck.id : null,
-            job_size: "",
-            crew,
-            ignore_warnings: ignoreWarnings,
+            project_id: projId, job_name: form.jobName.trim(), job_date: form.jobDate, arrival_time: "",
+            start_address: form.fromAddr, end_address: form.toAddr, truck_id: truck ? truck.id : null,
+            job_size: "", crew, ignore_warnings: ignoreWarnings,
           });
         } catch (e) {
           const det = e?.response?.data?.detail;
-          if (e?.response?.status === 409 && det?.warnings) {
-            setWarnings(det.warnings);
-            setSaving(false);
-            return;
-          }
-          toast.error(`Project saved, but scheduling failed. ${apiErrorMessage(e)}`);
-          setSaving(false);
-          return;
+          if (e?.response?.status === 409 && det?.warnings) { setWarnings(det.warnings); setSaving(false); return; }
+          toast.error(`Project saved, but scheduling failed. ${apiErrorMessage(e)}`); setSaving(false); return;
         }
         toast.success("Project added — the crew's been notified and it's on their schedule.");
       } else {
         toast.success("Project added.");
       }
       onOpenChange(false);
-    } catch {}
+      onSaved && onSaved();
+    } catch { /* handled in createRecord */ }
     setSaving(false);
   };
 
@@ -310,18 +191,12 @@ const NewProjectDialog = ({ open, onOpenChange }) => {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent data-testid="new-project-modal" className="max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="font-display">New project</DialogTitle>
+          <DialogTitle className="font-display">New job</DialogTitle>
           <DialogDescription>For jobs that didn't come through a booked lead — added straight to the board.</DialogDescription>
         </DialogHeader>
         <div className="grid grid-cols-2 gap-3">
-          <div className="col-span-2">
-            <Label>Job name *</Label>
-            <Input data-testid="project-name-input" value={form.jobName} onChange={set("jobName")} placeholder="Smith move — 2BR" />
-          </div>
-          <div>
-            <Label>Job date</Label>
-            <Input data-testid="project-date-input" type="date" value={form.jobDate} onChange={set("jobDate")} />
-          </div>
+          <div className="col-span-2"><Label>Job name *</Label><Input data-testid="project-name-input" value={form.jobName} onChange={set("jobName")} placeholder="Smith move — 2BR" /></div>
+          <div><Label>Job date</Label><Input data-testid="project-date-input" type="date" value={form.jobDate} onChange={set("jobDate")} /></div>
           <div>
             <Label>Truck</Label>
             <Select value={form.truck} onValueChange={(v) => setForm((s) => ({ ...s, truck: v }))}>
@@ -333,30 +208,12 @@ const NewProjectDialog = ({ open, onOpenChange }) => {
               </SelectContent>
             </Select>
           </div>
-          <div className="col-span-2">
-            <Label>From address</Label>
-            <Input data-testid="project-from-input" value={form.fromAddr} onChange={set("fromAddr")} />
-          </div>
-          <div className="col-span-2">
-            <Label>To address</Label>
-            <Input data-testid="project-to-input" value={form.toAddr} onChange={set("toAddr")} />
-          </div>
-          <div>
-            <Label>Crew size</Label>
-            <Input data-testid="project-crew-new-input" type="number" min="0" value={form.crewSize} onChange={set("crewSize")} />
-          </div>
-          <div>
-            <Label>Est. hours</Label>
-            <Input data-testid="project-hours-new-input" type="number" min="0" value={form.estHours} onChange={set("estHours")} />
-          </div>
-          <div>
-            <Label>Quote ($)</Label>
-            <Input data-testid="project-quote-new-input" type="number" min="0" value={form.quote} onChange={set("quote")} />
-          </div>
-          <div className="col-span-2">
-            <Label>Notes</Label>
-            <Textarea value={form.notes} onChange={set("notes")} rows={2} />
-          </div>
+          <div className="col-span-2"><Label>From address</Label><Input data-testid="project-from-input" value={form.fromAddr} onChange={set("fromAddr")} /></div>
+          <div className="col-span-2"><Label>To address</Label><Input data-testid="project-to-input" value={form.toAddr} onChange={set("toAddr")} /></div>
+          <div><Label>Crew size</Label><Input data-testid="project-crew-new-input" type="number" min="0" value={form.crewSize} onChange={set("crewSize")} /></div>
+          <div><Label>Est. hours</Label><Input data-testid="project-hours-new-input" type="number" min="0" value={form.estHours} onChange={set("estHours")} /></div>
+          <div><Label>Quote ($)</Label><Input data-testid="project-quote-new-input" type="number" min="0" value={form.quote} onChange={set("quote")} /></div>
+          <div className="col-span-2"><Label>Notes</Label><Textarea value={form.notes} onChange={set("notes")} rows={2} /></div>
           <div className="col-span-2">
             <Label>Put it on the crew's schedule (optional)</Label>
             <div className="space-y-2 mt-1.5">
@@ -368,35 +225,25 @@ const NewProjectDialog = ({ open, onOpenChange }) => {
                   {crewSel[u.id] && (
                     <Select value={crewSel[u.id]} onValueChange={(v) => setCrewSel((s) => ({ ...s, [u.id]: v }))}>
                       <SelectTrigger data-testid="project-position-select" className="w-28 h-8 text-xs"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="Driver">Driver</SelectItem>
-                        <SelectItem value="Helper">Helper</SelectItem>
-                      </SelectContent>
+                      <SelectContent><SelectItem value="Driver">Driver</SelectItem><SelectItem value="Helper">Helper</SelectItem></SelectContent>
                     </Select>
                   )}
                 </div>
               ))}
-              {Object.keys(crewSel).length > 0 && (
-                <p className="text-[11px] text-faint">They'll get notified and see it under My Jobs and their schedule.</p>
-              )}
             </div>
           </div>
           {warnings.length > 0 && (
             <div data-testid="project-schedule-warnings" className="col-span-2 bg-warning/10 border border-warning/25 rounded-md p-3 space-y-1">
               <p className="text-xs font-bold text-warning flex items-center gap-1"><AlertTriangle className="w-3.5 h-3.5" /> Hold on:</p>
-              {warnings.map((w, i) => (
-                <p key={i} className="text-xs text-warning">• {w}</p>
-              ))}
+              {warnings.map((w, i) => <p key={i} className="text-xs text-warning">• {w}</p>)}
             </div>
           )}
         </div>
         {warnings.length > 0 ? (
-          <Button data-testid="project-force-schedule-btn" onClick={() => save(true)} disabled={saving} className="w-full gap-2 bg-warning hover:bg-warning">
-            Schedule anyway
-          </Button>
+          <Button data-testid="project-force-schedule-btn" onClick={() => save(true)} disabled={saving} className="w-full gap-2 bg-warning hover:bg-warning">Schedule anyway</Button>
         ) : (
           <Button data-testid="project-save-btn" onClick={() => save(false)} disabled={saving} className="w-full gap-2 bg-accent hover:bg-accent-press">
-            <Plus className="w-4 h-4" /> {saving ? "Saving…" : "Add project"}
+            <Plus className="w-4 h-4" /> {saving ? "Saving…" : "Add job"}
           </Button>
         )}
       </DialogContent>
@@ -404,63 +251,157 @@ const NewProjectDialog = ({ open, onOpenChange }) => {
   );
 };
 
+const FILTER_SELECT = "h-8 text-xs w-auto min-w-[120px]";
+
 export default function Projects() {
-  const { loadTable, records, tableState } = useApp();
   const { role } = useAuth();
   const isOwner = (role || "owner") === "owner";
+  const canEditStatus = ["owner", "employee"].includes(role || "owner");
+  const [resp, setResp] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [tab, setTab] = useState("upcoming");
   const [query, setQuery] = useState("");
+  const [dateFilter, setDateFilter] = useState("all");
+  const [payFilter, setPayFilter] = useState("all");
+  const [compFilter, setCompFilter] = useState("all");
+  const [crewFilter, setCrewFilter] = useState("all");
   const [newOpen, setNewOpen] = useState(false);
-  useEffect(() => {
-    loadTable("projects");
-    if (isOwner) loadTable("leads");
-  }, [loadTable, isOwner]);
 
-  const projects = [...records("projects")]
-    .filter((p) => searchMatch(query, f(p, PF.jobName), f(p, PF.fromAddr), f(p, PF.toAddr), f(p, PF.status), f(p, PF.truck), f(p, PF.notes)))
-    .sort((a, b) => (f(a, PF.jobDate) || "9999").localeCompare(f(b, PF.jobDate) || "9999"));
-  const { loading, error } = tableState("projects");
+  const load = useCallback((refresh = 0) => {
+    setLoading(true);
+    jobMgmtListApi(refresh)
+      .then((d) => { setResp(d); setError(null); })
+      .catch((e) => setError(apiErrorMessage(e)))
+      .finally(() => setLoading(false));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const jobs = useMemo(() => resp?.jobs || [], [resp]);
+  const canSeeMoney = !!resp?.can_see_money;
+
+  const counts = useMemo(() => {
+    const c = {};
+    LIFECYCLE.forEach((t) => {
+      c[t.key] = t.statuses ? jobs.filter((j) => t.statuses.includes(g(j, PF.status))).length : jobs.length;
+    });
+    return c;
+  }, [jobs]);
+
+  const crewNames = useMemo(() => {
+    const s = new Set();
+    jobs.forEach((j) => (j.mgmt?.crew || []).forEach((c) => c.name && s.add(c.name)));
+    return [...s].sort();
+  }, [jobs]);
+
+  const statusChange = async (id, v) => {
+    setResp((r) => ({ ...r, jobs: r.jobs.map((j) => (j.id === id ? { ...j, fields: { ...j.fields, [PF.status]: v } } : j)) }));
+    try {
+      await updateRecordApi("projects", id, { [PF.status]: v });
+      toast.success(`Moved to ${v}.`);
+    } catch (e) {
+      toast.error(`Couldn't update status. ${apiErrorMessage(e)}`);
+      load();
+    }
+  };
+
+  const shown = useMemo(() => {
+    const life = LIFECYCLE.find((t) => t.key === tab);
+    return jobs.filter((j) => {
+      if (life?.statuses && !life.statuses.includes(g(j, PF.status))) return false;
+      if (!dateInRange(g(j, PF.jobDate), dateFilter)) return false;
+      const pay = j.mgmt?.payment || {};
+      if (payFilter === "full" && pay.full !== "paid") return false;
+      if (payFilter === "deposit" && !(pay.deposit === "paid" || pay.full === "paid")) return false;
+      if (payFilter === "unpaid" && (pay.deposit === "paid" || pay.full === "paid")) return false;
+      if (compFilter !== "all" && (j.mgmt?.compliance || "unknown") !== compFilter) return false;
+      if (crewFilter !== "all" && !(j.mgmt?.crew || []).some((c) => c.name === crewFilter)) return false;
+      const m = j.mgmt || {};
+      return searchMatch(query, g(j, PF.jobName), m.customer?.name, m.customer?.phone, m.customer?.email,
+        m.invoice_number, g(j, PF.fromAddr), g(j, PF.toAddr), g(j, PF.jobDate), ...(m.crew || []).map((c) => c.name));
+    });
+  }, [jobs, tab, dateFilter, payFilter, compFilter, crewFilter, query]);
 
   return (
     <div data-testid="projects-page">
       <PageTitle
-        title="Projects"
-        subtitle="Your booked jobs, next date first."
+        title="Jobs"
+        subtitle="Every job — upcoming, happening now, and done. Open any one to see the whole story."
         action={
           <div className="flex gap-2">
-            <Button asChild data-testid="day-sheet-btn" variant="outline" className="gap-1.5">
-              <Link to="/day-sheet"><ClipboardList className="w-4 h-4" /> Day sheet</Link>
-            </Button>
-            {isOwner && (
-              <Button data-testid="new-project-btn" onClick={() => setNewOpen(true)} className="gap-1.5 bg-accent hover:bg-accent-press">
-                <Plus className="w-4 h-4" /> New project
-              </Button>
-            )}
+            <Button data-testid="jobs-refresh-btn" variant="outline" className="gap-1.5" onClick={() => load(1)}><RefreshCw className="w-4 h-4" /> Refresh</Button>
+            <Button asChild data-testid="day-sheet-btn" variant="outline" className="gap-1.5"><Link to="/day-sheet"><ClipboardList className="w-4 h-4" /> Day sheet</Link></Button>
+            {isOwner && <Button data-testid="new-project-btn" onClick={() => setNewOpen(true)} className="gap-1.5 bg-accent hover:bg-accent-press"><Plus className="w-4 h-4" /> New job</Button>}
           </div>
         }
       />
-      <InstructionBanner>
-        {isOwner
-          ? "Your booked jobs, next date first. Update the status as the day goes. Open Details for crew, truck, and margin."
-          : "Your jobs, next date first. Update the status as the day goes. Open Details for addresses, crew, and truck."}
-      </InstructionBanner>
-      <JobsCalendar projects={records("projects")} />
-      <div className="flex flex-wrap items-center gap-3 mb-3">
-        <h2 className="label-eyebrow">All jobs</h2>
-        <SearchBar value={query} onChange={setQuery} placeholder="Search job, address, or truck…" testId="projects-search-input" className="sm:ml-auto sm:max-w-xs" />
+      <InstructionBanner>Find any job by status, date, crew, payment, or compliance. Tap a job to review crew, timing, money, compliance, quality, and its customer page.</InstructionBanner>
+
+      {/* Lifecycle tabs */}
+      <div data-testid="jobs-lifecycle-tabs" className="flex flex-wrap gap-1.5 mb-3">
+        {LIFECYCLE.map((t) => (
+          <button key={t.key} data-testid={`jobs-tab-${t.key}`} onClick={() => setTab(t.key)}
+            className={`px-3 py-1.5 rounded-full text-sm font-semibold border transition-colors ${tab === t.key ? "bg-primary text-white border-primary" : "bg-surface text-ink-2 border-border hover:border-accent/40"}`}>
+            {t.label} <span className={tab === t.key ? "text-white/70" : "text-faint"}>({counts[t.key] ?? 0})</span>
+          </button>
+        ))}
       </div>
-      {loading && !projects.length ? (
+
+      {/* Filter bar */}
+      <div className="flex flex-wrap items-center gap-2 mb-3">
+        <SearchBar value={query} onChange={setQuery} placeholder="Search customer, phone, email, job #, address, crew…" testId="projects-search-input" className="sm:max-w-xs" />
+        <Select value={dateFilter} onValueChange={setDateFilter}>
+          <SelectTrigger data-testid="jobs-filter-date" className={FILTER_SELECT}><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Any date</SelectItem><SelectItem value="today">Today</SelectItem>
+            <SelectItem value="tomorrow">Tomorrow</SelectItem><SelectItem value="week">This week</SelectItem>
+            <SelectItem value="month">This month</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={payFilter} onValueChange={setPayFilter}>
+          <SelectTrigger data-testid="jobs-filter-payment" className={FILTER_SELECT}><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Any payment</SelectItem><SelectItem value="deposit">Deposit paid</SelectItem>
+            <SelectItem value="full">Paid in full</SelectItem><SelectItem value="unpaid">Unpaid</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={compFilter} onValueChange={setCompFilter}>
+          <SelectTrigger data-testid="jobs-filter-compliance" className={FILTER_SELECT}><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Any compliance</SelectItem><SelectItem value="compliant">Compliant</SelectItem>
+            <SelectItem value="warning">Warning</SelectItem><SelectItem value="failed">Failed</SelectItem>
+            <SelectItem value="overridden">Overridden</SelectItem><SelectItem value="unknown">Not checked</SelectItem>
+          </SelectContent>
+        </Select>
+        {crewNames.length > 0 && (
+          <Select value={crewFilter} onValueChange={setCrewFilter}>
+            <SelectTrigger data-testid="jobs-filter-crew" className={FILTER_SELECT}><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Any crew</SelectItem>
+              {crewNames.map((n) => <SelectItem key={n} value={n}>{n}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        )}
+      </div>
+
+      {loading && !resp ? (
         <LoadingRows />
-      ) : error && !projects.length ? (
-        <EmptyState>{error}</EmptyState>
-      ) : projects.length === 0 ? (
+      ) : error && !jobs.length ? (
+        <EmptyState><Truck className="w-6 h-6 mx-auto mb-2 text-faint" />{error}</EmptyState>
+      ) : shown.length === 0 ? (
         <EmptyState>
           <Truck className="w-6 h-6 mx-auto mb-2 text-faint" />
-          {query ? "No jobs match that search." : "No jobs yet. Book a lead from the Leads page to create one."}
+          {jobs.length === 0 ? "No jobs yet. Book a lead from the Leads page to create one." : "No jobs match these filters."}
         </EmptyState>
       ) : (
-        <div className="space-y-3">{projects.map((p) => <ProjectCard key={p.id} project={p} />)}</div>
+        <div className="space-y-3" data-testid="jobs-list">
+          {shown.map((j) => (
+            <JobRow key={j.id} job={j} canSeeMoney={canSeeMoney} canEditStatus={canEditStatus} onStatusChange={statusChange} />
+          ))}
+        </div>
       )}
-      {isOwner && <NewProjectDialog open={newOpen} onOpenChange={setNewOpen} />}
+
+      {isOwner && <NewProjectDialog open={newOpen} onOpenChange={setNewOpen} onSaved={() => load(1)} />}
     </div>
   );
 }
