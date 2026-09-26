@@ -56,6 +56,15 @@ export const qualityAuditQueueApi = () => axios.get(`${API}/quality/audit-queue`
 export const qualityQuoteAccuracyApi = (params) => axios.get(`${API}/quality/quote-accuracy`, { params }).then((r) => r.data);
 export const qualityFeedbackListApi = () => axios.get(`${API}/quality/feedback`).then((r) => r.data.feedback);
 export const qualityFeedbackCreateApi = (payload) => axios.post(`${API}/quality/feedback`, payload).then((r) => r.data);
+// Quality prompt 3 — dashboard, claims, reviews, monthly review
+export const qualityDashboardApi = () => axios.get(`${API}/quality/dashboard`).then((r) => r.data);
+export const qualityMonthlyApi = (month) => axios.get(`${API}/quality/monthly`, { params: month ? { month } : {} }).then((r) => r.data);
+export const qualityReviewsApi = () => axios.get(`${API}/quality/reviews`).then((r) => r.data);
+export const qualityClaimsApi = () => axios.get(`${API}/quality/claims`).then((r) => r.data);
+export const qualityCreateClaimApi = (inputs) => axios.post(`${API}/quality/claims`, { inputs }).then((r) => r.data);
+export const qualityUpdateClaimApi = (id, inputs) => axios.patch(`${API}/quality/claims/${id}`, { inputs }).then((r) => r.data);
+export const qualitySetGoogleReviewApi = (projectId, received) =>
+  axios.put(`${API}/quality/projects/${projectId}/google-review`, { received }).then((r) => r.data);
 
 export const listUsersApi = () => axios.get(`${API}/users`).then((r) => r.data.users);
 export const createUserApi = (u) => axios.post(`${API}/users`, u).then((r) => r.data);

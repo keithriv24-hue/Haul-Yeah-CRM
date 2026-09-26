@@ -161,6 +161,23 @@ JA_FINDINGS_F = "fldUp6XjCp9kLl00e"
 JA_SIGNED_BOL_F = "fld8Hu5BuK7oI6dE1"
 JA_LINKED_NC_F = "fldJZDkUMcLRDnx3r"
 JA_LINKED_JOB_F = "fldYjt6xsNHq2U2Qn"
+# claims  (Prompt 3) — Claim number + Form due + Settlement due are read-only (AUTONUMBER/FORMULA)
+CLAIMS_TABLE = "tblsdVcVP6uhtxOrK"
+CLAIM_NUMBER_F = "fldz1Ph1KXjZYNUDf"          # AUTONUMBER — read-only, primary
+CLAIM_LINKED_JOB_F = "fldW0Uk8sWQVuTVGT"      # link -> projects
+CLAIM_NOTICE_DATE_F = "fldvFYGanrCdOqh3H"     # date
+CLAIM_FORM_DUE_F = "fldFo2HfKyF0VxeHW"        # FORMULA read-only = Notice received + 7
+CLAIM_FORM_SENT_F = "fldVqh1bH658FlBW0"       # date
+CLAIM_COMPLETED_RECEIVED_F = "fldQ5QVOaYUPMO8gJ"  # date
+CLAIM_SETTLEMENT_DUE_F = "fldRF1W2uYa5G6kFw"  # FORMULA read-only = Completed + 90 (or +120 w/ extension — ALREADY applied)
+CLAIM_EXTENSION_F = "fldesCpx3bWzECiqQ"       # checkbox
+CLAIM_PROTECTION_F = "fldK3KGRhjpFWtuKn"      # select: Option 1 | Option 2 | Option 3
+CLAIM_AMOUNT_CLAIMED_F = "fldWn6i4YVB4FKEeL"  # currency
+CLAIM_AMOUNT_SETTLED_F = "fldNyl5TbFysjnpIR"  # currency — OWNER ONLY
+CLAIM_STATUS_F = "fldqZeAhghtBQ7TZP"          # select (see CLAIM_STATUSES)
+CLAIM_NOTES_F = "fldZwaSbKfoS3LLZl"           # long text
+CLAIM_LINKED_NC_F = "fldSaXHJjhPBpiFP0"       # link -> nonconformances
+CLAIM_STATUSES = ["Notice received", "Form sent", "Awaiting customer", "Under review", "Settled", "Denied", "Withdrawn"]
 
 
 def decode_token(request: Request) -> Dict[str, Any]:
@@ -2102,6 +2119,25 @@ async def portal_review(token: str, payload: PortalReviewPayload):
         raise HTTPException(status_code=422, detail="Rating must be 1 to 5 stars.")
     review = {"rating": payload.rating, "text": (payload.text or "").strip()[:600], "at": now_iso()}
     await mongo_db.jobs.update_one({"_id": job["_id"]}, {"$set": {"portal_review": review}})
+    # A review of 4 stars or below is a near miss worth a root cause (Quality Manual) —
+    # auto-open a "Low review" nonconformance once per job. Best-effort: never break the
+    # public review flow if Airtable is down.
+    if payload.rating <= 4 and not job.get("portal_review_nc"):
+        try:
+            nc_fields = {
+                NC_TYPE_F: "Low review", NC_SEVERITY_F: "Minor", NC_STATUS_F: "Open",
+                NC_RAISED_BY_F: "Customer portal", NC_RAISED_DATE_F: _et_today(),
+                NC_WHAT_F: (f"{payload.rating}-star portal review on Job #{job.get('invoice_number') or '—'}"
+                            + (f': "{review["text"][:200]}"' if review["text"] else ".")),
+            }
+            if job.get("project_record_id"):
+                nc_fields[NC_LINKED_JOB_F] = [job["project_record_id"]]
+            nc = await airtable_request("POST", TABLES["nonconformances"],
+                                        json_body={"records": [{"fields": nc_fields}], "typecast": True})
+            await mongo_db.jobs.update_one({"_id": job["_id"]},
+                                           {"$set": {"portal_review_nc": nc["records"][0]["id"]}})
+        except HTTPException as exc:
+            logger.warning("Low-review NC skipped for job %s: %s", job.get("invoice_number"), exc.detail)
     who = (job.get("customer") or {}).get("name") or "The customer"
     stars = "★" * payload.rating + "☆" * (5 - payload.rating)
     await _owner_portal_ping(job, f"New review — {payload.rating}/5",
@@ -2815,6 +2851,8 @@ async def update_record(table_key: str, record_id: str, request: Request, payloa
             prev_lead_status = None
     body = {"records": [{"id": record_id, "fields": clean_write_fields(payload.fields, role, table_key)}], "typecast": True}
     data = await airtable_request("PATCH", table_id, json_body=body)
+    if table_key == "projects" and payload.fields.get(PROJECT_STATUS_FIELD) == PROJECT_COMPLETED_STATUS:
+        await _mark_review_requested(record_id, source="observed")
     if table_key == "leads" and payload.fields.get(LEAD_STATUS_F) in ("Contacted", "Quoted", "Booked", "Completed"):
         existing = await mongo_db.lead_meta.find_one({"_id": record_id})
         if not existing or not existing.get("contacted_at"):
@@ -3064,6 +3102,13 @@ async def quality_audit_queue(request: Request):
             pr = by_id.get(row["id"])
             row["gate_summary"] = _gate_summary(evaluate_gates(pr, ctx)) if pr else None
             row["overridden"] = bool(ov.get(row["id"]))
+    # review state so the queue row can tick "Google review received" without leaving the page
+    reviews = {d["_id"]: d for d in await mongo_db.project_reviews.find(
+        {"_id": {"$in": [r["id"] for r in rows]}}).to_list(500)} if rows else {}
+    for row in rows:
+        rv = reviews.get(row["id"]) or {}
+        row["google_review_received"] = bool(rv.get("google_review_received"))
+        row["review_requested_at"] = rv.get("review_requested_at")
     rows.sort(key=lambda r: (not r["past_due"], r["audit_due"] or "9999-99-99"))
     return {"rows": rows}
 
@@ -3080,6 +3125,7 @@ async def quality_quote_accuracy(request: Request):
     projects = await _airtable_all(TABLES["projects"])
     audits = await _airtable_all(TABLES["job_audits"])
     people = await _resolve_people()
+    pkg_by_lead = await _pkg_by_lead()
     completed = [pr for pr in projects if (pr.get("fields") or {}).get(PROJECT_STATUS_FIELD) == PROJECT_COMPLETED_STATUS]
     actual_by_project = await _actual_hours_by_project(completed)
     # newest audit per linked project for final total + variance-explained
@@ -3132,6 +3178,7 @@ async def quality_quote_accuracy(request: Request):
             "hours_flag": hours_flag,
             "over_max_hours": over_max,
             "variance_explained": af.get(JA_VARIANCE_EXPLAINED_F),
+            "package": pkg_by_lead.get(lead_link[0]) if lead_link else None,
         })
     rows.sort(key=lambda r: r["move_date"] or "", reverse=True)
 
@@ -3149,15 +3196,19 @@ async def quality_quote_accuracy(request: Request):
             slot["_hv"].append(r["hours_variance"])
         if r["dollar_variance"] is not None:
             slot["_dv"].append(r["dollar_variance"])
-    reps = [{"rep": v["rep"], "rep_id": v["rep_id"], "jobs": v["jobs"],
-             "mean_hours_variance": _mean(v["_hv"]), "mean_dollar_variance": _mean(v["_dv"])}
-            for v in per_rep.values()]
+    reps = []
+    for v in per_rep.values():
+        enough = v["jobs"] >= 5   # small samples make bad feedback — no mean shown below 5 completed jobs
+        reps.append({"rep": v["rep"], "rep_id": v["rep_id"], "jobs": v["jobs"], "enough": enough,
+                     "mean_hours_variance": _mean(v["_hv"]) if enough else None,
+                     "mean_dollar_variance": _mean(v["_dv"]) if enough else None})
     reps.sort(key=lambda v: v["rep"].lower())
     return {
         "rows": rows,
         "summary": {"jobs": len(rows), "mean_hours_variance": _mean(hv), "mean_dollar_variance": _mean(dv),
                     "max_hours_on_site": max_hours, "per_rep": reps},
         "reps": [{"id": v["rep_id"], "name": v["rep"]} for v in per_rep.values() if v["rep_id"]],
+        "package_alerts": _detect_package_overruns(rows),
     }
 
 
@@ -3260,6 +3311,10 @@ GATE_DEFS = [
 ]
 GATE_LABELS = {k: label for k, label, _ in GATE_DEFS}
 GATE_SEVERITY = {k: sev for k, _, sev in GATE_DEFS}
+# Document-compliance "critical" gates = the legal ones (Liability risk + Regulatory), 11 total.
+# Deliberately EXCLUDES crew_ready (Major), deposit_cleared (Minor), long_haul_review (Minor):
+# those are company policy, not NJ law, and must not drag a 100%-target risk metric red.
+CRITICAL_GATE_KEYS = {k for (k, _label, sev) in GATE_DEFS if sev in ("Liability risk", "Regulatory")}
 COMPLIANCE_INPUT_FIELDS = {
     "move_classification": PROJECT_MOVE_CLASS_F,
     "survey_type": PROJECT_SURVEY_TYPE_F,
@@ -3614,6 +3669,699 @@ async def override_job_compliance(project_id: str, payload: OverridePayload, p: 
             "summary": summary, "override": override, "can_edit": True, "can_override": True}
 
 
+
+
+# =====================================================================================
+# Quality & Compliance — PROMPT 3: claims tracker, review capture, KPI dashboard,
+# monthly review. Claims live in Airtable (7-year legal retention); review tracking is
+# operational and lives in Mongo (project_reviews). Form due / Settlement due are Airtable
+# FORMULA fields — read them, never compute or write them. The extension's +30 days is
+# ALREADY inside the Settlement due formula; never add it again in code.
+# =====================================================================================
+
+CLAIM_WRITABLE = {
+    "linked_job": CLAIM_LINKED_JOB_F,
+    "notice_received_date": CLAIM_NOTICE_DATE_F,
+    "form_sent_date": CLAIM_FORM_SENT_F,
+    "completed_claim_received_date": CLAIM_COMPLETED_RECEIVED_F,
+    "extension_agreed": CLAIM_EXTENSION_F,
+    "protection_option": CLAIM_PROTECTION_F,
+    "amount_claimed": CLAIM_AMOUNT_CLAIMED_F,
+    "amount_settled": CLAIM_AMOUNT_SETTLED_F,   # OWNER ONLY (enforced in the endpoints)
+    "status": CLAIM_STATUS_F,
+    "notes": CLAIM_NOTES_F,
+    "linked_nonconformance": CLAIM_LINKED_NC_F,
+}
+CLAIM_TERMINAL_STATUSES = {"Settled", "Denied", "Withdrawn"}
+
+
+def _et_date_today():
+    return datetime.now(_ET).date()
+
+
+def _days_until(date_str, today=None):
+    d = _c_date(date_str)
+    if not d:
+        return None
+    return (d - (today or _et_date_today())).days
+
+
+def _days_since(date_str, today=None):
+    d = _c_date(date_str)
+    if not d:
+        return None
+    return ((today or _et_date_today()) - d).days
+
+
+def _claim_urgency(out: Dict[str, Any], today) -> Dict[str, Any]:
+    """The active clock: the 7-day form clock until the form is sent, then the 90/120-day
+    settlement clock once the completed claim is back. Terminal claims have no clock."""
+    if out["status"] in CLAIM_TERMINAL_STATUSES:
+        return {"which": None, "deadline": None, "days": None, "state": None}
+    if not out["form_sent_date"]:
+        deadline, which, amber = out["form_due"], "form", 3
+    elif out["completed_claim_received_date"]:
+        deadline, which, amber = out["settlement_due"], "settlement", 14
+    else:
+        return {"which": None, "deadline": None, "days": None, "state": None}
+    days = _days_until(deadline, today)
+    if days is None:
+        state = None
+    elif days < 0:
+        state = "red"
+    elif days <= amber:
+        state = "amber"
+    else:
+        state = "green"
+    return {"which": which, "deadline": deadline, "days": days, "state": state}
+
+
+def _claim_out(rec: Dict[str, Any], job_names: Dict[str, str], today) -> Dict[str, Any]:
+    f = rec.get("fields") or {}
+    linked_job = f.get(CLAIM_LINKED_JOB_F) or []
+    linked_nc = f.get(CLAIM_LINKED_NC_F) or []
+    out = {
+        "id": rec["id"],
+        "claim_number": f.get(CLAIM_NUMBER_F),
+        "linked_job_id": linked_job[0] if linked_job else None,
+        "linked_job_name": job_names.get(linked_job[0]) if linked_job else None,
+        "notice_received_date": f.get(CLAIM_NOTICE_DATE_F),
+        "form_due": f.get(CLAIM_FORM_DUE_F),                  # FORMULA — read-only (Notice + 7)
+        "form_sent_date": f.get(CLAIM_FORM_SENT_F),
+        "completed_claim_received_date": f.get(CLAIM_COMPLETED_RECEIVED_F),
+        "settlement_due": f.get(CLAIM_SETTLEMENT_DUE_F),      # FORMULA — read-only (extension already applied)
+        "extension_agreed": bool(f.get(CLAIM_EXTENSION_F)),
+        "protection_option": f.get(CLAIM_PROTECTION_F),
+        "amount_claimed": _num(f.get(CLAIM_AMOUNT_CLAIMED_F)),
+        "amount_settled": _num(f.get(CLAIM_AMOUNT_SETTLED_F)),
+        "status": f.get(CLAIM_STATUS_F) or "Notice received",
+        "notes": f.get(CLAIM_NOTES_F) or "",
+        "linked_nc_id": linked_nc[0] if linked_nc else None,
+    }
+    out["urgency"] = _claim_urgency(out, today)
+    out["pinned"] = out["urgency"]["state"] == "red"
+    return out
+
+
+async def _project_names() -> Dict[str, str]:
+    projects = await _airtable_all(TABLES["projects"])
+    return {pr["id"]: (pr.get("fields") or {}).get(PROJECT_NAME_FIELD) or "Untitled job" for pr in projects}
+
+
+def _claim_write_fields(inputs: Dict[str, Any]) -> Dict[str, Any]:
+    fields: Dict[str, Any] = {}
+    for k, v in inputs.items():
+        if k not in CLAIM_WRITABLE:
+            raise HTTPException(status_code=422, detail=f"Unknown or read-only claim field: {k}")
+        fid = CLAIM_WRITABLE[k]
+        if k in ("linked_job", "linked_nonconformance"):
+            fields[fid] = [v] if v else []
+        elif k == "extension_agreed":
+            fields[fid] = bool(v)
+        elif k in ("amount_claimed", "amount_settled"):
+            fields[fid] = None if v in (None, "") else float(v)
+        else:
+            fields[fid] = v or None
+    return fields
+
+
+def _enforce_claim_owner_rules(inputs: Dict[str, Any], role: str) -> None:
+    if role == "owner":
+        return
+    if "amount_settled" in inputs and inputs.get("amount_settled") not in (None, ""):
+        raise HTTPException(status_code=403, detail="Only the owner can record a settlement amount.")
+    if inputs.get("status") == "Settled":
+        raise HTTPException(status_code=403, detail="Only the owner can mark a claim Settled.")
+
+
+@api_router.get("/quality/claims")
+async def list_claims(request: Request):
+    p = await current_principal(request)
+    if p["role"] not in ("owner", "quality"):
+        raise HTTPException(status_code=403, detail="Only the owner and quality can open claims.")
+    today = _et_date_today()
+    names = await _project_names()
+    recs = await _airtable_all(CLAIMS_TABLE)
+    rows = [_claim_out(r, names, today) for r in recs]
+
+    def sort_key(r):   # past-due (red) pinned to the top, then soonest active deadline
+        u = r["urgency"]
+        has = u["days"] is not None
+        return (not r["pinned"], 0 if has else 1, u["days"] if has else 10 ** 9)
+
+    rows.sort(key=sort_key)
+    return {"rows": rows, "can_settle": p["role"] == "owner",
+            "statuses": CLAIM_STATUSES, "protection_options": ["Option 1", "Option 2", "Option 3"]}
+
+
+class ClaimPayload(BaseModel):
+    inputs: Dict[str, Any]
+
+
+async def _open_claim_nc(project_id: Optional[str], desc: str, raised_by: str) -> str:
+    nc_fields = {
+        NC_TYPE_F: "Claim", NC_SEVERITY_F: "Liability risk", NC_STATUS_F: "Open",
+        NC_RAISED_BY_F: raised_by or "Quality", NC_RAISED_DATE_F: _et_today(), NC_WHAT_F: desc,
+    }
+    if project_id:
+        nc_fields[NC_LINKED_JOB_F] = [project_id]
+    nc = await airtable_request("POST", TABLES["nonconformances"],
+                                json_body={"records": [{"fields": nc_fields}], "typecast": True})
+    return nc["records"][0]["id"]
+
+
+@api_router.post("/quality/claims")
+async def create_claim(payload: ClaimPayload, request: Request):
+    p = await current_principal(request)
+    if p["role"] not in ("owner", "quality"):
+        raise HTTPException(status_code=403, detail="Only the owner and quality can create claims.")
+    inputs = dict(payload.inputs or {})
+    inputs.pop("linked_nonconformance", None)      # the server sets the NC link
+    _enforce_claim_owner_rules(inputs, p["role"])
+    inputs.setdefault("status", "Notice received")
+    fields = _claim_write_fields(inputs)
+    project_id = inputs.get("linked_job")
+    names = await _project_names()
+    job_name = names.get(project_id) if project_id else None
+    desc = (f"Claim opened on {job_name or 'a job'}. Protection {inputs.get('protection_option') or '—'}. "
+            f"Amount claimed ${inputs.get('amount_claimed') or '—'}. Notice received "
+            f"{inputs.get('notice_received_date') or '—'}.")
+    # open the linked "Claim" nonconformance FIRST — if it fails, no orphan claim is created
+    try:
+        nc_id = await _open_claim_nc(project_id, desc, p.get("name"))
+    except HTTPException:
+        raise HTTPException(status_code=502,
+                            detail="Couldn't open the linked nonconformance — the claim was not created. Try again.")
+    fields[CLAIM_LINKED_NC_F] = [nc_id]
+    created = await airtable_request("POST", CLAIMS_TABLE,
+                                     json_body={"records": [{"fields": fields}], "typecast": True})
+    claim_id = created["records"][0]["id"]
+    rec = await airtable_request("GET", CLAIMS_TABLE, path=f"/{claim_id}",
+                                 params={"returnFieldsByFieldId": "true"})
+    await notify(None, "owner", "Claim opened",
+                 f"A claim was opened on {job_name or 'a job'}. The 7-day form clock is running.",
+                 "claim", {"claim_id": claim_id})
+    return {"claim": _claim_out(rec, names, _et_date_today()), "nc_id": nc_id}
+
+
+@api_router.patch("/quality/claims/{claim_id}")
+async def update_claim(claim_id: str, payload: ClaimPayload, request: Request):
+    p = await current_principal(request)
+    if p["role"] not in ("owner", "quality"):
+        raise HTTPException(status_code=403, detail="Only the owner and quality can edit claims.")
+    inputs = dict(payload.inputs or {})
+    inputs.pop("linked_nonconformance", None)
+    _enforce_claim_owner_rules(inputs, p["role"])
+    fields = _claim_write_fields(inputs)
+    if not fields:
+        raise HTTPException(status_code=422, detail="Nothing to update.")
+    await airtable_request("PATCH", CLAIMS_TABLE,
+                           json_body={"records": [{"id": claim_id, "fields": fields}], "typecast": True})
+    rec = await airtable_request("GET", CLAIMS_TABLE, path=f"/{claim_id}",
+                                 params={"returnFieldsByFieldId": "true"})
+    names = await _project_names()
+    return {"claim": _claim_out(rec, names, _et_date_today())}
+
+
+# ------- Review capture (operational — Mongo project_reviews keyed by project id)
+
+async def _mark_review_requested(project_id: str, source: str = "observed") -> None:
+    existing = await mongo_db.project_reviews.find_one({"_id": project_id})
+    if existing and existing.get("review_requested_at"):
+        return
+    await mongo_db.project_reviews.update_one(
+        {"_id": project_id},
+        {"$set": {"review_requested_at": now_iso(), "review_requested_source": source, "updated_at": now_iso()},
+         "$setOnInsert": {"google_review_received": False}}, upsert=True)
+
+
+async def _backfill_reviews(completed: List[Dict[str, Any]]) -> None:
+    """A project can be flipped to Completed straight in the Airtable base, where the app never
+    sees the edit — so its review_requested_at would stay empty and it would silently drop out of
+    the review-capture denominator. Backfill any such job from its move date, flagged 'backfill'
+    (vs 'observed') so the distinction survives."""
+    ids = [pr["id"] for pr in completed]
+    if not ids:
+        return
+    have = {d["_id"] for d in await mongo_db.project_reviews.find(
+        {"_id": {"$in": ids}, "review_requested_at": {"$ne": None}}).to_list(len(ids) + 1)}
+    for pr in completed:
+        if pr["id"] in have:
+            continue
+        md = str((pr.get("fields") or {}).get(PROJECT_DATE_FIELD) or "")[:10] or None
+        await mongo_db.project_reviews.update_one(
+            {"_id": pr["id"]},
+            {"$set": {"review_requested_at": (md + "T00:00:00+00:00") if md else now_iso(),
+                      "review_requested_source": "backfill", "review_requested_move_date": md,
+                      "updated_at": now_iso()},
+             "$setOnInsert": {"google_review_received": False}}, upsert=True)
+        logger.info("Backfilled review_requested_at for completed project %s (move %s)", pr["id"], md)
+
+
+class GoogleReviewPayload(BaseModel):
+    received: bool
+
+
+@api_router.put("/quality/projects/{project_id}/google-review")
+async def set_google_review(project_id: str, payload: GoogleReviewPayload, request: Request):
+    p = await current_principal(request)
+    if p["role"] not in ("owner", "quality"):
+        raise HTTPException(status_code=403, detail="Only the owner and quality can log reviews.")
+    await mongo_db.project_reviews.update_one(
+        {"_id": project_id},
+        {"$set": {"google_review_received": bool(payload.received),
+                  "google_review_at": now_iso() if payload.received else None, "updated_at": now_iso()}},
+        upsert=True)
+    return {"project_id": project_id, "google_review_received": bool(payload.received)}
+
+
+def _review_state(received: bool, requested_at) -> str:
+    if received:
+        return "received"
+    return "waiting" if requested_at else "none"
+
+
+def _review_flag(received: bool, days_since) -> Optional[str]:
+    """Two asks then stop: text at day 2, again at day 6, then leave it alone. Nothing past
+    day 8 is flagged — a list that keeps nagging about dead jobs stops getting read."""
+    if received or days_since is None or days_since > 8 or days_since < 2:
+        return None
+    return "day6" if days_since >= 6 else "day2"
+
+
+@api_router.get("/quality/reviews")
+async def quality_reviews(request: Request):
+    """Daily review chase — this month's completed jobs, oldest first, with the two-ask
+    (day 2 / day 6) window flagged. Not for auditing; for knowing who to text next."""
+    p = await current_principal(request)
+    if p["role"] not in ("owner", "quality"):
+        raise HTTPException(status_code=403, detail="Only the owner and quality can open review capture.")
+    today = _et_date_today()
+    month = _current_month()
+    start, end = _month_bounds(month)
+    projects = await _airtable_all(TABLES["projects"])
+    completed = [pr for pr in projects
+                 if (pr.get("fields") or {}).get(PROJECT_STATUS_FIELD) == PROJECT_COMPLETED_STATUS
+                 and start <= str((pr.get("fields") or {}).get(PROJECT_DATE_FIELD) or "")[:10] < end]
+    await _backfill_reviews(completed)
+    ids = [pr["id"] for pr in completed]
+    reviews = {d["_id"]: d for d in await mongo_db.project_reviews.find(
+        {"_id": {"$in": ids}}).to_list(len(ids) + 1)} if ids else {}
+    rows = []
+    for pr in completed:
+        f = pr.get("fields") or {}
+        md = str(f.get(PROJECT_DATE_FIELD) or "")[:10] or None
+        days_since = _days_since(md, today)
+        rv = reviews.get(pr["id"]) or {}
+        received = bool(rv.get("google_review_received"))
+        requested_at = rv.get("review_requested_at")
+        rows.append({
+            "id": pr["id"],
+            "name": f.get(PROJECT_NAME_FIELD) or "Untitled job",
+            "move_date": md,
+            "days_since": days_since,
+            "review_requested_at": requested_at,
+            "review_requested_source": rv.get("review_requested_source"),
+            "google_review_received": received,
+            "state": _review_state(received, requested_at),
+            "flag": _review_flag(received, days_since),
+        })
+    rows.sort(key=lambda r: (r["days_since"] if r["days_since"] is not None else -1), reverse=True)
+    to_chase = sum(1 for r in rows if r["flag"])
+    return {"rows": rows, "month": month, "to_chase": to_chase}
+
+
+# ------- Quote-accuracy helpers (per-rep gate + SOP 9 package-overrun alert)
+
+def _pkg_label(v: Any) -> Optional[str]:
+    s = str(v or "").strip().lower()
+    if not s:
+        return None
+    if "studio" in s:
+        return "Studio"
+    for n in ("4", "3", "2", "1"):
+        if s in (f"br{n}", f"{n}br", f"{n} br", f"{n}-br", f"{n}bd", f"{n} bedroom", f"{n}bedroom", n):
+            return f"{n}BR"
+        if s.startswith(f"br{n}") or s.startswith(f"{n}br") or s.startswith(f"{n} bed"):
+            return f"{n}BR"
+    return None
+
+
+async def _pkg_by_lead() -> Dict[str, str]:
+    """lead_id -> package label, from the most recent saved scope that names a package."""
+    scopes = await mongo_db.lead_scopes.find({"lead_id": {"$ne": None}}).sort("created_at", -1).to_list(3000)
+    out: Dict[str, str] = {}
+    for s in scopes:
+        lid = s.get("lead_id")
+        if not lid or lid in out:
+            continue
+        inp = s.get("inputs") or {}
+        label = _pkg_label(inp.get("pkg") or inp.get("package") or inp.get("homeSize") or inp.get("beds"))
+        if label:
+            out[lid] = label
+    return out
+
+
+def _detect_package_overruns(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """SOP 9: three consecutive completed jobs of the same package size that ran over the
+    estimated hours point at the package DEFAULTS being wrong, not a slow crew."""
+    by_pkg: Dict[str, List[Dict[str, Any]]] = {}
+    for r in rows:
+        if r.get("package") and r.get("move_date") and r.get("hours_variance") is not None:
+            by_pkg.setdefault(r["package"], []).append(r)
+    alerts = []
+    for pkg, items in by_pkg.items():
+        items.sort(key=lambda r: r["move_date"])
+        run: List[Dict[str, Any]] = []
+        best = None
+        for r in items:
+            if r["hours_variance"] > 0:
+                run.append(r)
+                if len(run) >= 3:
+                    best = run[-3:]
+            else:
+                run = []
+        if best:
+            alerts.append({
+                "package": pkg,
+                "message": (f"Three {pkg} jobs in a row ran over the estimated hours. Per SOP 9 that points at "
+                            f"the {pkg} package defaults being set too low — not the crew being slow. Review the "
+                            f"crew and hours defaults for {pkg} in pricing settings."),
+                "jobs": [{"id": r["id"], "name": r["name"], "move_date": r["move_date"],
+                          "hours_variance": r["hours_variance"]} for r in best],
+            })
+    return alerts
+
+
+# ------- Quality KPI dashboard + monthly review
+
+def _current_month() -> str:
+    return datetime.now(_ET).strftime("%Y-%m")
+
+
+def _prev_month(month: str) -> str:
+    y, m = int(month[:4]), int(month[5:7])
+    return f"{y - 1:04d}-12" if m == 1 else f"{y:04d}-{m - 1:02d}"
+
+
+def _month_bounds(month: str) -> Tuple[str, str]:
+    y, m = int(month[:4]), int(month[5:7])
+    start = f"{y:04d}-{m:02d}-01"
+    end = f"{y + 1:04d}-01-01" if m == 12 else f"{y:04d}-{m + 1:02d}-01"
+    return start, end   # half-open [start, end)
+
+
+def _pct(num: int, den: int) -> Optional[float]:
+    return round(100.0 * num / den, 1) if den else None
+
+
+def _pct_state(v: Optional[float], tgt: float, at_least: bool = True) -> Optional[str]:
+    if v is None:
+        return None
+    return "green" if (v >= tgt if at_least else v <= tgt) else "red"
+
+
+async def _on_time_rate(start: str, end: str) -> Tuple[int, int]:
+    """(on-time, total) over assignments in [start,end) with a scheduled arrival and >=1 clock-in."""
+    assignments = await mongo_db.assignments.find(
+        {"job_date": {"$gte": start, "$lt": end}, "arrival_time": {"$nin": [None, ""]}}).to_list(3000)
+    on_time = total = 0
+    for a in assignments:
+        entries = await mongo_db.time_entries.find({"assignment_id": a["_id"]}).to_list(50)
+        ins = [e["clock_in"]["at"] for e in entries if e.get("clock_in")]
+        if not ins:
+            continue
+        try:
+            hh, mm = [int(x) for x in str(a["arrival_time"]).split(":")[:2]]
+            sched = datetime.fromisoformat(f'{str(a["job_date"])[:10]}T00:00:00').replace(
+                hour=hh, minute=mm, tzinfo=_ET)
+            earliest = min(datetime.fromisoformat(i).astimezone(_ET) for i in ins)
+        except (ValueError, TypeError, KeyError, IndexError):
+            continue
+        total += 1
+        if earliest <= sched + timedelta(minutes=30):
+            on_time += 1
+    return on_time, total
+
+
+def _metric(key, label, value, target, target_display, state, num, den, unit="pct", is_risk=False):
+    return {"key": key, "label": label, "value": value, "target": target, "target_display": target_display,
+            "state": state, "numerator": num, "denominator": den, "unit": unit, "is_risk": is_risk}
+
+
+async def _quality_metrics(month: str) -> Dict[str, Any]:
+    start, end = _month_bounds(month)
+    projects = await _airtable_all(TABLES["projects"])
+    ncs = await _airtable_all(TABLES["nonconformances"])
+    claims = await _airtable_all(CLAIMS_TABLE)
+
+    def in_month(pr):
+        md = str((pr.get("fields") or {}).get(PROJECT_DATE_FIELD) or "")[:10]
+        return bool(md) and start <= md < end
+
+    completed_all = [pr for pr in projects
+                     if (pr.get("fields") or {}).get(PROJECT_STATUS_FIELD) == PROJECT_COMPLETED_STATUS]
+    await _backfill_reviews(completed_all)
+    completed = [pr for pr in completed_all if in_month(pr)]
+    completed_ids = [pr["id"] for pr in completed]
+
+    ncs_by_job: Dict[str, List[Dict[str, Any]]] = {}
+    for nc in ncs:
+        for jid in ((nc.get("fields") or {}).get(NC_LINKED_JOB_F) or []):
+            ncs_by_job.setdefault(jid, []).append(nc.get("fields") or {})
+
+    # 1) review capture — completed jobs this month with google_review_received
+    reviews = await mongo_db.project_reviews.find(
+        {"_id": {"$in": completed_ids}}).to_list(len(completed_ids) + 1) if completed_ids else []
+    got_review = sum(1 for r in reviews if r.get("google_review_received"))
+    review_rate = _pct(got_review, len(completed))
+
+    # 2) quote variance — mean hours over/under, last 20 completed jobs (not month-bound)
+    completed_sorted = sorted(
+        completed_all, key=lambda pr: str((pr.get("fields") or {}).get(PROJECT_DATE_FIELD) or ""), reverse=True)
+    last20 = completed_sorted[:20]
+    actual = await _actual_hours_by_project(last20)
+    hv = []
+    for pr in last20:
+        est = _num((pr.get("fields") or {}).get(PROJECT_HOURS_FIELD))
+        act = actual.get(pr["id"])
+        if est is not None and act is not None:
+            hv.append(act - est)
+    quote_var = round(sum(hv) / len(hv), 2) if hv else None
+
+    # 3) claim rate — claims with notice this month, per 100 completed jobs this month
+    claims_in_month = sum(
+        1 for c in claims
+        if start <= str((c.get("fields") or {}).get(CLAIM_NOTICE_DATE_F) or "")[:10] < end)
+    claim_rate = round(100.0 * claims_in_month / len(completed), 2) if completed else None
+
+    # 4) on-time start
+    on_time, on_time_total = await _on_time_rate(start, end)
+    on_time_rate = _pct(on_time, on_time_total)
+
+    # 5) document compliance (11 critical gates pass, override = fail) — the risk measure
+    doc_ok = 0
+    if completed:
+        ctx = await _compliance_context(completed)
+        overridden = {d["_id"] for d in await mongo_db.job_compliance.find(
+            {"_id": {"$in": completed_ids}, "override": {"$ne": None}}).to_list(len(completed_ids) + 1)}
+        for pr in completed:
+            gates = evaluate_gates(pr, ctx)
+            if all(g["passed"] for g in gates if g["key"] in CRITICAL_GATE_KEYS) and pr["id"] not in overridden:
+                doc_ok += 1
+    doc_rate = _pct(doc_ok, len(completed))
+
+    # 6) first-time-right — completed jobs with zero nonconformances
+    ftr = sum(1 for pr in completed if not ncs_by_job.get(pr["id"]))
+    ftr_rate = _pct(ftr, len(completed))
+
+    metrics = [
+        _metric("review_capture", "Review capture rate", review_rate, 60, "≥ 60%",
+                _pct_state(review_rate, 60), got_review, len(completed)),
+        _metric("quote_variance", "Quote variance (last 20 jobs)", quote_var, 0.5, "± 0.5 hr",
+                ("green" if quote_var is not None and abs(quote_var) <= 0.5 else
+                 ("red" if quote_var is not None else None)),
+                len(hv), len(last20), unit="hours"),
+        _metric("claim_rate", "Claim rate (per 100 jobs)", claim_rate, 2, "< 2",
+                ("green" if claim_rate is not None and claim_rate < 2 else
+                 ("red" if claim_rate is not None else None)),
+                claims_in_month, len(completed), unit="rate"),
+        _metric("on_time_start", "On-time start", on_time_rate, 90, "≥ 90%",
+                _pct_state(on_time_rate, 90), on_time, on_time_total),
+        _metric("first_time_right", "First-time-right", ftr_rate, 90, "≥ 90%",
+                _pct_state(ftr_rate, 90), ftr, len(completed)),
+    ]
+    doc_metric = _metric("document_compliance", "Document compliance", doc_rate, 100, "100% — no exceptions",
+                         _pct_state(doc_rate, 100), doc_ok, len(completed), is_risk=True)
+    return {"month": month, "metrics": metrics, "document_compliance": doc_metric,
+            "completed_jobs": len(completed)}
+
+
+async def _overdue_audits(projects: List[Dict[str, Any]], audits: List[Dict[str, Any]], today) -> List[Dict[str, Any]]:
+    audited: set = set()
+    for a in audits:
+        for jid in ((a.get("fields") or {}).get(JA_LINKED_JOB_F) or []):
+            audited.add(jid)
+    out = []
+    for pr in projects:
+        f = pr.get("fields") or {}
+        if f.get(PROJECT_STATUS_FIELD) != PROJECT_COMPLETED_STATUS or pr["id"] in audited:
+            continue
+        md = _c_date(f.get(PROJECT_DATE_FIELD))
+        if md and today > md + timedelta(days=7):
+            due = md + timedelta(days=7)
+            out.append({"id": pr["id"], "name": f.get(PROJECT_NAME_FIELD) or "Untitled job",
+                        "due": due.isoformat(), "days_over": (today - due).days})
+    out.sort(key=lambda a: -a["days_over"])
+    return out
+
+
+async def _needs_you_now(today) -> Dict[str, Any]:
+    names = await _project_names()
+    claim_recs = await _airtable_all(CLAIMS_TABLE)
+    claim_alerts = []
+    for r in claim_recs:
+        c = _claim_out(r, names, today)
+        u = c["urgency"]
+        if u["days"] is not None and u["days"] <= 14:
+            claim_alerts.append({"id": c["id"], "claim_number": c["claim_number"], "job": c["linked_job_name"],
+                                 "which": u["which"], "deadline": u["deadline"], "days": u["days"], "state": u["state"]})
+    claim_alerts.sort(key=lambda a: a["days"])
+    projects = await _airtable_all(TABLES["projects"])
+    audits = await _airtable_all(TABLES["job_audits"])
+    overdue = await _overdue_audits(projects, audits, today)
+    ncs = await _airtable_all(TABLES["nonconformances"])
+    liab = []
+    for nc in ncs:
+        f = nc.get("fields") or {}
+        if f.get(NC_SEVERITY_F) == "Liability risk" and (f.get(NC_STATUS_F) or "Open") != "Closed":
+            liab.append({"id": nc["id"], "number": f.get(NC_NUMBER_F), "type": f.get(NC_TYPE_F),
+                         "status": f.get(NC_STATUS_F) or "Open", "what": (f.get(NC_WHAT_F) or "")[:140]})
+    return {"claims": claim_alerts, "overdue_audits": overdue, "liability_ncs": liab,
+            "count": len(claim_alerts) + len(overdue) + len(liab)}
+
+
+@api_router.get("/quality/dashboard")
+async def quality_dashboard(request: Request):
+    p = await current_principal(request)
+    if p["role"] not in ("owner", "quality"):
+        raise HTTPException(status_code=403, detail="Only the owner and quality can open the dashboard.")
+    data = await _quality_metrics(_current_month())
+    data["needs_you_now"] = await _needs_you_now(_et_date_today())
+    data["is_current_month"] = True
+    return data
+
+
+async def _snapshot_month(month: str, force: bool = False) -> Dict[str, Any]:
+    existing = await mongo_db.monthly_metrics.find_one({"_id": month})
+    if existing and not force:
+        return existing
+    data = await _quality_metrics(month)
+    doc = {"_id": month, "month": month, "metrics": data["metrics"],
+           "document_compliance": data["document_compliance"], "completed_jobs": data["completed_jobs"],
+           "frozen_at": now_iso()}
+    await mongo_db.monthly_metrics.update_one({"_id": month}, {"$set": doc}, upsert=True)
+    return doc
+
+
+@api_router.get("/quality/monthly")
+async def quality_monthly(request: Request, month: Optional[str] = None):
+    p = await current_principal(request)
+    if p["role"] not in ("owner", "quality"):
+        raise HTTPException(status_code=403, detail="Only the owner and quality can open the monthly review.")
+    month = month or _current_month()
+    today = _et_date_today()
+    is_current = month >= _current_month()
+    prev = _prev_month(month)
+    if is_current:
+        # the live in-progress view — clearly not yet final; never frozen
+        data = await _quality_metrics(month)
+        metrics, doc_metric, completed_jobs, frozen = (
+            data["metrics"], data["document_compliance"], data["completed_jobs"], False)
+    else:
+        # a closed period reads ONLY the frozen snapshot — never recompute history. A back-filled
+        # number that looks identical to a frozen one is worse than a gap, so show the gap.
+        snap = await mongo_db.monthly_metrics.find_one({"_id": month})
+        if not snap:
+            return {"month": month, "no_snapshot": True, "frozen": False, "is_current_month": False,
+                    "previous_month": prev, "frozen_at": None}
+        metrics, doc_metric, completed_jobs, frozen = (
+            snap["metrics"], snap["document_compliance"], snap.get("completed_jobs"), True)
+
+    # month-over-month movement reads the PREVIOUS month's frozen snapshot only (never computed).
+    prev_snap = await mongo_db.monthly_metrics.find_one({"_id": prev})
+    prev_map: Dict[str, Any] = {}
+    if prev_snap:
+        for m in prev_snap.get("metrics", []):
+            prev_map[m["key"]] = m.get("value")
+        pdoc = prev_snap.get("document_compliance") or {}
+        if pdoc.get("key"):
+            prev_map[pdoc["key"]] = pdoc.get("value")
+
+    def _with_movement(m):
+        pv = prev_map.get(m["key"])
+        out = dict(m)
+        out["prev_value"] = pv
+        out["movement"] = (round(m["value"] - pv, 2) if (m.get("value") is not None and pv is not None) else None)
+        return out
+
+    metrics = [_with_movement(m) for m in metrics]
+    doc_metric = _with_movement(doc_metric)
+
+    ncs = await _airtable_all(TABLES["nonconformances"])
+    open_ncs = [{"id": nc["id"], "number": (nc.get("fields") or {}).get(NC_NUMBER_F),
+                 "type": (nc.get("fields") or {}).get(NC_TYPE_F),
+                 "severity": (nc.get("fields") or {}).get(NC_SEVERITY_F),
+                 "status": (nc.get("fields") or {}).get(NC_STATUS_F) or "Open",
+                 "what": ((nc.get("fields") or {}).get(NC_WHAT_F) or "")[:160],
+                 "raised": (nc.get("fields") or {}).get(NC_RAISED_DATE_F)}
+                for nc in ncs if ((nc.get("fields") or {}).get(NC_STATUS_F) or "Open") != "Closed"]
+    open_ncs.sort(key=lambda n: (GATE_SEVERITY_RANK.get(n["severity"], 9), n["raised"] or ""))
+    names = await _project_names()
+    claim_recs = await _airtable_all(CLAIMS_TABLE)
+    near_claims = [c for c in (_claim_out(r, names, today) for r in claim_recs)
+                   if c["urgency"]["days"] is not None and c["urgency"]["days"] <= 14]
+    near_claims.sort(key=lambda c: c["urgency"]["days"])
+    projects = await _airtable_all(TABLES["projects"])
+    audits = await _airtable_all(TABLES["job_audits"])
+    overdue = await _overdue_audits(projects, audits, today)
+    soon = today + timedelta(days=60)
+    users = await mongo_db.users.find({"crew_docs_expiry": {"$nin": [None, ""]}}).to_list(500)
+    expiring = []
+    for u in users:
+        exp = _c_date(u.get("crew_docs_expiry"))
+        if exp and exp <= soon:
+            expiring.append({"user_id": u["_id"], "name": u.get("name") or "Crew",
+                             "expires": str(u.get("crew_docs_expiry"))[:10], "days": (exp - today).days,
+                             "expired": exp < today})
+    expiring.sort(key=lambda e: e["days"])
+    return {"month": month, "no_snapshot": False, "frozen": frozen, "is_current_month": is_current,
+            "previous_month": prev, "has_previous": bool(prev_snap),
+            "frozen_at": (snap.get("frozen_at") if not is_current else None),
+            "metrics": metrics, "document_compliance": doc_metric,
+            "completed_jobs": completed_jobs, "open_nonconformances": open_ncs,
+            "claims_near_deadline": near_claims, "overdue_audits": overdue, "crew_docs_expiring": expiring}
+
+
+@public_router.post("/cron/monthly-metrics-snapshot")
+async def cron_monthly_metrics(request: Request):
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    secret = os.environ.get("WEBHOOK_CRON_SECRET", "")
+    auth = request.headers.get("Authorization", "")
+    token = auth[7:] if auth.startswith("Bearer ") else ""
+    if not secret or not token or not hmac.compare_digest(token, secret):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    target = _prev_month(_current_month())
+
+    async def _work():
+        try:
+            await _snapshot_month(target, force=False)
+            logger.info("Monthly metrics snapshot frozen for %s", target)
+        except Exception as exc:
+            logger.warning("Monthly metrics snapshot failed for %s: %s", target, exc)
+
+    asyncio.create_task(_work())
+    return {"ok": True, "month": target}
 
 
 class TaskAudiencePayload(BaseModel):

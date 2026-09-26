@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { toast } from "sonner";
-import { Gauge, ChevronDown, ChevronRight, MessageSquarePlus, RefreshCw } from "lucide-react";
+import { Gauge, ChevronDown, ChevronRight, MessageSquarePlus, RefreshCw, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -190,6 +190,31 @@ export default function QualityQuoteAccuracy() {
         <EmptyState>{error}</EmptyState>
       ) : (
         <>
+          {(data?.package_alerts || []).map((a) => (
+            <div key={a.package} data-testid="qa-package-alert" className="mb-3 rounded-lg border border-amber-300 bg-amber-50 p-3">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                <div className="min-w-0">
+                  <div className="text-[13px] font-semibold text-amber-900">
+                    Three {a.package} jobs in a row ran over on hours. Per SOP 9 that means the package defaults in DEFAULT_RATES are wrong, not that the crew is slow. Check the hour defaults before coaching anyone.
+                  </div>
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    {a.jobs.map((j) => (
+                      <button
+                        key={j.id}
+                        data-testid="qa-package-alert-job"
+                        onClick={() => setExpanded(j.id)}
+                        className="press rounded bg-white/70 px-2 py-1 text-[11.5px] font-semibold text-amber-800 hover:bg-white"
+                      >
+                        {j.name} · {fmtDate(j.move_date)} · +{j.hours_variance}h
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
+
           <div className="mb-4 grid grid-cols-3 gap-3">
             <Metric testId="qa-jobs-metric" label="Jobs" value={summary.jobs ?? 0} />
             <Metric
@@ -211,10 +236,16 @@ export default function QualityQuoteAccuracy() {
                 {summary.per_rep.map((r) => (
                   <div key={r.rep} className="flex flex-wrap items-center justify-between gap-2 text-[12.5px] border-b border-border/50 py-1 last:border-0">
                     <span className="font-semibold text-ink">{r.rep}</span>
-                    <span className="text-faint">
-                      {r.jobs} job{r.jobs !== 1 ? "s" : ""} · hours {r.mean_hours_variance == null ? "—" : `${r.mean_hours_variance > 0 ? "+" : ""}${r.mean_hours_variance}h`} · ${" "}
-                      {r.mean_dollar_variance == null ? "—" : money(r.mean_dollar_variance)}
-                    </span>
+                    {r.enough ? (
+                      <span className="text-faint">
+                        {r.jobs} job{r.jobs !== 1 ? "s" : ""} · hours {r.mean_hours_variance == null ? "—" : `${r.mean_hours_variance > 0 ? "+" : ""}${r.mean_hours_variance}h`} · ${" "}
+                        {r.mean_dollar_variance == null ? "—" : money(r.mean_dollar_variance)}
+                      </span>
+                    ) : (
+                      <span data-testid="qa-rep-insufficient" className="text-faint italic">
+                        Needs 5 completed jobs before an average means anything — {r.jobs} so far.
+                      </span>
+                    )}
                   </div>
                 ))}
               </div>

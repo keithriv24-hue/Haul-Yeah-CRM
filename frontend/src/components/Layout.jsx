@@ -6,7 +6,7 @@ import {
   CreditCard, Handshake, HelpCircle, Eye, EyeOff, RefreshCw, KeyRound, LogOut, SlidersHorizontal, MessageSquareText, Video, UserRound,
   HardHat, ClipboardList, AlarmClock, CalendarDays, Briefcase, Sun, Megaphone, UsersRound, Trophy, Swords, Medal,
   BadgeDollarSign, BellRing, Radio, Wrench, MoreHorizontal, Search, Boxes,
-  ClipboardCheck, AlertOctagon, FileText, Gauge,
+  ClipboardCheck, AlertOctagon, FileText, Gauge, Scale, CalendarRange,
 } from "lucide-react";import { useApp } from "@/context/AppContext";
 import { useAuth } from "@/components/AuthGate";
 import { NotificationsBell } from "@/components/NotificationsBell";
@@ -60,10 +60,13 @@ const NAV = [
   { to: "/settings", label: "Settings", icon: SlidersHorizontal, roles: ["owner"], group: "Business" },
   { to: "/help", label: "Help", icon: HelpCircle, roles: ["owner"], group: "Business" },
 
+  { to: "/quality", label: "Dashboard", icon: LayoutDashboard, roles: ["owner", "quality"], group: "Quality" },
   { to: "/quality/audits", label: "Job Audits", icon: ClipboardCheck, roles: ["owner", "quality"], group: "Quality" },
   { to: "/quality/problems", label: "Nonconformances", icon: AlertOctagon, roles: ["owner", "quality"], group: "Quality" },
+  { to: "/quality/claims", label: "Claims", icon: Scale, roles: ["owner", "quality"], group: "Quality" },
   { to: "/quality/documents", label: "Documents", icon: FileText, roles: ["owner", "quality"], group: "Quality" },
   { to: "/quality/quote-accuracy", label: "Quote Accuracy", icon: Gauge, roles: ["owner", "quality"], group: "Quality" },
+  { to: "/quality/monthly", label: "Monthly Review", icon: CalendarRange, roles: ["owner", "quality"], group: "Quality" },
 ];
 
 /** Four fixed thumb targets per role. Everything else lives behind More. */
@@ -73,7 +76,7 @@ const PRIMARY_TABS = {
   marketing: ["/marketing", "/tasks", "/blog", "/team"],
   crew: ["/today", "/jobs", "/clock", "/team"],
   employee: ["/projects", "/day-sheet", "/tasks", "/team"],
-  quality: ["/quality/audits", "/quality/problems", "/quality/documents", "/quality/quote-accuracy"],
+  quality: ["/quality", "/quality/audits", "/quality/claims", "/quality/monthly"],
 };
 
 const GROUP_ORDER = ["Today", "My day", "Sales", "Money", "Team", "Business", "Quality"];

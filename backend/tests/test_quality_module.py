@@ -573,3 +573,229 @@ def test_16_long_haul_ack_is_owner_only(owner_token, sales_token, quality_token,
     # the owner is NOT blocked by the ack rule (in preview it proceeds to Airtable -> 503)
     r = requests.put(f"{API}/jobs/recANY/compliance", json=body, headers=_h(owner_token), timeout=20)
     assert r.status_code != 403, f"owner must not be blocked by the ack rule: {r.status_code} {r.text}"
+
+
+
+# =====================================================================================
+# Quality & Compliance — PROMPT 3: claims tracker, review capture, KPI dashboard,
+# monthly review. Airtable is MOCKED throughout (same discipline as prompt 2): the
+# statutory-deadline logic and every permission rule are proven with NO live base.
+#
+# CRITICAL RULES UNDER TEST:
+#  - Form due / Settlement due are Airtable FORMULA fields. Read them verbatim; the
+#    +30-day extension is ALREADY inside the Settlement-due formula. Python must never
+#    add it again (120, never 150), and must never write those fields.
+#  - Amount settled and Status "Settled" are owner-only, per role.
+#  - Opening a claim files a "Liability risk" nonconformance (not Major).
+#  - Document compliance is the 11 legal gates (Liability risk + Regulatory): exempt =
+#    pass, override = fail.
+#  - A month with no snapshot returns "no snapshot" — history is never recomputed.
+# =====================================================================================
+
+from datetime import date  # noqa: E402
+
+
+def test_p3_1_settlement_due_is_read_verbatim_extension_already_applied():
+    """#1: with Extension agreed ticked, settlement_due is exactly the Airtable formula's
+    Completed + 120 — read verbatim. Python adds nothing (never 150)."""
+    completed = date(2026, 3, 1)
+    settlement_120 = (completed + timedelta(days=120)).isoformat()   # what the formula already produced
+    settlement_150 = (completed + timedelta(days=150)).isoformat()   # the +30-twice bug we must NOT create
+    form_due = (completed + timedelta(days=7)).isoformat()
+    rec = {"id": "recCLAIM1", "fields": {
+        server.CLAIM_COMPLETED_RECEIVED_F: completed.isoformat(),
+        server.CLAIM_SETTLEMENT_DUE_F: settlement_120,
+        server.CLAIM_FORM_DUE_F: form_due,
+        server.CLAIM_EXTENSION_F: True,
+        server.CLAIM_STATUS_F: "Under review",
+        server.CLAIM_FORM_SENT_F: (completed + timedelta(days=2)).isoformat(),
+    }}
+    out = server._claim_out(rec, {}, datetime.now(server._ET).date())
+    assert out["settlement_due"] == settlement_120, "settlement_due must be read verbatim from Airtable"
+    assert out["settlement_due"] != settlement_150, "Python must not add the +30 extension a second time"
+    assert out["form_due"] == form_due, "form_due must be read verbatim from Airtable"
+    assert out["extension_agreed"] is True
+
+
+def test_p3_2_form_due_and_settlement_due_are_never_written():
+    """#2: the two formula fields (and the autonumber) are not writable and never appear in a
+    write body, even when every writable key is set. Passing one as input is a 422."""
+    assert "form_due" not in server.CLAIM_WRITABLE
+    assert "settlement_due" not in server.CLAIM_WRITABLE
+    assert "claim_number" not in server.CLAIM_WRITABLE
+    every = {
+        "linked_job": "recJ", "notice_received_date": "2026-06-01", "form_sent_date": "2026-06-03",
+        "completed_claim_received_date": "2026-06-10", "extension_agreed": True,
+        "protection_option": "Option 2", "amount_claimed": 1000, "amount_settled": 500,
+        "status": "Under review", "notes": "x",
+    }
+    fields = server._claim_write_fields(every)
+    for fid in (server.CLAIM_FORM_DUE_F, server.CLAIM_SETTLEMENT_DUE_F, server.CLAIM_NUMBER_F):
+        assert fid not in fields, "a read-only formula/autonumber field must never be written"
+    for bad in ("form_due", "settlement_due", "claim_number"):
+        with pytest.raises(server.HTTPException) as ei:
+            server._claim_write_fields({bad: "2026-06-08"})
+        assert ei.value.status_code == 422, f"{bad} must be rejected as read-only, not silently written"
+
+
+@pytest.mark.parametrize("role", ["quality", "sales", "employee", "crew"])
+def test_p3_3_amount_settled_rejected_for_non_owner(role):
+    """#3: only the owner records a settlement amount — rejected per role."""
+    with pytest.raises(server.HTTPException) as ei:
+        server._enforce_claim_owner_rules({"amount_settled": 500}, role)
+    assert ei.value.status_code == 403, f"{role} must be blocked from writing amount_settled"
+
+
+def test_p3_3b_amount_settled_allowed_for_owner_and_ignored_when_blank():
+    server._enforce_claim_owner_rules({"amount_settled": 500}, "owner")            # no raise
+    server._enforce_claim_owner_rules({"amount_settled": None}, "quality")         # blank = not a write
+    server._enforce_claim_owner_rules({"amount_settled": ""}, "sales")             # blank = not a write
+
+
+@pytest.mark.parametrize("role", ["quality", "sales", "employee", "crew"])
+def test_p3_4_status_settled_rejected_for_non_owner(role):
+    """#4: only the owner can move a claim to Settled — rejected per role."""
+    with pytest.raises(server.HTTPException) as ei:
+        server._enforce_claim_owner_rules({"status": "Settled"}, role)
+    assert ei.value.status_code == 403, f"{role} must be blocked from setting Status=Settled"
+
+
+def test_p3_4b_status_settled_allowed_for_owner_other_statuses_open_to_all():
+    server._enforce_claim_owner_rules({"status": "Settled"}, "owner")              # no raise
+    server._enforce_claim_owner_rules({"status": "Under review"}, "quality")       # non-terminal is fine
+    server._enforce_claim_owner_rules({"status": "Denied"}, "quality")             # only "Settled" is owner-gated
+
+
+def _run_create_claim_in_process(inputs, role="owner", project_id="recCLAIMJOB"):
+    """Call POST /quality/claims in-process with airtable_request and current_principal
+    monkeypatched (no live base). Reuses the persistent loop so Motor stays bound."""
+    S = server
+    calls = {"nc": [], "claim_post": []}
+    real_air, real_cp = S.airtable_request, S.current_principal
+
+    async def fake_air(method, table_id, path="", params=None, json_body=None):
+        if table_id == S.TABLES["projects"] and method == "GET":
+            return {"records": [{"id": project_id, "fields": {S.PROJECT_NAME_FIELD: "QA Claim Job"}}]}
+        if table_id == S.TABLES["nonconformances"] and method == "POST":
+            calls["nc"].append(json_body)
+            return {"records": [{"id": "recNC_CLAIM", "fields": json_body["records"][0]["fields"]}]}
+        if table_id == S.CLAIMS_TABLE and method == "POST":
+            calls["claim_post"].append(json_body)
+            return {"records": [{"id": "recCLAIM_TEST", "fields": json_body["records"][0]["fields"]}]}
+        if table_id == S.CLAIMS_TABLE and method == "GET":
+            f = calls["claim_post"][0]["records"][0]["fields"] if calls["claim_post"] else {}
+            return {"id": "recCLAIM_TEST", "fields": f}
+        raise AssertionError(f"unexpected airtable call: {method} {table_id}{path}")
+
+    async def fake_cp(request):
+        return {"role": role, "name": "Owner Tester", "user_id": "owner-uid"}
+
+    S.airtable_request, S.current_principal = fake_air, fake_cp
+    try:
+        async def go():
+            return await S.create_claim(S.ClaimPayload(inputs=inputs), None)
+        return _get_loop().run_until_complete(go()), calls
+    finally:
+        S.airtable_request, S.current_principal = real_air, real_cp
+
+
+def test_p3_5_creating_a_claim_opens_a_liability_risk_nonconformance():
+    """#5: opening a claim files ONE linked nonconformance of Type 'Claim' with severity
+    'Liability risk' (never Major), and links the claim back to it."""
+    result, calls = _run_create_claim_in_process({
+        "linked_job": "recCLAIMJOB", "notice_received_date": "2026-06-01",
+        "protection_option": "Option 1", "amount_claimed": 1200})
+    assert len(calls["nc"]) == 1, "exactly one nonconformance is opened"
+    nc = calls["nc"][0]["records"][0]["fields"]
+    assert nc[server.NC_TYPE_F] == "Claim"
+    assert nc[server.NC_SEVERITY_F] == "Liability risk"
+    assert nc[server.NC_SEVERITY_F] != "Major"
+    assert nc[server.NC_LINKED_JOB_F] == ["recCLAIMJOB"]
+    claim_fields = calls["claim_post"][0]["records"][0]["fields"]
+    assert claim_fields[server.CLAIM_LINKED_NC_F] == ["recNC_CLAIM"], "the claim must link back to its NC"
+    assert result["nc_id"] == "recNC_CLAIM"
+
+
+def test_p3_6_document_compliance_uses_the_eleven_legal_gates():
+    """#6a: the critical set is exactly the 11 legal gates (Liability risk + Regulatory) —
+    not 3, not 14; the Major/Minor policy gates are excluded."""
+    liability = {k for k, _l, s in server.GATE_DEFS if s == "Liability risk"}
+    regulatory = {k for k, _l, s in server.GATE_DEFS if s == "Regulatory"}
+    assert server.CRITICAL_GATE_KEYS == liability | regulatory
+    assert len(server.CRITICAL_GATE_KEYS) == 11, "document compliance uses exactly 11 legal gates"
+    assert len(liability) == 3 and len(regulatory) == 8
+    for policy_gate in ("crew_ready", "deposit_cleared", "long_haul_review"):
+        assert policy_gate not in server.CRITICAL_GATE_KEYS
+
+
+def test_p3_6b_an_exempt_critical_gate_counts_as_passed():
+    """#6b: office-goods exempts estimate_24h and ofs_24h; an exempt critical gate reports
+    passed=True, so it counts toward document compliance rather than dragging it red."""
+    pr, ctx, _ = passing_job()
+    pr["fields"][server.PROJECT_MOVE_CLASS_F] = "Office Goods Only"
+    pr["fields"].pop(server.PROJECT_ESTIMATE_DELIVERED_F, None)   # only the exemption can pass these now
+    pr["fields"].pop(server.PROJECT_OFS_SIGNED_F, None)
+    by = {g["key"]: g for g in server.evaluate_gates(pr, ctx)}
+    for k in ("estimate_24h", "ofs_24h"):
+        assert k in server.CRITICAL_GATE_KEYS
+        assert by[k]["exempt"] is True and by[k]["passed"] is True, f"{k} exempt must count as passed"
+    assert all(by[k]["passed"] for k in server.CRITICAL_GATE_KEYS), "an office job with exemptions is compliant"
+
+
+def test_p3_6c_an_override_counts_as_failed_in_document_compliance():
+    """#6c: the document-compliance metric excludes any job with a recorded override even when
+    its gates pass — override = fail."""
+    import inspect
+    src = inspect.getsource(server._quality_metrics)
+    assert "overridden" in src and "not in overridden" in src, "overridden jobs must be counted as failing"
+    assert "CRITICAL_GATE_KEYS" in src, "document compliance must score only the critical gates"
+
+
+def test_p3_7_month_with_no_snapshot_returns_no_snapshot(owner_token, quality_token, sales_token):
+    """#7: a closed month with no frozen snapshot returns no_snapshot — it is never recomputed
+    on the fly. (Runs over HTTP: the past-month branch reads Mongo before any Airtable call.)"""
+    _mongo().monthly_metrics.delete_one({"_id": "2019-01"})   # ensure there is genuinely no snapshot
+    for tok in (owner_token, quality_token):
+        r = requests.get(f"{API}/quality/monthly?month=2019-01", headers=_h(tok), timeout=30)
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body.get("no_snapshot") is True, "a month with no snapshot must say so, not compute one"
+        assert "metrics" not in body or not body.get("metrics"), "no numbers may be returned for a gap month"
+        assert body["frozen"] is False and body["is_current_month"] is False
+    # and the monthly review is owner/quality only
+    assert requests.get(f"{API}/quality/monthly?month=2019-01", headers=_h(sales_token), timeout=30).status_code == 403
+
+
+def test_p3_reviews_and_dashboard_are_owner_quality_only(owner_token, quality_token, sales_token, crew_token):
+    """RBAC for the new prompt-3 read endpoints: owner/quality reach them (200 or 503 in
+    preview without Airtable), everyone else is 403 before any Airtable call."""
+    for ep in ("quality/dashboard", "quality/reviews", "quality/claims"):
+        for tok in (sales_token, crew_token):
+            assert requests.get(f"{API}/{ep}", headers=_h(tok), timeout=30).status_code == 403, ep
+        for tok in (owner_token, quality_token):
+            assert requests.get(f"{API}/{ep}", headers=_h(tok), timeout=30).status_code in (200, 503), ep
+
+
+def test_p3_google_review_toggle_is_owner_quality_only(quality_token, sales_token, crew_token):
+    """The Google-review toggle (Mongo-backed, so fully testable in preview) is owner/quality
+    only, and it round-trips."""
+    for tok in (sales_token, crew_token):
+        r = requests.put(f"{API}/quality/projects/recREVIEWTEST/google-review",
+                         json={"received": True}, headers=_h(tok), timeout=20)
+        assert r.status_code == 403
+    r = requests.put(f"{API}/quality/projects/recREVIEWTEST/google-review",
+                     json={"received": True}, headers=_h(quality_token), timeout=20)
+    assert r.status_code == 200, r.text
+    assert r.json()["google_review_received"] is True
+    doc = _mongo().project_reviews.find_one({"_id": "recREVIEWTEST"})
+    assert doc and doc.get("google_review_received") is True
+    # clean up the test doc
+    _mongo().project_reviews.delete_one({"_id": "recREVIEWTEST"})
+
+
+def test_p3_claim_create_requires_owner_or_quality(sales_token, crew_token):
+    """Sales and crew cannot open a claim (403 before any Airtable write)."""
+    body = {"inputs": {"notice_received_date": "2026-06-01"}}
+    for tok in (sales_token, crew_token):
+        r = requests.post(f"{API}/quality/claims", json=body, headers=_h(tok), timeout=20)
+        assert r.status_code == 403, r.text

@@ -41,6 +41,9 @@ import QualityAudits from "@/pages/QualityAudits";
 import QualityProblems from "@/pages/QualityProblems";
 import QualityDocuments from "@/pages/QualityDocuments";
 import QualityQuoteAccuracy from "@/pages/QualityQuoteAccuracy";
+import QualityDashboard from "@/pages/QualityDashboard";
+import QualityClaims from "@/pages/QualityClaims";
+import QualityMonthly from "@/pages/QualityMonthly";
 import { UpdateOverlay } from "@/components/UpdateOverlay";
 
 function RoleRoutes() {
@@ -126,14 +129,17 @@ function RoleRoutes() {
     return (
       <Routes>
         <Route element={<Layout />}>
+          <Route path="/quality" element={<QualityDashboard />} />
           <Route path="/quality/audits" element={<QualityAudits />} />
           <Route path="/quality/problems" element={<QualityProblems />} />
+          <Route path="/quality/claims" element={<QualityClaims />} />
           <Route path="/quality/documents" element={<QualityDocuments />} />
           <Route path="/quality/quote-accuracy" element={<QualityQuoteAccuracy />} />
+          <Route path="/quality/monthly" element={<QualityMonthly />} />
           <Route path="/projects" element={<Projects />} />
           <Route path="/tasks" element={<Tasks />} />
           <Route path="/blog" element={<Blog />} />
-          <Route path="*" element={<Navigate to="/quality/audits" replace />} />
+          <Route path="*" element={<Navigate to="/quality" replace />} />
         </Route>
       </Routes>
     );
@@ -168,10 +174,13 @@ function RoleRoutes() {
         <Route path="/settings" element={<Settings />} />
         <Route path="/scope-calculator" element={<ScopeCalculator />} />
         <Route path="/help" element={<Help />} />
+        <Route path="/quality" element={<QualityDashboard />} />
         <Route path="/quality/audits" element={<QualityAudits />} />
         <Route path="/quality/problems" element={<QualityProblems />} />
+        <Route path="/quality/claims" element={<QualityClaims />} />
         <Route path="/quality/documents" element={<QualityDocuments />} />
         <Route path="/quality/quote-accuracy" element={<QualityQuoteAccuracy />} />
+        <Route path="/quality/monthly" element={<QualityMonthly />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

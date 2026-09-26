@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { toast } from "sonner";
-import { ClipboardCheck, AlertTriangle, RefreshCw } from "lucide-react";
+import { ClipboardCheck, AlertTriangle, RefreshCw, Star, CheckCircle2 } from "lucide-react";
 import { useApp } from "@/context/AppContext";
 import { useAuth } from "@/components/AuthGate";
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { InstructionBanner, PageTitle, EmptyState, LoadingRows } from "@/components/Bits";
-import { qualityAuditQueueApi, apiErrorMessage } from "@/lib/api";
+import { qualityAuditQueueApi, qualitySetGoogleReviewApi, apiErrorMessage } from "@/lib/api";
 import { JA, JA_BOL_ITEMS, JA_RESULTS, JA_GATES, JA_VARIANCE, fmtDate, money } from "@/lib/quality";
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
@@ -172,6 +172,7 @@ export default function QualityAudits() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [active, setActive] = useState(null);
+  const [savingReview, setSavingReview] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -188,6 +189,19 @@ export default function QualityAudits() {
   useEffect(() => {
     load();
   }, [load]);
+
+  const toggleReview = async (row) => {
+    setSavingReview(row.id);
+    try {
+      const next = !row.google_review_received;
+      await qualitySetGoogleReviewApi(row.id, next);
+      setRows((rs) => rs.map((r) => (r.id === row.id ? { ...r, google_review_received: next } : r)));
+      toast.success(next ? "Google review marked received." : "Cleared.");
+    } catch (e) {
+      toast.error(apiErrorMessage(e));
+    }
+    setSavingReview(null);
+  };
 
   const overdue = rows.filter((r) => r.past_due).length;
 
@@ -221,21 +235,39 @@ export default function QualityAudits() {
       ) : (
         <div className="space-y-2.5">
           {rows.map((r) => (
-            <button
+            <div
               key={r.id}
               data-testid="audit-queue-row"
-              onClick={() => setActive(r)}
-              className={`press w-full text-left surface-interactive p-4 flex flex-wrap items-center justify-between gap-3 ${
+              className={`surface-interactive p-4 flex flex-wrap items-center justify-between gap-3 ${
                 r.past_due ? "border-red-300 bg-red-50/60" : ""
               }`}
             >
-              <div className="min-w-0">
+              <button
+                data-testid="audit-open-btn"
+                onClick={() => setActive(r)}
+                className="press min-w-0 flex-1 text-left"
+              >
                 <div className="font-display text-[16px] font-extrabold text-primary truncate">{r.name}</div>
                 <div className="mt-0.5 text-[12.5px] text-faint">
                   Move {fmtDate(r.move_date)} · {r.quoted_total != null ? `quoted ${money(r.quoted_total)}` : "no quote on file"}
                 </div>
-              </div>
+              </button>
               <div className="flex items-center gap-4 shrink-0">
+                <button
+                  type="button"
+                  data-testid={`audit-review-toggle-${r.id}`}
+                  onClick={() => toggleReview(r)}
+                  disabled={savingReview === r.id}
+                  title="Google review received"
+                  className={`press inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11.5px] font-bold transition-colors ${
+                    r.google_review_received
+                      ? "bg-emerald-100 text-emerald-700"
+                      : "bg-surface-sunk text-ink-2 hover:bg-muted"
+                  }`}
+                >
+                  {r.google_review_received ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Star className="h-3.5 w-3.5" />}
+                  {r.google_review_received ? "Review in" : "Review?"}
+                </button>
                 <div className="text-right">
                   <div className="text-[12px] text-faint">Days since</div>
                   <div className="tnum font-bold text-ink">{r.days_since == null ? "—" : r.days_since}</div>
@@ -250,7 +282,7 @@ export default function QualityAudits() {
                   </span>
                 )}
               </div>
-            </button>
+            </div>
           ))}
         </div>
       )}

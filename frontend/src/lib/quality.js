@@ -81,3 +81,17 @@ export const daysUntil = (v) => {
     return null;
   }
 };
+
+// KPI state → styling. Backend states: "green" | "amber" | "red" | null.
+export const stateTone = (s) =>
+  s === "green" ? "text-emerald-700" : s === "amber" ? "text-amber-600" : s === "red" ? "text-red-600" : "text-faint";
+export const stateBorder = (s) =>
+  s === "green" ? "border-emerald-300" : s === "amber" ? "border-amber-300" : s === "red" ? "border-red-300" : "border-border";
+export const stateDot = (s) =>
+  s === "green" ? "bg-emerald-500" : s === "amber" ? "bg-amber-500" : s === "red" ? "bg-red-500" : "bg-muted";
+export const metricValue = (m) => {
+  if (!m || m.value == null) return "—";
+  if (m.unit === "hours") return `${m.value > 0 ? "+" : ""}${m.value}h`;
+  if (m.unit === "rate") return `${m.value}`;
+  return `${m.value}%`;
+};
