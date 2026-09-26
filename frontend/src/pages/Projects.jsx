@@ -99,6 +99,12 @@ const JobRow = ({ job, canSeeMoney, canEditStatus, onStatusChange }) => {
             <PaymentChip payment={m.payment} />
             <ComplianceChip status={m.compliance} />
             {m.has_portal && <Badge variant="outline" className="text-[10px] gap-1 bg-accent/10 text-accent-ink border-accent/25"><Send className="w-3 h-3" /> Customer page</Badge>}
+            {m.paperwork_alert?.active && (
+              <Badge variant="outline" data-testid="job-paperwork-flag"
+                className={`text-[10px] gap-1 ${m.paperwork_alert.level === "red" ? "bg-red-500/15 text-red-600 border-red-500/40 animate-pulse" : "bg-warning/12 text-warning border-warning/40"}`}>
+                <AlertTriangle className="w-3 h-3" /> Paperwork {m.paperwork_alert.level === "red" ? "< 24h" : "due"}
+              </Badge>
+            )}
             {m.portal_review && <Badge variant="outline" className="text-[10px] bg-warning/12 text-warning border-warning/30">{m.portal_review.rating}★</Badge>}
           </div>
           <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-sm text-ink-2">

@@ -1,6 +1,6 @@
 crons:
   - name: customer-reminders
-    description: "Daily 9am ET: text customers a T-48h move reminder and alert the owner on failures"
+    description: "Daily 9am ET: customer T-48h move reminders + owner paperwork-gate alerts (72h/48h/24h)"
     cron: "0 9 * * *"
     timezone: "America/New_York"
     # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.

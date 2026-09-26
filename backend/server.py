@@ -1544,6 +1544,8 @@ async def ensure_job_for_deposit(inv: Dict[str, Any], mark_full: bool = False, n
         await _sync_existing_deposit_job(existing, inv, mark_full, paid_at)
         if not existing.get("project_record_id") or existing.get("project_synced_date") != existing.get("job_date"):
             await sync_project_for_job(existing)
+        fresh = await mongo_db.jobs.find_one({"_id": existing["_id"]}) or existing
+        await _check_owner_paperwork_alert(fresh, "booking")
         return
     lead = await fetch_lead_details(inv.get("lead_id"))
     integrations = await get_integrations()
@@ -1555,6 +1557,7 @@ async def ensure_job_for_deposit(inv: Dict[str, Any], mark_full: bool = False, n
         await notify(None, "owner", "New job — deposit paid",
                      f"Job #{job['invoice_number']} is live: {who} paid the deposit. Open Jobs to assign a crew.",
                      "success", {"job_id": job["_id"]})
+    await _check_owner_paperwork_alert(job, "booking")
 
 
 async def _alert_payment_landed(inv: Dict[str, Any], purpose: str) -> None:
@@ -2367,13 +2370,12 @@ async def portal_acknowledge_paperwork(token: str, payload: PaperworkAckPayload,
            "brochure_url": brochure_url or None, "documents": documents, "at": now_iso()}
     await mongo_db.paperwork_acks.insert_one(rec)   # append-only; never updated or deleted
     gates = job.get("gates") or {}
-    gset = {}
+    gset = {"paperwork_alert.active": False}   # customer ack clears the owner paperwork-gate alert
     if not gates.get("brochure_sent_at"):
         gset["gates.brochure_sent_at"] = rec["at"]
     if not gates.get("estimate_delivered_at"):
         gset["gates.estimate_delivered_at"] = rec["at"]
-    if gset:
-        await mongo_db.jobs.update_one({"_id": job["_id"]}, {"$set": gset})
+    await mongo_db.jobs.update_one({"_id": job["_id"]}, {"$set": gset})
     await _owner_portal_ping(job, "Paperwork acknowledged",
                              f"{name} confirmed receipt of the brochure & estimate for Job #{job.get('invoice_number')}.")
     return {"ok": True, "at": rec["at"], "name": name}
@@ -2463,6 +2465,104 @@ async def _run_customer_reminders() -> Dict[str, Any]:
     return {"sent": sent, "skipped": skipped, "failed": failed}
 
 
+async def _owner_alert_ping(job: Dict[str, Any], title: str, body: str, ntype: str = "warning") -> None:
+    await notify(None, "owner", title, body, ntype,
+                 {"job_id": job["_id"], "invoice_number": job.get("invoice_number")})
+    try:
+        integ = await get_integrations()
+        phone = (integ.get("owner_alert_phone") or "").strip()
+        if phone:
+            await openphone_send_sms(phone, f"{title} — {body}")
+    except Exception as exc:
+        logger.warning("owner alert sms failed: %s", exc)
+
+
+def _paperwork_alert_tier(hours: float) -> Optional[Tuple[str, str]]:
+    if hours <= 24:
+        return ("t24", "red")
+    if hours <= 48:
+        return ("t48", "amber")   # final routine reminder
+    if hours <= 72:
+        return ("t72", "amber")   # first routine reminder
+    return None
+
+
+def _paperwork_alert_card(job: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    st = job.get("paperwork_alert") or {}
+    if not st.get("active"):
+        return None
+    return {"active": True, "level": st.get("level") or "amber"}
+
+
+async def _check_owner_paperwork_alert(job: Dict[str, Any], source: str = "cron") -> Optional[str]:
+    """Owner-facing paperwork-gate alert. First alert inside 72h + final inside 48h (max 2 routine),
+    plus a red escalation inside 24h. Clears only when the customer acknowledges the paperwork."""
+    if await _latest_ack(job["_id"]):
+        if (job.get("paperwork_alert") or {}).get("active"):
+            await mongo_db.jobs.update_one({"_id": job["_id"]}, {"$set": {"paperwork_alert.active": False}})
+        return None
+    if (job.get("status") or "").lower() == "cancelled" or job.get("cancelled_at"):
+        return None
+    move_dt = _move_datetime_et(job)
+    if not move_dt:
+        return None
+    now = datetime.now(ZoneInfo("America/New_York"))
+    hours = (move_dt - now).total_seconds() / 3600
+    if hours <= 0:
+        return None
+    tier_info = _paperwork_alert_tier(hours)
+    if not tier_info:
+        return None
+    tier, level = tier_info
+    state = job.get("paperwork_alert") or {}
+    if state.get("for_date") != job.get("job_date"):   # reschedule → re-evaluate from scratch
+        state = {"for_date": job.get("job_date"), "tiers": [], "active": False}
+    sent = list(state.get("tiers") or [])
+    if tier in sent:
+        return None
+    if tier in ("t72", "t48") and len([t for t in sent if t in ("t72", "t48")]) >= 2:
+        return None
+    who = (job.get("customer") or {}).get("name") or "the customer"
+    inv = job.get("invoice_number")
+    if tier == "t24":
+        title = "🚩 Paperwork under 24 hours"
+        body = (f"Job #{inv} ({who}) is under 24 hours away and paperwork still isn't acknowledged. "
+                "Record the customer's short-notice request in short_notice_proof, or reschedule.")
+    elif tier == "t48":
+        title = "Paperwork not confirmed — final reminder (under 48h)"
+        body = (f"Job #{inv} ({who}) is under 48 hours away and the customer hasn't confirmed their paperwork. "
+                "It needs to be confirmed at least 24 hours before the move.")
+    else:
+        title = "Paperwork not confirmed — under 72h"
+        body = f"Job #{inv} ({who}) is under 72 hours away and hasn't confirmed their paperwork yet."
+    await _owner_alert_ping(job, title, body, "warning")
+    sent.append(tier)
+    state.update({"tiers": sent, "active": True, "level": level, "last_at": now_iso(), "for_date": job.get("job_date")})
+    await mongo_db.jobs.update_one({"_id": job["_id"]}, {"$set": {"paperwork_alert": state}})
+    logger.info("owner paperwork alert (%s) fired for job %s tier=%s", source, inv, tier)
+    return tier
+
+
+async def _run_owner_paperwork_alerts() -> Dict[str, Any]:
+    et = ZoneInfo("America/New_York")
+    today = datetime.now(et).date()
+    lo, hi = today.isoformat(), (today + timedelta(days=4)).isoformat()
+    fired = 0
+    async for job in mongo_db.jobs.find({"job_date": {"$gte": lo, "$lte": hi}}):
+        try:
+            if await _check_owner_paperwork_alert(job, "cron"):
+                fired += 1
+        except Exception as exc:
+            logger.warning("owner paperwork alert failed for job %s: %s", job.get("invoice_number"), exc)
+    logger.info("owner paperwork alerts: fired=%s", fired)
+    return {"fired": fired}
+
+
+async def _run_daily_9am_et() -> None:
+    await _run_customer_reminders()
+    await _run_owner_paperwork_alerts()
+
+
 @public_router.post("/cron/customer-reminders")
 async def cron_customer_reminders(request: Request) -> Dict[str, Any]:
     # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
@@ -2471,7 +2571,7 @@ async def cron_customer_reminders(request: Request) -> Dict[str, Any]:
     token = auth[7:] if auth.startswith("Bearer ") else ""
     if not secret or not token or not hmac.compare_digest(token, secret):
         raise HTTPException(status_code=401, detail="Unauthorized")
-    asyncio.create_task(_run_customer_reminders())
+    asyncio.create_task(_run_daily_9am_et())
     return {"ok": True}
 
 
@@ -5550,6 +5650,7 @@ async def job_mgmt_list(request: Request, refresh: int = 0) -> Dict[str, Any]:
                 "has_portal": bool(((job or {}).get("tracking") or {}).get("token")),
                 "portal_review": (job or {}).get("portal_review"),
                 "compliance": _compliance_status(comp_docs.get(pr["id"])),
+                "paperwork_alert": _paperwork_alert_card(job) if job else None,
                 "customer": _job_customer_block(f, job, show_contact),
             },
         })
@@ -5809,6 +5910,12 @@ async def job_mgmt_update(project_id: str, payload: JobEditPayload, request: Req
 
     if air_fields.get(PROJECT_STATUS_FIELD) == PROJECT_COMPLETED_STATUS:
         await _mark_review_requested(project_id, source="observed")
+    if PROJECT_DATE_FIELD in air_fields:   # move date changed → mirror to the linked job + re-check paperwork alert
+        linked = await mongo_db.jobs.find_one({"project_record_id": project_id})
+        if linked:
+            await mongo_db.jobs.update_one({"_id": linked["_id"]}, {"$set": {"job_date": air_fields[PROJECT_DATE_FIELD]}})
+            linked["job_date"] = air_fields[PROJECT_DATE_FIELD]
+            await _check_owner_paperwork_alert(linked, "date_change")
     _projects_list_cache["at"] = 0.0  # force the list to refresh from Airtable on next load
 
     return {"updated": True, "count": len(diffs), "history": await _job_history(project_id, True)}
