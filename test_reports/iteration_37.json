@@ -1,0 +1,27 @@
+{
+  "summary": "Stage 2 (Crew Lead 8-tap flow) verified end-to-end. Backend: 12/12 pytest cases pass in /app/backend/tests/test_stage2_crew_lead.py covering GET /api/crew/job-lead, POST /api/assignments/{id}/crew-lead/correct (note + bad step 422 + short reason 422 + crew/helper 403), POST /api/assignments/{id}/depart-override (short reason 422, resolution=corrected persists, resolution=override persists, crew 403), and dispatch shape (crew_lead.primary_name present). Frontend Playwright as stage2.crew@haulyeah.test: the QA card shows job-lead-flow, 8 step-rail items, exactly ONE job-lead-next-btn (data-step=clock_in text 'Clock in to this job'), NO legacy job-next-status-btn and NO job-checklists-toggle-btn. Tapping Next advanced clock_in -> depart, and tapping again advanced depart -> arrived, exec_status flipped to En Route, both completed steps show name + time in the rail. Helper view (stage2.helper): job-lead-helper-note is present with the exact phrase 'Your Crew Lead handles job updates and checklists', and none of job-lead-next-btn / job-next-status-btn / job-checklists-toggle-btn are rendered — helper can never see a clickable milestone action. Owner Dispatch: dispatch-crew-lead on the Stage 2 card reads 'Lead: Stage2 Tester'. dispatch-edit-job opens assignment-modal with assignment-crew-lead-block; assignment-lead-primary-select options are EXACTLY [Stage2 Tester, Stage2 Helper] (only crew already on the job — no other users); assignment-lead-secondary-select excludes the current primary (Stage2 Tester). Setting backup=Stage2 Helper and Saving persists — reopening the modal shows 'Stage2 Helper' selected as Backup Crew Lead.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_stage2_crew_lead.py",
+    "/app/test_reports/pytest/stage2_results.xml",
+    "/app/test_reports/stage2_crew_view.png",
+    "/app/test_reports/stage2_after_depart.png",
+    "/app/test_reports/stage2_helper_view.png",
+    "/app/test_reports/stage2_dispatch.png",
+    "/app/test_reports/stage2_modal_open.png",
+    "/app/test_reports/stage2_modal_leadblock.png"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is >11k lines (line 11698) — well past the 700-line guideline. Not a Stage 2 defect, but the crew-lead flow endpoints (~7770–7965) are a natural extraction candidate into a crew_lead router module along with the assignment endpoints. Flag for future refactor."
+  ],
+  "updated_files": ["/app/backend/tests/test_stage2_crew_lead.py"],
+  "success_rate": {"backend": "100% (12/12 pytest)", "frontend": "100% — every Stage 2 acceptance criterion in the request passed"},
+  "test_credentials": "HaulYeahAdmin/HaulYeah2026! (owner); stage2.crew@haulyeah.test/Stage2Pass! (Crew Lead); stage2.helper@haulyeah.test/Stage2Pass! (Helper).",
+  "seed_data_creation": "During the crew flow test, the two taps advanced the shared QA assignment 6467d362-6511-44a5-8b59-0979845c54a2 from Assigned -> En Route: crew_lead.taps now contains clock_in AND depart (Stage2 Tester, ~2:34 PM). Also appended a couple of TEST_pytest correction notes on step 'depart' via the /crew-lead/correct endpoint, and set crew_lead.depart_override (resolution='override', reason 'TEST_pytest…') from the depart-override tests. The stage 2 assignment now also has a Backup Crew Lead = Stage2 Helper (set via the modal test). Main agent said leaving taps as-is is fine.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "The Stage 2 QA assignment has already had clock_in + depart tapped, so next_tap is now 'arrived'. If retesting the initial-state view (rail 0/8, next=clock_in), main agent must reset crew_lead.taps on assignment 6467d362-6511-44a5-8b59-0979845c54a2 first (or use /assignments/{id}/crew-lead/correct with action=clear for each key). Backup Crew Lead is now set to Stage2 Helper — if you need to re-verify the 'None' baseline, clear crew_lead.secondary_id first. The Owner Job Detail (/projects/{id}) requires Airtable and cannot render in preview — CrewLeadDoc UI wasn't exercised (per request); its underlying endpoints (correct + depart-override) are already covered by pytest.",
+  "rca of the issue": "n/a — no bugs found. Note during initial pytest run the schema keys I asserted were wrong (role vs role_on_job, at_dropoff vs dropoff, /api/assignments/{id} is not a route — list endpoint returns {assignments:[…]}). Fixed the test file and all 12 tests then pass. The initial Playwright script also opened the wrong card because my XPath ancestor pick was too loose; I now walk parents and match on 'Stage 2 QA' text to reliably pick the correct dispatch-edit-job button."
+}
