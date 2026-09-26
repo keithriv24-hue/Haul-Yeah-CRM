@@ -49,6 +49,15 @@ export default function JobDetail() {
   const [editOpen, setEditOpen] = useState(false);
   const [recording, setRecording] = useState(false);
 
+  const load = useCallback(() => {
+    setLoading(true);
+    jobMgmtDetailApi(id)
+      .then((d) => { setData(d); setError(null); })
+      .catch((e) => setError(apiErrorMessage(e)))
+      .finally(() => setLoading(false));
+  }, [id]);
+  useEffect(() => { load(); }, [load]);
+
   const recordDelivered = useCallback(async () => {
     setRecording(true);
     try {
@@ -60,15 +69,6 @@ export default function JobDetail() {
     }
     setRecording(false);
   }, [id, load]);
-
-  const load = useCallback(() => {
-    setLoading(true);
-    jobMgmtDetailApi(id)
-      .then((d) => { setData(d); setError(null); })
-      .catch((e) => setError(apiErrorMessage(e)))
-      .finally(() => setLoading(false));
-  }, [id]);
-  useEffect(() => { load(); }, [load]);
 
   if (loading && !data) {
     return (

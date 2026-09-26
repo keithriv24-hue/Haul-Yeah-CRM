@@ -1,0 +1,30 @@
+{
+  "summary": "E2E tested Customer Portal Phase D (token afe748c700fc481497a5720e5d80acde), Owner Job Detail Phase 2, Settings Customer Page card, and cron endpoint. Discovered ONE CRITICAL crash on owner Job Detail (TDZ ReferenceError blocking the entire page); FIXED it in-place (declaration order of `load` vs `recordDelivered` useCallback). After the fix everything works: edit dialog opens, 403 from Airtable is handled gracefully (dialog stays open, toast surfaces), History tab renders, Compliance tab renders (record-delivered button correctly hidden since this project has no linked paperwork_ack). Portal flows all green: arrival window '9:00 AM – 9:30 AM', paperwork ack (empty-name toast + green done state + amber banner clears), confirm-move (Yes flips to confirmed, No is an sms: href), prep checklist elevator/parking anchor scrolls. Cron 401/200 verified. Settings 4th template 'T-48h reminder' + arrival-window input persist (30→45→30).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "JobDetail (pages/JobDetail.jsx)", "issue": "TDZ ReferenceError: 'Cannot access load before initialization'. `recordDelivered` useCallback listed `load` in its deps array before `load` was declared. Blocked every owner job detail page. FIXED by moving `load` declaration above `recordDelivered`.", "selector": "route /projects/:id", "priority": "CRITICAL (fixed)"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "JobEditDialog", "issues": ["Move date uses native HTML input[type=date] (browser default date picker) instead of shadcn Calendar/DatePicker used elsewhere in the app. Inconsistent UX + native picker styling doesn't match dark theme."]}
+    ]
+  },
+  "test_report_links": ["/app/test_reports/iteration_35.json"],
+  "action_items": [
+    "Review my in-place fix to /app/frontend/src/pages/JobDetail.jsx (declaration order for `load`/`recordDelivered` useCallback). Consider adding a lint rule (react-hooks/exhaustive-deps + no-use-before-define) so this class of TDZ bug is caught at CI time.",
+    "Optional/design: replace native <input type=\"date\"> in JobEditDialog Move date with the shadcn Calendar popover used elsewhere so it matches the dark theme and behaves consistently."
+  ],
+  "critical_code_review_comments": [
+    "JobDetail.jsx had recordDelivered useCallback referring to `load` from its dependency array before `load` was declared with const — classic TDZ bug that crashed every owner job detail render. Fixed by reordering. Recommend enabling `no-use-before-define` for `variables` in ESLint.",
+    "JobEditDialog uses a native date input; the rest of the app uses shadcn Calendar. Non-blocking but inconsistent."
+  ],
+  "updated_files": ["/app/frontend/src/pages/JobDetail.jsx"],
+  "success_rate": {"backend": "100% (cron 401/200 + portal contract verified via curl)", "frontend": "100% after in-place TDZ fix"},
+  "test_credentials": "Owner HaulYeahAdmin / HaulYeah2026! ; portal token afe748c700fc481497a5720e5d80acde",
+  "seed_data_creation": "Portal ack + confirm recorded on QA-1001 during testing (acks are append-only, safe). Settings arrival_window_minutes was temporarily changed 30→45 and reverted back to 30.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Owner Job Detail's record-delivered button is conditionally rendered only when data.paperwork_ack is truthy on the current project (see JobDetail.jsx line 305). The single production project recaqXqdU0Xt5VfWI has no linked paperwork ack, so the button won't appear there. To exercise the record-delivered 403 flow visually you need a project whose Airtable record is linked to a job that has a portal ack (currently QA-1001 token points to a tracking-job record, not the Airtable production project). Main agent already curl-verified the endpoint returns a friendly 403 so this is fine. Portal ack on QA-1001 is now in the acknowledged state; to test the 'unacknowledged' branch you'd need a fresh token or to clear the ack in Mongo.",
+  "rca of the issue": "JobDetail crash — useCallback for `recordDelivered` was defined at line 52 and included `load` in its dependency array, but `load` was declared with `const` at line 64. Because of temporal dead zone semantics on `const`, evaluating the deps array during the first render throws ReferenceError. Reproduction: log in as owner, navigate to /projects/recaqXqdU0Xt5VfWI — react-error-overlay pops. Mitigation applied: move `const load = useCallback(...)` (and its `useEffect(() => load())` companion) above `const recordDelivered = useCallback(...)`. Verified the same page now loads and Edit/History/Compliance tabs all work."
+}
