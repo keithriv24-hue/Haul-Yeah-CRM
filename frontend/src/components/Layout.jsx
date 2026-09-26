@@ -6,7 +6,7 @@ import {
   CreditCard, Handshake, HelpCircle, Eye, EyeOff, RefreshCw, KeyRound, LogOut, SlidersHorizontal, MessageSquareText, Video, UserRound,
   HardHat, ClipboardList, AlarmClock, CalendarDays, Briefcase, Sun, Megaphone, UsersRound, Trophy, Swords, Medal,
   BadgeDollarSign, BellRing, Radio, Wrench, MoreHorizontal, Search, Boxes,
-  ClipboardCheck, AlertOctagon, FileText, Gauge, Scale, CalendarRange,
+  ClipboardCheck, AlertOctagon, FileText, Scale, CalendarRange,
 } from "lucide-react";import { useApp } from "@/context/AppContext";
 import { useAuth } from "@/components/AuthGate";
 import { NotificationsBell } from "@/components/NotificationsBell";
@@ -65,7 +65,6 @@ const NAV = [
   { to: "/quality/problems", label: "Nonconformances", icon: AlertOctagon, roles: ["owner", "quality"], group: "Quality" },
   { to: "/quality/claims", label: "Claims", icon: Scale, roles: ["owner", "quality"], group: "Quality" },
   { to: "/quality/documents", label: "Documents", icon: FileText, roles: ["owner", "quality"], group: "Quality" },
-  { to: "/quality/quote-accuracy", label: "Quote Accuracy", icon: Gauge, roles: ["owner", "quality"], group: "Quality" },
   { to: "/quality/monthly", label: "Monthly Review", icon: CalendarRange, roles: ["owner", "quality"], group: "Quality" },
 ];
 

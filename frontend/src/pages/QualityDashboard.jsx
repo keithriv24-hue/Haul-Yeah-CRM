@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from "react";
+import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import {
   ShieldCheck, AlertTriangle, RefreshCw, ChevronDown, ChevronRight,
@@ -24,6 +25,15 @@ const KpiTile = ({ m }) => (
         <span className="tnum">{m.numerator} / {m.denominator}</span>
       )}
     </div>
+    {m.key === "quote_variance" && (
+      <Link
+        to="/quality/quote-accuracy"
+        data-testid="kpi-quote-accuracy-link"
+        className="press mt-2 inline-block text-[11.5px] font-semibold text-accent hover:underline"
+      >
+        Open quote accuracy →
+      </Link>
+    )}
   </div>
 );
 

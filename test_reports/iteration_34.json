@@ -1,0 +1,27 @@
+{
+  "summary": "Prompt-3 frontend verified against preview URL. Tested Quality routing/landing, all 6 Quality pages, RBAC for owner/quality/sales/crew, Monthly no-snapshot flow, Claims dialog owner-only gating, and mobile nav. Airtable-backed pages show the expected 503 'Airtable key needed' banner but render their shell (title + Refresh + testid) without crashing — this is the designed preview behaviour and is treated as PASS. Overall: all critical acceptance criteria pass. Only minor console-noise issues found.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "QualityDashboard review list", "issue": "React warning: 'Encountered two children with the same key' — key appears to be date+title (e.g. '2026-09-25Wrong crew size') and duplicates exist in the mock/review list, causing duplicate-key warnings. Doesn't crash, but should use a unique id.", "selector": "review-row", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/test_reports/iteration_34.json"],
+  "action_items": [
+    "Optional: use unique ids (project id, not date+title) as React keys for the review-row list on QualityDashboard to eliminate duplicate-key console warnings."
+  ],
+  "critical_code_review_comments": [
+    "Quality left nav currently exposes 7 entries (Dashboard, Job Audits, Nonconformances, Claims, Documents, Quote Accuracy, Monthly Review). The Prompt-3 spec calls out 6 entries with Quote Accuracy NOT in the primary Quality group (it's a Quote Accuracy extension, not a top-level nav item). Confirm whether Quote Accuracy should stay in the sidebar or be relocated. Not a crash — flagged for product review.",
+    "React duplicate key warning on QualityDashboard review-row list — swap date+title composite key for a stable unique id."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (skipped per request)", "frontend": "100% of critical acceptance criteria"},
+  "test_credentials": "Owner HaulYeahAdmin / HaulYeah2026! ; Quality testqualityadmin / HaulYeah2026! ; Sales testsalesadmin / HaulYeah2026! ; Crew testcrewadmin / HaulYeah2026!",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Verified: (1) Quality ghost lands on /quality with quality-dashboard-page testid + Refresh btn. (2) All 6 Quality routes reachable (/quality, /quality/audits, /quality/problems, /quality/claims, /quality/documents, /quality/monthly) plus /quality/quote-accuracy — all render shell + testids without white screen. (3) 503 'Airtable key needed' banner shown gracefully on Airtable-backed data as expected. (4) Monthly no-snapshot: setting monthly-month-input to 2019-01 renders monthly-no-snapshot testid with text 'No snapshot for January 2019' — PASS. Note: needs ~3s wait after fill for React state to update; my first attempt with 2.5s wait missed it. (5) Claims: New claim btn opens claim-form-modal; claim-amount-settled has disabled attribute for quality role; status select is a radix trigger (empty text before opening). (6) Owner can access all 6 quality routes. (7) Sales redirected to /leads, Crew redirected to /today, both show no Quality nav links and no quality testids — RBAC clean. (8) Mobile 390px: primary quality links present in DOM. Minor: React duplicate-key console warning on review-row list (date+title collision).",
+  "rca of the issue": "N/A — no blocking bugs found."
+}

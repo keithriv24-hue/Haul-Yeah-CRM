@@ -328,8 +328,8 @@ export default function QualityQuoteAccuracy() {
           <EmptyState>No feedback logged yet.</EmptyState>
         ) : (
           <div className="space-y-2" data-testid="feedback-log">
-            {feedback.map((fb) => (
-              <div key={fb.nc_id || fb.date + fb.what_was_off} data-testid="feedback-log-row" className="surface p-3 rounded-lg border border-border">
+            {feedback.map((fb, i) => (
+              <div key={fb.nc_id || `${fb.date}-${fb.what_was_off}-${i}`} data-testid="feedback-log-row" className="surface p-3 rounded-lg border border-border">
                 <div className="flex flex-wrap items-center justify-between gap-2 text-[12px] text-faint">
                   <span className="font-semibold text-ink">{fb.job_name || "A job"}{fb.rep_name ? ` → ${fb.rep_name}` : ""}</span>
                   <span>{fmtDate(fb.date)}</span>
