@@ -36,6 +36,17 @@ export const patchScopeVideoApi = (id, video) => axios.patch(`${API}/scopes/${id
 export const getScopeAccessApi = () => axios.get(`${API}/scopes/access`).then((r) => r.data);
 export const getScopePricingValuesApi = () => axios.get(`${API}/scopes/pricing-values`).then((r) => r.data);
 export const getEstimatingParamsApi = () => axios.get(`${API}/settings/estimating-params`).then((r) => r.data);
+export const scopeGuidanceApi = (params) => axios.get(`${API}/scope-guidance`, { params }).then((r) => r.data);
+// Stage 7 — guarded auto-optimizer controls (owner + Quality; activation owner-only)
+export const optimizerStateApi = () => axios.get(`${API}/quality/optimizer/state`).then((r) => r.data);
+export const optimizerRunApi = () => axios.post(`${API}/quality/optimizer/run`, {}).then((r) => r.data);
+export const optimizerPauseApi = (paused, reason) => axios.post(`${API}/quality/optimizer/pause`, { paused, reason }).then((r) => r.data);
+export const optimizerLockApi = (factor, locked, reason) => axios.post(`${API}/quality/optimizer/lock`, { factor, locked, reason }).then((r) => r.data);
+export const optimizerManualSetApi = (factor, value, reason, expected_seq) => axios.post(`${API}/quality/optimizer/manual-set`, { factor, value, reason, expected_seq }).then((r) => r.data);
+export const optimizerRollbackApi = (version, reason) => axios.post(`${API}/quality/optimizer/rollback`, { version, reason }).then((r) => r.data);
+export const optimizerActivateApi = (activated, reason) => axios.post(`${API}/quality/optimizer/activate`, { activated, reason }).then((r) => r.data);
+export const optimizerHistoryApi = () => axios.get(`${API}/quality/optimizer/history`).then((r) => r.data.history);
+export const optimizerRunsApi = () => axios.get(`${API}/quality/optimizer/runs`).then((r) => r.data.runs);
 export const listCalcAccessApi = () => axios.get(`${API}/users/calculator-access`).then((r) => r.data.access);
 export const setCalcAccessApi = (userId, mode) => axios.put(`${API}/users/${userId}/calculator-access`, { mode }).then((r) => r.data);
 export const removeCalcAccessApi = (userId) => axios.delete(`${API}/users/${userId}/calculator-access`).then((r) => r.data);

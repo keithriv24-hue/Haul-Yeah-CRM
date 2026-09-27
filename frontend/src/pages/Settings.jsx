@@ -5,12 +5,20 @@ import { useApp } from "@/context/AppContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
+} from "@/components/ui/dialog";
 import { PageTitle } from "@/components/Bits";
 import { apiErrorMessage, getRates, saveRatesApi } from "@/lib/api";
 import { IntegrationsCard } from "@/components/IntegrationsCard";
 import { CustomerPageCard } from "@/components/CustomerPageCard";
 import { GmailCard } from "@/components/GmailCard";
 import { MetaCard } from "@/components/MetaCard";
+
+// Base labor rate + package HOURS are authoritative estimating parameters — changing them is a calibration
+// change (reason + version + auto-lock), so they route through the same guarded path as the optimizer.
+const EST_RATE_KEYS = ["manHoursPer100CuFt", "pkgStudioHours", "pkg2brHours", "pkg3brHours", "pkg4brHours"];
 
 const fmtStamp = (iso) =>
   iso ? `Updated ${new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}` : "Starting value";
@@ -97,12 +105,16 @@ const PricingCard = () => {
   const [form, setForm] = useState({});
   const [states, setStates] = useState("NJ");
   const [saving, setSaving] = useState(false);
+  const [calibSeq, setCalibSeq] = useState(null);
+  const [reasonOpen, setReasonOpen] = useState(false);
+  const [reason, setReason] = useState("");
 
   useEffect(() => {
     getRates().then((d) => {
-      const { _updatedAt, ...vals } = d;
+      const { _updatedAt, _calibrationSeq, _calibrationVersion, ...vals } = d;
       setSaved(vals);
       setStamps(_updatedAt || {});
+      setCalibSeq(_calibrationSeq ?? null);
       setForm(strMap(vals));
       setStates(vals.serviceStates || "NJ");
     }).catch(() => {});
@@ -111,6 +123,37 @@ const PricingCard = () => {
   const changed = (key) => saved && form[key] !== undefined && Number(form[key]) !== Number(saved[key]);
   const statesChanged = saved && states.trim().toUpperCase() !== String(saved.serviceStates || "NJ");
   const anyChanged = (saved && ALL_FIELDS.some(({ key }) => changed(key))) || statesChanged;
+  const estChanged = () => EST_RATE_KEYS.filter((k) => changed(k));
+
+  const doSave = async (calibReason) => {
+    setSaving(true);
+    try {
+      const payload = { serviceStates: states.trim().toUpperCase() || "NJ" };
+      ALL_FIELDS.forEach(({ key }) => { payload[key] = Number(form[key]); });
+      if (calibReason) { payload.reason = calibReason; payload.expected_calibration_seq = calibSeq; }
+      const d = await saveRatesApi(payload);
+      const { _updatedAt, _calibrationSeq, _calibrationVersion, ...vals } = d;
+      setSaved(vals);
+      setStamps(_updatedAt || {});
+      setCalibSeq(_calibrationSeq ?? null);
+      setForm(strMap(vals));
+      setStates(vals.serviceStates || "NJ");
+      setReasonOpen(false);
+      setReason("");
+      toast.success(calibReason
+        ? "Saved. The changed calibration parameter is now locked so the optimizer won't undo it. Saved scopes keep their snapshots."
+        : "Pricing saved. Every new quote prices from these values — saved scopes keep their snapshots.");
+    } catch (e) {
+      if (e?.response?.status === 409) {
+        toast.error("Calibration changed elsewhere — reloading latest values, please re-apply.");
+        getRates().then((d) => { const { _calibrationSeq } = d; setCalibSeq(_calibrationSeq ?? null); }).catch(() => {});
+        setReasonOpen(false);
+      } else {
+        toast.error(apiErrorMessage(e));
+      }
+    }
+    setSaving(false);
+  };
 
   const save = async () => {
     for (const { key, label, min = 0, max = 100000 } of ALL_FIELDS) {
@@ -120,21 +163,9 @@ const PricingCard = () => {
         return;
       }
     }
-    setSaving(true);
-    try {
-      const payload = { serviceStates: states.trim().toUpperCase() || "NJ" };
-      ALL_FIELDS.forEach(({ key }) => { payload[key] = Number(form[key]); });
-      const d = await saveRatesApi(payload);
-      const { _updatedAt, ...vals } = d;
-      setSaved(vals);
-      setStamps(_updatedAt || {});
-      setForm(strMap(vals));
-      setStates(vals.serviceStates || "NJ");
-      toast.success("Pricing saved. Every new quote prices from these values — saved scopes keep their snapshots.");
-    } catch (e) {
-      toast.error(apiErrorMessage(e));
-    }
-    setSaving(false);
+    // A base-rate or package-hours change is a calibration edit — capture a reason first.
+    if (estChanged().length > 0) { setReason(""); setReasonOpen(true); return; }
+    await doSave(null);
   };
 
   if (!saved) return null;
@@ -182,6 +213,28 @@ const PricingCard = () => {
           <Save className="w-3.5 h-3.5" /> {saving ? "Saving…" : "Save pricing"}
         </Button>
       </div>
+
+      <Dialog open={reasonOpen} onOpenChange={setReasonOpen}>
+        <DialogContent data-testid="rates-calibration-reason-dialog">
+          <DialogHeader>
+            <DialogTitle>Reason for the calibration change</DialogTitle>
+            <DialogDescription>
+              You're changing an estimating parameter (base rate / package hours). This records an audited
+              calibration version, locks the changed parameter so the optimizer won't undo it, and applies to
+              new calculations only — saved and sent quotes keep their snapshot.
+            </DialogDescription>
+          </DialogHeader>
+          <Textarea data-testid="rates-calibration-reason-input" rows={3} value={reason}
+            onChange={(e) => setReason(e.target.value)} placeholder="Why are you changing this?" />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setReasonOpen(false)}>Cancel</Button>
+            <Button data-testid="rates-calibration-reason-confirm-btn"
+              disabled={saving || reason.trim().length < 5} onClick={() => doSave(reason.trim())}>
+              {saving ? "Saving…" : "Save with reason"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

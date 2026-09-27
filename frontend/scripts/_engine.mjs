@@ -343,16 +343,25 @@ export function computeScope(inputs, P, shift = 0, EP = {}) {
   const minHours = jobType === "labor" ? num(P?.minHoursLabor, 2) : num(P?.minHoursTruck, 3);
   const hourFloor = bedsEff >= hardBeds ? Math.max(hardHours, minHours) : minHours;
   billMH = Math.max(billMH, hourFloor * Math.min(crew, 4));
-  const onsiteRec = schedMH / crew;
+  /* Crew efficiency (Stage 7, non-monetary): scales ONLY the recommended on-site DURATION,
+     never billMH — so it changes scheduling, not the quote total. Default 1.0 → no change. */
+  const crewBucket = crew <= 2 ? "2" : crew === 3 ? "3" : crew === 4 ? "4" : "5plus";
+  const crewEff = num(EP?.crewEfficiency?.[crewBucket], 1) || 1;
+  const onsiteRec = schedMH / (crew * crewEff);
   let onsite = onsiteRec;
   if (effHoursOverride) {
     billMH = effHoursOverride * crew;
-    onsite = effHoursOverride;
+    onsite = effHoursOverride;                                                     // an explicit override is never overwritten by efficiency
     if (bedsEff >= hardBeds) billMH = Math.max(billMH, hardHours * Math.min(crew, 4)); // HARD 6-hr floor — override can't go below
   }
   const floorMH = hourFloor * Math.min(crew, 4);
   const hardFloorApplied = bedsEff >= hardBeds && Math.abs(billMH - hardHours * Math.min(crew, 4)) < 1e-9
     && (effHoursOverride ? effHoursOverride * crew < billMH : rawBillMH < billMH);
+  /* Crew-day scheduling estimate (Stage 7, non-monetary): on-site + round-trip drive + travel.
+     Drive/travel params are scheduling-only and NEVER touch pricing. Defaults 25mph / 0.75 / 0.5. */
+  const avgMph = num(EP?.avgDriveMph, 25) || 25;
+  const driveHours = miles > 0 ? Math.round((2 * miles / avgMph) * 100) / 100 : 0;
+  const crewDayHours = Math.round((onsite + driveHours + num(EP?.travelInHours, 0.75) + num(EP?.travelOutHours, 0.5)) * 100) / 100;
 
   /* ---- final pricing steps — every value from the pricing config, exact spec order ---- */
   const manHourRate = num(P?.manHourRate);
@@ -372,7 +381,7 @@ export function computeScope(inputs, P, shift = 0, EP = {}) {
 
   return { cf, lbs, trucks, displayTrucks, billableTrips, sc, volMH, itemMH, accMH, accBill, itemBill: itemBillTotal, matBill, distBill, mileage,
     customBill: customBillTotal, handlingRaw, handlingBilled, specialtyOnly, droppedPkg, blockers, customCrewFloor, fitMH,
-    billMH, schedMH, crew, crewRec, dayLengthEscalated, onsite, onsiteRec, labor, travel, sub, cushioned, total,
+    billMH, schedMH, crew, crewRec, crewEff, dayLengthEscalated, onsite, onsiteRec, driveHours, crewDayHours, labor, travel, sub, cushioned, total,
     beds, bedsEff, priceFloor, floorMH, hardFloorApplied };
 }
 

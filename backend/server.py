@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import copy
 import csv
 import hashlib
 import hmac
@@ -19,6 +20,7 @@ from zoneinfo import ZoneInfo
 
 import bcrypt
 import meta_capi
+import optimizer
 import scope_engine
 import httpx
 from reportlab.lib.pagesizes import letter as PDF_LETTER
@@ -612,6 +614,17 @@ async def get_rates_values() -> Dict[str, Any]:
             {"_id": "calculator_rates"}, {"$set": {"pricing_v2": stored}}, upsert=True)
     out: Dict[str, Any] = {**DEFAULT_RATES, **RATE_STRING_KEYS}
     out.update({k: v for k, v in stored.items() if k in DEFAULT_RATES or k in RATE_STRING_KEYS})
+    # Stage 7 read-through: the base labor rate (mh/100 cu ft) and package HOURS are authoritative in
+    # the estimating_params record — legacy rate consumers read those values through here so a learned
+    # calibration flows into every calculator tier. (Monetary manHourRate/fees/crew counts stay in rates.)
+    est = await _estimating_active()
+    ep = est["params"]
+    out["manHoursPer100CuFt"] = float(ep.get("manHoursPer100CuFt", out["manHoursPer100CuFt"]))
+    ph = ep.get("packageHours") or {}
+    for rate_key, size in (("pkgStudioHours", "studio"), ("pkg2brHours", "br2"),
+                           ("pkg3brHours", "br3"), ("pkg4brHours", "br4")):
+        if ph.get(size) is not None:
+            out[rate_key] = float(ph[size])
     return out
 
 
@@ -619,15 +632,40 @@ async def get_rates_values() -> Dict[str, Any]:
 async def get_rates(p: Dict[str, Any] = Depends(require_owner)):
     values = await get_rates_values()
     doc = await mongo_db.settings.find_one({"_id": "calculator_rates"}) or {}
-    return {**values, "_updatedAt": doc.get("pricing_v2_updated_at", {})}
+    est = await _estimating_active()
+    return {**values, "_updatedAt": doc.get("pricing_v2_updated_at", {}),
+            "_calibrationSeq": est["calibration_seq"], "_calibrationVersion": est["calibration_version"]}
 
 
 @api_router.put("/settings/rates")
 async def save_rates(payload: Dict[str, Any], p: Dict[str, Any] = Depends(require_owner)):
+    est = await _estimating_active()
+    est_params = est["params"]
     current = await get_rates_values()
+    reason = str(payload.get("reason") or "").strip()
+    expected_seq = payload.get("expected_calibration_seq")
+
+    est_changes: List[Tuple[str, str, Any, float, Optional[float]]] = []
     values = dict(current)
     for k, v in payload.items():
-        if k in DEFAULT_RATES:
+        if k in EST_RATE_KEYS:
+            try:
+                n = float(v)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=422, detail=f"'{k}' must be a number.")
+            if n < 0:
+                raise HTTPException(status_code=422, detail="Values can't be negative.")
+            factor, size = EST_RATE_KEYS[k]
+            path, _grp, bounds, label = CALIB_SCALARS[factor]
+            authoritative = _get_path(est_params, path)
+            if authoritative is None or abs(n - float(authoritative)) > 1e-9:
+                if not (bounds[0] <= n <= bounds[1]):
+                    raise HTTPException(status_code=422,
+                                        detail=f"{label} must be between {bounds[0]} and {bounds[1]}.")
+                est_changes.append((k, factor, size, n,
+                                    float(authoritative) if authoritative is not None else None))
+            values[k] = n
+        elif k in DEFAULT_RATES:
             try:
                 n = float(v)
             except (TypeError, ValueError):
@@ -639,16 +677,46 @@ async def save_rates(payload: Dict[str, Any], p: Dict[str, Any] = Depends(requir
             values[k] = (str(v or "").strip().upper()[:100]) or RATE_STRING_KEYS[k]
     if values["roundingIncrement"] < 1:
         raise HTTPException(status_code=422, detail="The rounding increment must be at least $1.")
+
+    # A change to the base labor rate or package HOURS is a calibration change: reason + audit version,
+    # auto-lock so the optimizer can't undo it, applied to NEW calculations only (snapshots preserved).
+    if est_changes:
+        if len(reason) < 5:
+            raise HTTPException(status_code=422,
+                                detail="A reason (5+ characters) is required to change the base labor rate or package hours.")
+        new_params = copy.deepcopy(est_params)
+        new_locks = dict(est["locks"])
+        changes_rec: List[Dict[str, Any]] = []
+        for (k, factor, size, n, before) in est_changes:
+            path, group, _b, label = CALIB_SCALARS[factor]
+            _set_path(new_params, path, n)
+            new_locks[group] = {"locked": True, "by": p.get("name"), "at": now_iso(),
+                                "reason": f"Owner manually set {label} to {n}"}
+            changes_rec.append({"factor": factor, "key": ".".join(path), "before": before,
+                                "after": n, "locked": True})
+        await _apply_calibration(new_params, trigger="manual_edit", actor=p, reason=reason,
+                                 changes=changes_rec, locks=new_locks,
+                                 expected_seq=int(expected_seq) if expected_seq is not None else None)
+        await audit(p, "edited estimating parameters via rates", "estimating_params",
+                    {"changes": changes_rec, "reason": reason})
+
+    # Estimating keys read through from estimating_params — keep only the monetary keys in pricing_v2.
+    monetary = {k: v for k, v in values.items() if k not in EST_RATE_KEYS}
     doc = await mongo_db.settings.find_one({"_id": "calculator_rates"}) or {}
     stamps = doc.get("pricing_v2_updated_at", {})
     ts = datetime.now(timezone.utc).isoformat()
-    for k, v in values.items():
+    for k, v in monetary.items():
         if v != current.get(k):
             stamps[k] = ts
+    for (k, *_rest) in est_changes:
+        stamps[k] = ts
     await mongo_db.settings.update_one(
         {"_id": "calculator_rates"},
-        {"$set": {"pricing_v2": values, "pricing_v2_updated_at": stamps}}, upsert=True)
-    return {**values, "_updatedAt": stamps}
+        {"$set": {"pricing_v2": monetary, "pricing_v2_updated_at": stamps}}, upsert=True)
+    out = await get_rates_values()
+    est2 = await _estimating_active()
+    return {**out, "_updatedAt": stamps, "_calibrationSeq": est2["calibration_seq"],
+            "_calibrationVersion": est2["calibration_version"]}
 
 
 # ------- Stage 5: learnable estimating parameters (non-monetary) -------
@@ -666,24 +734,102 @@ async def _estimating_engine_doc() -> Dict[str, Any]:
         seed = scope_engine.estimating_defaults()
         await mongo_db.settings.update_one(
             {"_id": "estimating_params"},
-            {"$set": {"params": seed, "calibration_version": "v0",
+            {"$set": {"params": seed, "calibration_version": "v0", "calibration_seq": 0,
                       "seeded_at": now_iso(), "updated_at": now_iso()}}, upsert=True)
         return {"params": seed, "calibration_version": "v0"}
     return doc
 
 
+EST_RATE_KEYS = {
+    # legacy /settings/rates key -> (calibration factor, package size or None)
+    "manHoursPer100CuFt": ("base_rate", None),
+    "pkgStudioHours": ("package_studio", "studio"),
+    "pkg2brHours": ("package_br2", "br2"),
+    "pkg3brHours": ("package_br3", "br3"),
+    "pkg4brHours": ("package_br4", "br4"),
+}
+
+
+def _default_calibration_baselines() -> Dict[str, Any]:
+    d = scope_engine.estimating_defaults()
+    return {
+        "base_rate": float(DEFAULT_RATES["manHoursPer100CuFt"]),
+        "package_studio": float(DEFAULT_RATES["pkgStudioHours"]),
+        "package_br2": float(DEFAULT_RATES["pkg2brHours"]),
+        "package_br3": float(DEFAULT_RATES["pkg3brHours"]),
+        "package_br4": float(DEFAULT_RATES["pkg4brHours"]),
+        "multipliers": {"packingMult": list(d["packingMult"]),
+                        "accessPer": dict(d["accessPer"]), "itemMult": float(d["itemMult"])},
+        "crew_efficiency": dict(d["crewEfficiency"]),
+        "drive_speed": float(d["avgDriveMph"]),
+    }
+
+
+async def _estimating_active() -> Dict[str, Any]:
+    """Authoritative estimating state. `params` OWNS the base labor rate (manHoursPer100CuFt) and package
+    HOURS in addition to the engine knobs — the legacy rates API reads those through. Also carries the
+    sequential calibration version/seq, per-factor locks, optimizer baselines and the optimizer on/off
+    state. Self-seeds once (from the current rate doc) and normalizes missing scaffolding — no math change."""
+    doc = await mongo_db.settings.find_one({"_id": "estimating_params"}) or {}
+    defaults = scope_engine.estimating_defaults()
+    params = dict(doc.get("params") or {})
+    set_fields: Dict[str, Any] = {}
+    for k in EST_ENGINE_KEYS:
+        if k not in params:
+            params[k] = defaults[k]
+    if "manHoursPer100CuFt" not in params or not isinstance(params.get("packageHours"), dict):
+        rd = await mongo_db.settings.find_one({"_id": "calculator_rates"}) or {}
+        stored = rd.get("pricing_v2") or {}
+        params.setdefault("manHoursPer100CuFt",
+                          float(stored.get("manHoursPer100CuFt", DEFAULT_RATES["manHoursPer100CuFt"])))
+        if not isinstance(params.get("packageHours"), dict):
+            params["packageHours"] = {
+                "studio": float(stored.get("pkgStudioHours", DEFAULT_RATES["pkgStudioHours"])),
+                "br2": float(stored.get("pkg2brHours", DEFAULT_RATES["pkg2brHours"])),
+                "br3": float(stored.get("pkg3brHours", DEFAULT_RATES["pkg3brHours"])),
+                "br4": float(stored.get("pkg4brHours", DEFAULT_RATES["pkg4brHours"]))}
+        set_fields["params"] = params
+    seq = int(doc.get("calibration_seq", 0))
+    version = doc.get("calibration_version") or "v0"
+    locks = doc.get("locks")
+    baselines = doc.get("baselines")
+    opt = doc.get("optimizer")
+    if "calibration_seq" not in doc:
+        set_fields["calibration_seq"] = seq
+    if not doc.get("calibration_version"):
+        set_fields["calibration_version"] = version
+    if not isinstance(locks, dict):
+        locks = {}
+        set_fields["locks"] = locks
+    if not isinstance(baselines, dict):
+        baselines = _default_calibration_baselines()
+        set_fields["baselines"] = baselines
+    if not isinstance(opt, dict):
+        opt = {"activated": False, "paused": False}
+        set_fields["optimizer"] = opt
+    if set_fields:
+        set_fields.setdefault("seeded_at", doc.get("seeded_at") or now_iso())
+        set_fields["updated_at"] = now_iso()
+        await mongo_db.settings.update_one({"_id": "estimating_params"}, {"$set": set_fields}, upsert=True)
+    return {"params": params, "calibration_version": version, "calibration_seq": seq,
+            "locks": locks, "baselines": baselines, "optimizer": opt}
+
+
 async def get_estimating_params() -> Dict[str, Any]:
-    """Current estimating parameters. Engine knobs come from the estimating_params record; the volume
-    rate and package hours mirror live rates (single source of truth in Stage 5)."""
-    doc = await _estimating_engine_doc()
+    """Current estimating parameters (authoritative). Base rate + package hours live in estimating_params
+    and read through to the rates API; the engine knobs come from the same record. Served to all tiers, so
+    it carries no lock/optimizer internals (those are owner+Quality-only via the optimizer state endpoint)."""
+    est = await _estimating_active()
     p = dict(scope_engine.estimating_defaults())
-    p.update({k: v for k, v in (doc.get("params") or {}).items() if k in EST_ENGINE_KEYS})
-    rates = await get_rates_values()
-    p["manHoursPer100CuFt"] = float(rates.get("manHoursPer100CuFt", 2.1))
-    p["packageHours"] = {
-        "studio": float(rates.get("pkgStudioHours", 3.5)), "br2": float(rates.get("pkg2brHours", 5.5)),
-        "br3": float(rates.get("pkg3brHours", 6.5)), "br4": float(rates.get("pkg4brHours", 8.0))}
-    p["calibration_version"] = doc.get("calibration_version", "v0")
+    p.update({k: v for k, v in est["params"].items() if k in EST_ENGINE_KEYS})
+    p["manHoursPer100CuFt"] = float(est["params"].get("manHoursPer100CuFt", DEFAULT_RATES["manHoursPer100CuFt"]))
+    ph = est["params"].get("packageHours") or {}
+    p["packageHours"] = {"studio": float(ph.get("studio", DEFAULT_RATES["pkgStudioHours"])),
+                         "br2": float(ph.get("br2", DEFAULT_RATES["pkg2brHours"])),
+                         "br3": float(ph.get("br3", DEFAULT_RATES["pkg3brHours"])),
+                         "br4": float(ph.get("br4", DEFAULT_RATES["pkg4brHours"]))}
+    p["calibration_version"] = est["calibration_version"]
+    p["calibration_seq"] = est["calibration_seq"]
     return p
 
 
@@ -719,6 +865,314 @@ async def put_estimating_params(payload: EstimatingParamsPayload, p: Dict[str, A
         {"$set": {"params": current, "updated_at": now_iso(), "updated_by": p.get("name")}}, upsert=True)
     await audit(p, "edited estimating parameters", "estimating_params", {})
     return await get_estimating_params()
+
+
+# ======= Stage 7: guarded auto-optimizer + calibration versioning =======
+# The optimizer LEARNS non-monetary work-model parameters from completed-job outcomes and, once the owner
+# has explicitly ACTIVATED it, automatically applies bounded, movement-capped, accuracy-gated changes on a
+# nightly run (2:30 AM ET, after outcome reconcile) and on an authorized "Run now". Before activation or
+# while paused it computes SHADOW results only and never changes an active parameter. Every applied update,
+# manual edit and rollback is a sequential calibration version with an append-only history row; rejected
+# candidates and no-op runs live in the run log, not the version history. Saved/sent quotes keep their
+# recorded calibration snapshot — nothing is ever retro-repriced.
+LOCK_GROUPS = ("base_rate", "package_studio", "package_br2", "package_br3", "package_br4",
+               "multipliers", "crew_efficiency", "drive_speed")
+
+# manual-settable scalar factors -> (param path, lock group, sane bounds, human label)
+CALIB_SCALARS: Dict[str, Any] = {
+    "base_rate": (("manHoursPer100CuFt",), "base_rate", (1.2, 3.5), "Base rate (mh / 100 cu ft)"),
+    "package_studio": (("packageHours", "studio"), "package_studio", (1.0, 24.0), "Package hours — Studio/1BR"),
+    "package_br2": (("packageHours", "br2"), "package_br2", (1.0, 24.0), "Package hours — 2BR"),
+    "package_br3": (("packageHours", "br3"), "package_br3", (1.0, 24.0), "Package hours — 3BR"),
+    "package_br4": (("packageHours", "br4"), "package_br4", (1.0, 24.0), "Package hours — 4BR+"),
+    "item_mult": (("itemMult",), "multipliers", (0.5, 2.0), "Item man-hour multiplier"),
+    "crew_2": (("crewEfficiency", "2"), "crew_efficiency", (0.8, 1.2), "Crew efficiency — 2 movers"),
+    "crew_3": (("crewEfficiency", "3"), "crew_efficiency", (0.8, 1.2), "Crew efficiency — 3 movers"),
+    "crew_4": (("crewEfficiency", "4"), "crew_efficiency", (0.8, 1.2), "Crew efficiency — 4 movers"),
+    "crew_5plus": (("crewEfficiency", "5plus"), "crew_efficiency", (0.8, 1.2), "Crew efficiency — 5+ movers"),
+    "drive_speed": (("avgDriveMph",), "drive_speed", (10.0, 45.0), "Drive speed (mph — scheduling only)"),
+}
+
+
+def _f(v: Any, d: float = 0.0) -> float:
+    try:
+        f = float(v)
+        return f if f == f else d
+    except (TypeError, ValueError):
+        return d
+
+
+def _get_path(d: Dict[str, Any], path: Tuple[str, ...]) -> Any:
+    cur: Any = d
+    for k in path:
+        if not isinstance(cur, dict):
+            return None
+        cur = cur.get(k)
+    return cur
+
+
+def _set_path(d: Dict[str, Any], path: Tuple[str, ...], value: Any) -> None:
+    cur = d
+    for k in path[:-1]:
+        nxt = cur.get(k)
+        if not isinstance(nxt, dict):
+            nxt = {}
+            cur[k] = nxt
+        cur = nxt
+    cur[path[-1]] = value
+
+
+async def _apply_calibration(new_params: Dict[str, Any], *, trigger: str, actor: Any, reason: str,
+                             changes: List[Dict[str, Any]], locks: Optional[Dict[str, Any]] = None,
+                             baselines: Optional[Dict[str, Any]] = None, run_id: Optional[str] = None,
+                             extras: Optional[Dict[str, Any]] = None,
+                             expected_seq: Optional[int] = None) -> Dict[str, Any]:
+    """Atomically (CAS on calibration_seq) bump the version, persist the new params/locks/baselines, and
+    append ONE immutable calibration_history row. Rejects a stale concurrent update with 409."""
+    doc = await mongo_db.settings.find_one({"_id": "estimating_params"}) or {}
+    cur_seq = int(doc.get("calibration_seq", 0))
+    if expected_seq is not None and int(expected_seq) != cur_seq:
+        raise HTTPException(status_code=409, detail="This calibration changed since you loaded it. Refresh and try again.")
+    new_seq = cur_seq + 1
+    version = f"v{new_seq}"
+    set_doc = {"params": new_params, "calibration_seq": new_seq, "calibration_version": version,
+               "updated_at": now_iso(), "updated_by": (actor.get("name") if isinstance(actor, dict) else str(actor))}
+    if locks is not None:
+        set_doc["locks"] = locks
+    if baselines is not None:
+        set_doc["baselines"] = baselines
+    res = await mongo_db.settings.update_one(
+        {"_id": "estimating_params", "calibration_seq": cur_seq}, {"$set": set_doc})
+    if res.modified_count != 1:
+        raise HTTPException(status_code=409, detail="Calibration was updated concurrently — please retry.")
+    hist = {"_id": str(uuid4()), "version": version, "seq": new_seq, "at": now_iso(),
+            "type": trigger, "trigger": trigger, "reason": reason,
+            "actor": (actor.get("name") if isinstance(actor, dict) else str(actor)),
+            "actor_id": (actor.get("user_id") if isinstance(actor, dict) else None),
+            "actor_role": (actor.get("role") if isinstance(actor, dict) else "system"),
+            "changes": changes, "params_after": new_params,
+            "locks_after": (locks if locks is not None else doc.get("locks") or {}),
+            "baselines_after": (baselines if baselines is not None else doc.get("baselines") or {}),
+            "run_id": run_id, **(extras or {})}
+    await mongo_db.calibration_history.insert_one(hist)
+    return {"version": version, "seq": new_seq, "history": hist}
+
+
+def _optimizer_training_data(outcomes: List[Dict[str, Any]], params: Dict[str, Any]) -> Dict[str, Any]:
+    """Turn residential completed-job outcomes into per-factor observations for optimizer.py. Commercial
+    jobs are excluded from every fitting metric (single residential calibration track)."""
+    pack_mults = params.get("packingMult") if isinstance(params.get("packingMult"), list) else scope_engine.PACKING_MULT
+    base_rate: List[Dict[str, Any]] = []
+    pkg: Dict[str, List[Dict[str, Any]]] = {"studio": [], "br2": [], "br3": [], "br4": []}
+    crew: Dict[str, List[Dict[str, Any]]] = {"2": [], "3": [], "4": [], "5plus": []}
+    drive: List[Dict[str, Any]] = []
+    mult: List[Dict[str, Any]] = []
+    job_keys: List[str] = []
+    for o in outcomes:
+        if not o.get("learning_eligible"):
+            continue
+        errs = o.get("errors") or {}
+        if errs.get("model_work_mh_error") is None:
+            continue
+        q = o.get("quote") or {}
+        inputs = q.get("inputs") or {}
+        if inputs.get("commercial") or o.get("commercial"):
+            continue
+        actuals = o.get("actuals") or {}
+        work = actuals.get("work_man_hours")
+        if work is None:
+            continue
+        work = float(work)
+        feats = scope_engine.compute_scope_features(inputs, params)
+        date = (o.get("job_date") or "")[:10]
+        wt = 1.0
+        job_keys.append(o["_id"])
+        pack = int(feats.get("pack") or 0)
+        pmult = float(pack_mults[pack]) if 0 <= pack < len(pack_mults) else 1.0
+        base_rate.append({"work_mh": work, "access_mh": feats.get("access_mh") or 0.0,
+                          "item_mh": feats.get("item_mh") or 0.0, "volume_units": feats.get("volume_units") or 0.0,
+                          "packing_mult": pmult, "weight": wt, "date": date})
+        size = inputs.get("pkg") or ""
+        onsite_actual = actuals.get("on_site_hours")
+        if size in pkg and onsite_actual is not None:
+            pkg[size].append({"actual_hours": float(onsite_actual), "weight": wt, "date": date})
+        try:
+            crew_n = int(float(q.get("crew_rec"))) if q.get("crew_rec") is not None else None
+        except (TypeError, ValueError):
+            crew_n = None
+        cadj = actuals.get("crew_adjusted_work_hours")
+        if crew_n and crew_n > 0 and cadj:
+            bucket = "2" if crew_n <= 2 else "3" if crew_n == 3 else "4" if crew_n == 4 else "5plus"
+            model_onsite = (feats.get("predicted_work_mh") or 0.0) / crew_n
+            crew[bucket].append({"model_onsite": model_onsite, "actual_onsite": float(cadj), "weight": wt, "date": date})
+        mult.append({"pack": pack, "access_units": feats.get("access_units") or {},
+                     "item_mh_base": feats.get("item_mh_base") or 0.0, "volume_units": feats.get("volume_units") or 0.0,
+                     "rate_used": feats.get("rate_used") or params.get("manHoursPer100CuFt"),
+                     "work_mh": work, "weight": wt, "date": date})
+    return {"base_rate": base_rate, "package": pkg, "crew": crew, "drive": drive,
+            "multipliers": mult, "usable_count": len(job_keys), "job_keys": job_keys}
+
+
+async def run_optimizer(trigger: str, actor: Any = "system", *, run_id: Optional[str] = None) -> Dict[str, Any]:
+    """One optimizer pass. SHADOW (no changes) unless the optimizer is activated and not paused; then it
+    applies every eligible, unlocked, gate-passing candidate as ONE calibration version. Always writes a
+    run-log row (candidates + guardrail decisions, incl. rejected). Identical data => a no-op on re-run."""
+    est = await _estimating_active()
+    params, locks, baselines = est["params"], est["locks"], est["baselines"]
+    opt = est["optimizer"]
+    activated, paused = bool(opt.get("activated")), bool(opt.get("paused"))
+    outcomes = await mongo_db.job_outcomes.find({}).to_list(3000)
+    data = _optimizer_training_data(outcomes, params)
+
+    ph = params.get("packageHours") or {}
+    mult_current = {"packingMult": params.get("packingMult"), "accessPer": params.get("accessPer"),
+                    "itemMult": params.get("itemMult")}
+    br = optimizer.base_rate_run(data["base_rate"], float(params.get("manHoursPer100CuFt", 2.1)),
+                                 float(baselines.get("base_rate", 2.1)))
+    pkg_runs: Dict[str, Any] = {}
+    for size, factor in (("studio", "package_studio"), ("br2", "package_br2"),
+                         ("br3", "package_br3"), ("br4", "package_br4")):
+        cur = _f(ph.get(size), 5.0)
+        pkg_runs[size] = optimizer.package_hours_run(data["package"][size], cur,
+                                                     float(baselines.get(factor, cur)))
+    crew_run = optimizer.crew_efficiency_run(data["crew"], params.get("crewEfficiency") or {})
+    drive_run = optimizer.drive_speed_run(data["drive"], float(params.get("avgDriveMph", 25)))
+    mult_run = optimizer.multiplier_joint_run(data["multipliers"], mult_current,
+                                              baselines.get("multipliers") or {}, list(scope_engine.ACCESS_KEYS))
+    candidates = {"base_rate": br, "package_hours": pkg_runs, "crew_efficiency": crew_run,
+                  "drive_speed": drive_run, "multipliers": mult_run}
+
+    def locked(group: str) -> bool:
+        return bool((locks.get(group) or {}).get("locked"))
+
+    changes: List[Dict[str, Any]] = []
+    if activated and not paused:
+        if br.get("apply") and not locked("base_rate"):
+            changes.append({"factor": "base_rate", "key": "manHoursPer100CuFt", "before": br["current"],
+                            "after": br["candidate"], "n_eff": br.get("n_eff"), "gate": br.get("gate")})
+        for size, factor in (("studio", "package_studio"), ("br2", "package_br2"),
+                             ("br3", "package_br3"), ("br4", "package_br4")):
+            r = pkg_runs[size]
+            if r.get("apply") and not locked(factor):
+                changes.append({"factor": factor, "key": f"packageHours.{size}", "before": r["current"],
+                                "after": r["candidate"], "n_eff": r.get("n_eff"), "gate": r.get("gate")})
+        if not locked("crew_efficiency"):
+            for c, r in (crew_run.get("by_crew") or {}).items():
+                if r.get("apply"):
+                    changes.append({"factor": "crew_efficiency", "key": f"crewEfficiency.{c}",
+                                    "before": r["current"], "after": r["candidate"], "n_eff": r.get("n_eff")})
+        if drive_run.get("apply") and not locked("drive_speed"):
+            changes.append({"factor": "drive_speed", "key": "avgDriveMph", "before": drive_run["current"],
+                            "after": drive_run["candidate"], "usable_jobs": drive_run.get("usable_jobs")})
+        if mult_run.get("apply") and not locked("multipliers"):
+            for name, c in (mult_run.get("candidates") or {}).items():
+                if c.get("changed"):
+                    changes.append({"factor": "multipliers", "key": name, "before": c["current"],
+                                    "after": c["candidate"]})
+
+    mode = "shadow" if (not activated or paused) else ("applied" if changes else "noop")
+    applied_version = None
+    run_id = run_id or str(uuid4())
+    if changes:
+        new_params = copy.deepcopy(params)
+        for ch in changes:
+            key = ch["key"]
+            if key.startswith("packageHours."):
+                _set_path(new_params, ("packageHours", key.split(".", 1)[1]), ch["after"])
+            elif key.startswith("crewEfficiency."):
+                _set_path(new_params, ("crewEfficiency", key.split(".", 1)[1]), ch["after"])
+            elif key.startswith("pack"):
+                t = int(key[4:]); pm = list(new_params.get("packingMult") or scope_engine.PACKING_MULT); pm[t] = ch["after"]; new_params["packingMult"] = pm
+            elif key.startswith("acc:"):
+                ap = dict(new_params.get("accessPer") or {}); ap[key[4:]] = ch["after"]; new_params["accessPer"] = ap
+            elif key == "item":
+                new_params["itemMult"] = ch["after"]
+            else:
+                _set_path(new_params, (key,), ch["after"])
+        applied = await _apply_calibration(
+            new_params, trigger=trigger, actor=actor, reason="Automatic optimizer run", changes=changes,
+            run_id=run_id, extras={"job_keys": data["job_keys"], "usable_jobs": data["usable_count"]})
+        applied_version = applied["version"]
+
+    run_doc = {"_id": run_id, "at": now_iso(), "trigger": trigger, "mode": mode,
+               "actor": (actor.get("name") if isinstance(actor, dict) else str(actor)),
+               "actor_role": (actor.get("role") if isinstance(actor, dict) else "system"),
+               "activated": activated, "paused": paused, "usable_jobs": data["usable_count"],
+               "job_keys": data["job_keys"], "candidates": candidates, "changes": changes,
+               "applied_version": applied_version}
+    await mongo_db.optimizer_runs.insert_one(run_doc)
+    if applied_version and isinstance(actor, dict) and actor.get("role") == "quality":
+        await notify(None, "owner", "Calibration applied by Quality",
+                     f"{actor.get('name')} ran the optimizer — {len(changes)} change(s), {applied_version}.",
+                     "calibration", {"version": applied_version, "run_id": run_id})
+    return run_doc
+
+
+async def _optimizer_state_out() -> Dict[str, Any]:
+    """Owner+Quality view of the optimizer: activation, per-factor current/baseline/lock + the newest
+    shadow candidate for each, plus the last run summary and version count. Non-monetary only."""
+    est = await _estimating_active()
+    params, locks, baselines, opt = est["params"], est["locks"], est["baselines"], est["optimizer"]
+    last_run = await mongo_db.optimizer_runs.find_one({}, sort=[("at", -1)])
+    cand = (last_run or {}).get("candidates") or {}
+    ph = params.get("packageHours") or {}
+
+    def factor_row(factor: str) -> Dict[str, Any]:
+        path, group, bounds, label = CALIB_SCALARS[factor]
+        current = _get_path(params, path)
+        lock = locks.get(group) or {}
+        row = {"factor": factor, "group": group, "label": label, "current": current,
+               "bounds": list(bounds), "locked": bool(lock.get("locked")),
+               "lock": {"by": lock.get("by"), "at": lock.get("at"), "reason": lock.get("reason")} if lock.get("locked") else None}
+        # baseline
+        if factor.startswith("package_"):
+            row["baseline"] = baselines.get(factor)
+        elif factor == "item_mult":
+            row["baseline"] = (baselines.get("multipliers") or {}).get("itemMult")
+        elif factor.startswith("crew_"):
+            row["baseline"] = (baselines.get("crew_efficiency") or {}).get(factor.split("_", 1)[1])
+        else:
+            row["baseline"] = baselines.get(factor)
+        # newest shadow candidate + eligibility for this factor
+        if factor == "base_rate":
+            c = cand.get("base_rate") or {}
+            row.update({"candidate": c.get("candidate"), "sample": c.get("usable_jobs"), "n_eff": c.get("n_eff"),
+                        "eligible": c.get("eligible"), "changed": c.get("changed"), "gate": c.get("gate")})
+        elif factor.startswith("package_"):
+            size = factor.split("_", 1)[1]
+            c = (cand.get("package_hours") or {}).get(size) or {}
+            row.update({"candidate": c.get("candidate"), "sample": c.get("usable_jobs"), "n_eff": c.get("n_eff"),
+                        "eligible": c.get("eligible"), "changed": c.get("changed"), "gate": c.get("gate")})
+        elif factor.startswith("crew_"):
+            c = ((cand.get("crew_efficiency") or {}).get("by_crew") or {}).get(factor.split("_", 1)[1]) or {}
+            row.update({"candidate": c.get("candidate"), "sample": c.get("usable_jobs"), "n_eff": c.get("n_eff"),
+                        "eligible": c.get("eligible"), "changed": c.get("changed")})
+        elif factor == "drive_speed":
+            c = cand.get("drive_speed") or {}
+            row.update({"candidate": c.get("candidate"), "sample": c.get("usable_jobs"),
+                        "eligible": c.get("eligible"), "changed": c.get("changed")})
+        elif factor == "item_mult":
+            c = (cand.get("multipliers") or {})
+            row.update({"candidate": (c.get("candidates") or {}).get("item", {}).get("candidate"),
+                        "sample": c.get("jobs"), "eligible": c.get("eligible"), "held_at_baseline": c.get("held_at_baseline")})
+        return row
+
+    factors = [factor_row(f) for f in CALIB_SCALARS]
+    hist_count = await mongo_db.calibration_history.count_documents({"seq": {"$exists": True}})
+    return {
+        "activated": bool(opt.get("activated")), "paused": bool(opt.get("paused")),
+        "activated_by": opt.get("activated_by"), "activated_at": opt.get("activated_at"),
+        "calibration_version": est["calibration_version"], "calibration_seq": est["calibration_seq"],
+        "factors": factors, "multipliers": cand.get("multipliers"),
+        "last_run": ({"at": last_run.get("at"), "trigger": last_run.get("trigger"), "mode": last_run.get("mode"),
+                      "usable_jobs": last_run.get("usable_jobs"), "applied_version": last_run.get("applied_version")}
+                     if last_run else None),
+        "history_count": hist_count,
+        "note": ("The optimizer is ACTIVE — it applies eligible, unlocked, gate-passing changes on the nightly run."
+                 if (opt.get("activated") and not opt.get("paused"))
+                 else "The optimizer is computing shadow suggestions only. It cannot change an active parameter until you activate it."),
+    }
+
 
 
 async def _attach_estimating_features(doc: Dict[str, Any], inputs: Dict[str, Any]) -> None:
@@ -13075,12 +13529,21 @@ async def quality_calculator_accuracy(request: Request):
                        "maxCrewPerDay": rates.get("maxCrewPerDay")},
     }
 
+    est_state = await _estimating_active()
+    opt = est_state["optimizer"]
     progress = {
         "usable_jobs": len(usable), "readiness_target": STAGE7_READINESS_TARGET,
         "ready_for_stage7_review": len(usable) >= STAGE7_READINESS_TARGET,
-        "stage7_enabled": False,
-        "note": ("Stage 7 (learning / suggested calibration) is not enabled. It needs your explicit "
-                 "approval and its own per-parameter sample thresholds. This page only measures."),
+        "stage7_enabled": bool(opt.get("activated")),
+        "paused": bool(opt.get("paused")),
+        "calibration_version": est_state["calibration_version"],
+        "note": ("The auto-optimizer is ACTIVE — it applies eligible, unlocked, gate-passing changes on the "
+                 "nightly run (2:30 AM ET). Owner/Quality can Pause, Lock, Manually set or Roll back below."
+                 if (opt.get("activated") and not opt.get("paused"))
+                 else ("The auto-optimizer is PAUSED — it computes shadow suggestions but changes nothing."
+                       if opt.get("paused")
+                       else "The auto-optimizer is computing shadow suggestions only. Turn it on (Activate) to let "
+                            "the nightly run apply eligible, unlocked changes within their sample thresholds and bounds.")),
     }
 
     review.sort(key=lambda r: r.get("job_date") or "", reverse=True)
@@ -13088,6 +13551,327 @@ async def quality_calculator_accuracy(request: Request):
     return {"role": p["role"], "summary": summary, "trends": trends, "coverage": coverage,
             "review_queue": review, "current_parameters": current_parameters, "progress": progress,
             "filters": {"from": d_from, "to": d_to}}
+
+
+
+# ---- Stage 7 optimizer controls (owner + Quality; activation owner-only). Every action except Run now
+# requires an audited reason; a Quality action also notifies the owner. Non-monetary only. ----
+class OptimizerReasonPayload(BaseModel):
+    reason: str = ""
+
+
+class OptimizerPausePayload(BaseModel):
+    paused: bool
+    reason: str = ""
+
+
+class OptimizerLockPayload(BaseModel):
+    factor: str
+    locked: bool
+    reason: str = ""
+
+
+class OptimizerManualPayload(BaseModel):
+    factor: str
+    value: float
+    reason: str = ""
+    expected_seq: Optional[int] = None
+
+
+class OptimizerRollbackPayload(BaseModel):
+    version: str
+    reason: str = ""
+
+
+class OptimizerActivatePayload(BaseModel):
+    activated: bool
+    reason: str = ""
+
+
+def _require_reason(reason: str) -> str:
+    r = (reason or "").strip()
+    if len(r) < 5:
+        raise HTTPException(status_code=422, detail="A reason (5+ characters) is required for this change.")
+    return r
+
+
+async def _notify_owner_of_quality_action(actor: Dict[str, Any], summary: str) -> None:
+    if actor.get("role") == "quality":
+        await notify(None, "owner", "Calibration changed by Quality", f"{actor.get('name')}: {summary}",
+                     "calibration", {"by": actor.get("name")})
+
+
+@api_router.get("/quality/optimizer/state")
+async def optimizer_state(request: Request):
+    await require_outcome_role(request)
+    return await _optimizer_state_out()
+
+
+@api_router.post("/quality/optimizer/run")
+async def optimizer_run_now(request: Request):
+    p = await require_outcome_role(request)
+    run = await run_optimizer("run_now", p)
+    await audit(p, "ran the estimating optimizer (run now)", run["_id"],
+                {"mode": run["mode"], "applied_version": run.get("applied_version")})
+    return {"run": {"id": run["_id"], "mode": run["mode"], "usable_jobs": run["usable_jobs"],
+                    "applied_version": run.get("applied_version"), "changes": run.get("changes")},
+            "state": await _optimizer_state_out()}
+
+
+@api_router.post("/quality/optimizer/pause")
+async def optimizer_pause(payload: OptimizerPausePayload, request: Request):
+    p = await require_outcome_role(request)
+    reason = _require_reason(payload.reason)
+    est = await _estimating_active()
+    opt = dict(est["optimizer"]); opt["paused"] = bool(payload.paused)
+    await mongo_db.settings.update_one({"_id": "estimating_params"},
+                                       {"$set": {"optimizer": opt, "updated_at": now_iso()}})
+    await mongo_db.calibration_history.insert_one(
+        {"_id": str(uuid4()), "at": now_iso(), "type": "pause" if payload.paused else "resume",
+         "trigger": "pause" if payload.paused else "resume", "version": None, "reason": reason,
+         "actor": p.get("name"), "actor_role": p.get("role")})
+    await audit(p, f"{'paused' if payload.paused else 'resumed'} the estimating optimizer", "optimizer", {"reason": reason})
+    await _notify_owner_of_quality_action(p, f"{'paused' if payload.paused else 'resumed'} the optimizer")
+    return await _optimizer_state_out()
+
+
+@api_router.post("/quality/optimizer/lock")
+async def optimizer_lock(payload: OptimizerLockPayload, request: Request):
+    p = await require_outcome_role(request)
+    if payload.factor not in LOCK_GROUPS:
+        raise HTTPException(status_code=422, detail="Unknown parameter to lock.")
+    reason = _require_reason(payload.reason)
+    est = await _estimating_active()
+    locks = dict(est["locks"])
+    baselines = dict(est["baselines"])
+    baseline_change = None
+    if payload.locked:
+        locks[payload.factor] = {"locked": True, "by": p.get("name"), "at": now_iso(), "reason": reason}
+    else:
+        # On explicit UNLOCK the manually chosen value becomes this parameter's new optimizer baseline.
+        locks.pop(payload.factor, None)
+        baseline_change = _baseline_from_current(payload.factor, est["params"], baselines)
+        if baseline_change is not None:
+            baselines[payload.factor] = baseline_change
+    await mongo_db.settings.update_one({"_id": "estimating_params"},
+                                       {"$set": {"locks": locks, "baselines": baselines, "updated_at": now_iso()}})
+    await mongo_db.calibration_history.insert_one(
+        {"_id": str(uuid4()), "at": now_iso(), "type": "lock" if payload.locked else "unlock",
+         "trigger": "lock" if payload.locked else "unlock", "version": None, "reason": reason,
+         "factor": payload.factor, "baseline_after": baseline_change,
+         "actor": p.get("name"), "actor_role": p.get("role")})
+    await audit(p, f"{'locked' if payload.locked else 'unlocked'} {payload.factor}", "optimizer", {"reason": reason})
+    await _notify_owner_of_quality_action(p, f"{'locked' if payload.locked else 'unlocked'} {payload.factor}")
+    return await _optimizer_state_out()
+
+
+def _baseline_from_current(group: str, params: Dict[str, Any], baselines: Dict[str, Any]) -> Any:
+    if group == "base_rate":
+        return _f(params.get("manHoursPer100CuFt"))
+    if group.startswith("package_"):
+        size = group.split("_", 1)[1]
+        return _f((params.get("packageHours") or {}).get(size))
+    if group == "drive_speed":
+        return _f(params.get("avgDriveMph"))
+    if group == "crew_efficiency":
+        return dict(params.get("crewEfficiency") or {})
+    if group == "multipliers":
+        return {"packingMult": list(params.get("packingMult") or []),
+                "accessPer": dict(params.get("accessPer") or {}), "itemMult": _f(params.get("itemMult"), 1.0)}
+    return None
+
+
+@api_router.post("/quality/optimizer/manual-set")
+async def optimizer_manual_set(payload: OptimizerManualPayload, request: Request):
+    p = await require_outcome_role(request)
+    if payload.factor not in CALIB_SCALARS:
+        raise HTTPException(status_code=422, detail="Unknown parameter.")
+    reason = _require_reason(payload.reason)
+    path, group, bounds, label = CALIB_SCALARS[payload.factor]
+    val = float(payload.value)
+    if not (bounds[0] <= val <= bounds[1]):
+        raise HTTPException(status_code=422, detail=f"{label} must be between {bounds[0]} and {bounds[1]}.")
+    est = await _estimating_active()
+    before = _get_path(est["params"], path)
+    new_params = copy.deepcopy(est["params"])
+    _set_path(new_params, path, val)
+    new_locks = dict(est["locks"])
+    new_locks[group] = {"locked": True, "by": p.get("name"), "at": now_iso(),
+                        "reason": f"Manually set {label} to {val}"}
+    applied = await _apply_calibration(
+        new_params, trigger="manual_edit", actor=p, reason=reason,
+        changes=[{"factor": payload.factor, "key": ".".join(path),
+                  "before": before, "after": val, "locked": True}],
+        locks=new_locks,
+        expected_seq=int(payload.expected_seq) if payload.expected_seq is not None else None)
+    await audit(p, f"manually set {payload.factor}", "optimizer", {"reason": reason, "value": val})
+    await _notify_owner_of_quality_action(p, f"manually set {label} to {val} ({applied['version']})")
+    return await _optimizer_state_out()
+
+
+@api_router.post("/quality/optimizer/rollback")
+async def optimizer_rollback(payload: OptimizerRollbackPayload, request: Request):
+    p = await require_outcome_role(request)
+    reason = _require_reason(payload.reason)
+    target = await mongo_db.calibration_history.find_one({"version": payload.version})
+    if not target or not target.get("params_after"):
+        raise HTTPException(status_code=404, detail="That calibration version can't be restored.")
+    new_params = copy.deepcopy(target["params_after"])
+    applied = await _apply_calibration(
+        new_params, trigger="rollback", actor=p, reason=reason,
+        changes=[{"factor": "rollback", "restored_version": payload.version}],
+        locks=target.get("locks_after"), baselines=target.get("baselines_after"),
+        extras={"restored_from": payload.version})
+    await audit(p, f"rolled back to {payload.version}", "optimizer", {"reason": reason})
+    await _notify_owner_of_quality_action(p, f"rolled back to {payload.version} (new {applied['version']})")
+    return await _optimizer_state_out()
+
+
+@api_router.post("/quality/optimizer/activate")
+async def optimizer_activate(payload: OptimizerActivatePayload, request: Request):
+    p = await require_outcome_role(request)
+    if p.get("role") != "owner":
+        raise HTTPException(status_code=403, detail="Only the owner can activate or deactivate automatic calibration.")
+    reason = _require_reason(payload.reason)
+    est = await _estimating_active()
+    opt = dict(est["optimizer"])
+    opt["activated"] = bool(payload.activated)
+    opt["activated_by"] = p.get("name") if payload.activated else opt.get("activated_by")
+    opt["activated_at"] = now_iso() if payload.activated else opt.get("activated_at")
+    await mongo_db.settings.update_one({"_id": "estimating_params"},
+                                       {"$set": {"optimizer": opt, "updated_at": now_iso()}})
+    await mongo_db.calibration_history.insert_one(
+        {"_id": str(uuid4()), "at": now_iso(), "type": "activate" if payload.activated else "deactivate",
+         "trigger": "activate" if payload.activated else "deactivate", "version": None, "reason": reason,
+         "actor": p.get("name"), "actor_role": p.get("role")})
+    await audit(p, f"{'activated' if payload.activated else 'deactivated'} the estimating optimizer", "optimizer", {"reason": reason})
+    return await _optimizer_state_out()
+
+
+@api_router.get("/quality/optimizer/history")
+async def optimizer_history(request: Request):
+    await require_outcome_role(request)
+    rows = await mongo_db.calibration_history.find({}).sort("at", -1).to_list(200)
+    for r in rows:
+        r["id"] = r.pop("_id", None)
+    return {"history": rows}
+
+
+@api_router.get("/quality/optimizer/runs")
+async def optimizer_runs(request: Request):
+    await require_outcome_role(request)
+    rows = await mongo_db.optimizer_runs.find({}).sort("at", -1).to_list(50)
+    out = []
+    for r in rows:
+        out.append({"id": r.get("_id"), "at": r.get("at"), "trigger": r.get("trigger"), "mode": r.get("mode"),
+                    "usable_jobs": r.get("usable_jobs"), "applied_version": r.get("applied_version"),
+                    "changes": r.get("changes"), "actor": r.get("actor")})
+    return {"runs": out}
+
+
+@api_router.get("/scope-guidance")
+async def scope_guidance(request: Request):
+    """Non-monetary calculator guidance for reps quoting a job: how much real-job data backs the current
+    model, the model's recent hour accuracy, and a few ANONYMIZED similar completed jobs. Served to every
+    calculator tier (survey included). Never returns names or dollars — hours/volume/crew only."""
+    await require_scope_tier(request)
+    qp = request.query_params
+    try:
+        cf = float(qp.get("cf")) if qp.get("cf") else None
+    except (TypeError, ValueError):
+        cf = None
+    pkg = qp.get("pkg") or ""
+    try:
+        crew = int(float(qp.get("crew"))) if qp.get("crew") else None
+    except (TypeError, ValueError):
+        crew = None
+    est = await _estimating_active()
+    params = est["params"]
+    outcomes = await mongo_db.job_outcomes.find({}).to_list(3000)
+    data = _optimizer_training_data(outcomes, params)
+    usable = data["usable_count"]
+
+    def crew_bucket(n: Optional[int]) -> Optional[str]:
+        if not n:
+            return None
+        return "2" if n <= 2 else "3" if n == 3 else "4" if n == 4 else "5plus"
+
+    want_bucket = crew_bucket(crew)
+    similar: List[Dict[str, Any]] = []
+    errs_all: List[float] = []
+    for o in outcomes:
+        if not o.get("learning_eligible"):
+            continue
+        e = (o.get("errors") or {}).get("model_work_mh_error")
+        if e is not None:
+            errs_all.append(float(e))
+        q = o.get("quote") or {}
+        inp = q.get("inputs") or {}
+        if inp.get("commercial") or o.get("commercial"):
+            continue
+        feats = scope_engine.compute_scope_features(inp, params)
+        vol_cf = float(feats.get("cf") or 0)
+        act = (o.get("actuals") or {}).get("work_man_hours")
+        if act is None:
+            continue
+        try:
+            crew_n = int(float(q.get("crew_rec"))) if q.get("crew_rec") is not None else None
+        except (TypeError, ValueError):
+            crew_n = None
+        ok = True
+        if cf and vol_cf > 0:
+            ok = abs(vol_cf - cf) / max(cf, 1.0) <= 0.4
+        elif pkg:
+            ok = (inp.get("pkg") or "") == pkg
+        if ok and want_bucket:
+            ok = crew_bucket(crew_n) == want_bucket
+        if not ok:
+            continue
+        similar.append({"volume_cf": round(vol_cf), "crew": crew_n,
+                        "predicted_work_mh": round(float(feats.get("predicted_work_mh") or 0), 1),
+                        "actual_work_mh": round(float(act), 1), "month": (o.get("job_date") or "")[:7]})
+    similar.sort(key=lambda s: s.get("month") or "", reverse=True)
+    n_err = len(errs_all)
+    mae = round(sum(abs(x) for x in errs_all) / n_err, 2) if n_err else None
+    bias = round(sum(errs_all) / n_err, 2) if n_err else None
+    all_default = est["calibration_version"] == "v0"
+    return {
+        "calibration_version": est["calibration_version"], "all_default": all_default,
+        "usable_jobs": usable, "base_rate_mh_per_100cuft": params.get("manHoursPer100CuFt"),
+        "package_hours": params.get("packageHours"), "crew_efficiency": params.get("crewEfficiency"),
+        "accuracy": {"sample": n_err, "mae": mae, "bias": bias},
+        "similar": similar[:5],
+        "hint": (f"Using baseline defaults — not yet calibrated from completed jobs ({usable} usable so far)."
+                 if all_default else
+                 f"Calibrated from {usable} completed job(s) (calibration {est['calibration_version']})."),
+    }
+
+
+async def _reconcile_then_optimize(trigger: str, run_id: Optional[str] = None) -> Dict[str, Any]:
+    """Nightly: finish outcome reconciliation, drain the rebuild queue, THEN run the optimizer once."""
+    await _run_nightly_outcome_reconcile()
+    for _ in range(3):
+        pending = await mongo_db.outcome_rebuild_queue.find({"status": "pending"}).to_list(200)
+        if not pending:
+            break
+        for d in pending:
+            await _run_outcome_rebuild(d["_id"])
+    return await run_optimizer(trigger, "system", run_id=run_id)
+
+
+@public_router.post("/cron/nightly-optimizer")
+async def cron_nightly_optimizer(request: Request) -> Dict[str, Any]:
+    secret = os.environ.get("WEBHOOK_CRON_SECRET", "")
+    auth = request.headers.get("Authorization", "")
+    token = auth[7:] if auth.startswith("Bearer ") else ""
+    if not secret or not token or not hmac.compare_digest(token, secret):
+        raise HTTPException(status_code=401, detail="Bad cron secret.")
+    et_date = datetime.now(ZoneInfo("America/New_York")).date().isoformat()
+    run_id = f"nightly:{et_date}"
+    if await mongo_db.optimizer_runs.find_one({"_id": run_id}):
+        return {"ok": True, "skipped": "already_ran_today"}
+    asyncio.create_task(_reconcile_then_optimize("nightly", run_id))
+    return {"ok": True}
 
 
 @app.on_event("startup")

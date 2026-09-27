@@ -30,3 +30,11 @@ crons:
     endpoint: "{{BASE_URL}}/api/cron/nightly-outcome-reconcile"
     method: POST
     enabled: true
+  - name: nightly-optimizer
+    description: "2:30am ET: after outcome reconcile, run the guarded estimating auto-optimizer (shadow until owner activates; then applies eligible, unlocked, gate-passing non-monetary changes; one idempotent run/day)"
+    cron: "30 2 * * *"
+    timezone: "America/New_York"
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    endpoint: "{{BASE_URL}}/api/cron/nightly-optimizer"
+    method: POST
+    enabled: true

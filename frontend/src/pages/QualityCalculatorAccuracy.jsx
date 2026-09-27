@@ -4,8 +4,9 @@ import { toast } from "sonner";
 import { Gauge, RefreshCw, TrendingUp, Layers, SlidersHorizontal, ClipboardList, FlaskConical, ArrowRight, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { InstructionBanner, PageTitle, EmptyState, LoadingRows } from "@/components/Bits";
-import { qualityCalculatorAccuracyApi, apiErrorMessage } from "@/lib/api";
+import { qualityCalculatorAccuracyApi, optimizerStateApi, apiErrorMessage } from "@/lib/api";
 import { money, fmtDate } from "@/lib/quality";
+import OptimizerPanel from "@/components/quality/OptimizerPanel";
 
 const ACCESS_LABELS = {
   stairsO: "Stairs — pickup", stairsD: "Stairs — drop-off", elevO: "Elevator",
@@ -57,6 +58,7 @@ const Section = ({ icon: Icon, title, hint, children, testId }) => (
 
 export default function QualityCalculatorAccuracy() {
   const [data, setData] = useState(null);
+  const [optState, setOptState] = useState(null);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(() => {
@@ -65,6 +67,11 @@ export default function QualityCalculatorAccuracy() {
       .then(setData)
       .catch((e) => toast.error(apiErrorMessage(e)))
       .finally(() => setLoading(false));
+    optimizerStateApi().then(setOptState).catch(() => {});
+  }, []);
+  const reloadOptimizer = useCallback(() => {
+    optimizerStateApi().then(setOptState).catch(() => {});
+    qualityCalculatorAccuracyApi().then(setData).catch(() => {});
   }, []);
   useEffect(() => { load(); }, [load]);
 
@@ -72,22 +79,29 @@ export default function QualityCalculatorAccuracy() {
   if (!data) return null;
 
   const { summary, trends, coverage, review_queue: queue, current_parameters: cp, progress } = data;
+  const isOwner = data.role === "owner";
   const wmh = summary.work_mh || {};
   const dollars = summary.dollars;   // owner only
   const biasTone = wmh.bias_direction === "over" ? "text-warning" : wmh.bias_direction === "under" ? "text-accent-ink" : "text-success";
+  const learningOn = progress.stage7_enabled && !progress.paused;
+  const stageBadge = learningOn ? { t: "Learning ON", cls: "bg-success/10 text-success" }
+    : progress.paused ? { t: "Paused", cls: "bg-warning/10 text-warning" }
+    : { t: "Shadow only", cls: "bg-surface-sunk text-faint" };
 
   return (
     <div data-testid="calc-accuracy-page" className="pb-16 space-y-4">
       <PageTitle
         title="Calculator Accuracy"
-        subtitle="How accurate the estimator is against real completed jobs. Measurement only — no quote changes here."
+        subtitle="How accurate the estimator is against real completed jobs — and the guarded auto-optimizer that tunes it."
         action={<Button data-testid="calc-accuracy-refresh" variant="outline" size="sm" className="gap-1.5" onClick={load}><RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> Refresh</Button>}
       />
 
       <InstructionBanner testId="calc-accuracy-banner">
-        This page <b>measures</b> estimating accuracy and shows how much real-job data backs each factor. It never
-        suggests or changes a value. Suggested calibration and learning arrive in Stage 7, which needs explicit
-        approval and its own per-factor sample thresholds.
+        This page <b>measures</b> estimating accuracy and runs the <b>guarded auto-optimizer</b>. The optimizer only
+        learns non-monetary work-model parameters, moves within tight per-factor sample thresholds, movement caps,
+        bounds and accuracy gates, and never re-prices a saved quote. It stays in <b>shadow</b> mode until the owner
+        activates it — after that, eligible unlocked changes apply on the nightly run. Every change needs a reason and
+        is versioned.
       </InstructionBanner>
 
       {/* Progress preview toward Stage 7 readiness */}
@@ -95,8 +109,8 @@ export default function QualityCalculatorAccuracy() {
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div className="flex items-center gap-2">
             <FlaskConical className="w-4 h-4 text-accent-ink" />
-            <h3 className="font-bold text-primary text-[14px]">Stage 7 readiness</h3>
-            <span data-testid="calc-accuracy-stage7-badge" className="text-[10px] font-bold px-2 py-0.5 rounded bg-surface-sunk text-faint">Learning OFF</span>
+            <h3 className="font-bold text-primary text-[14px]">Optimizer readiness</h3>
+            <span data-testid="calc-accuracy-stage7-badge" className={`text-[10px] font-bold px-2 py-0.5 rounded ${stageBadge.cls}`}>{stageBadge.t}</span>
           </div>
           <span className="tnum text-[12.5px] text-ink-2">{progress.usable_jobs} / {progress.readiness_target} usable jobs</span>
         </div>
@@ -105,6 +119,9 @@ export default function QualityCalculatorAccuracy() {
         </div>
         <p className="text-[11.5px] text-faint mt-2 flex items-start gap-1.5"><Info className="w-3.5 h-3.5 mt-0.5 shrink-0" /> {progress.note}</p>
       </div>
+
+      {/* Guarded auto-optimizer controls */}
+      {optState && <OptimizerPanel data={optState} isOwner={isOwner} onChanged={reloadOptimizer} />}
 
       {/* Headline accuracy */}
       <Section icon={Gauge} title="Estimating accuracy" hint={`Man-hour model vs actual work hours across ${wmh.sample || 0} usable completed job(s).`} testId="calc-accuracy-summary">
@@ -202,7 +219,7 @@ export default function QualityCalculatorAccuracy() {
       </Section>
 
       {/* Current parameters (read-only) */}
-      <Section icon={SlidersHorizontal} title="Current estimating settings" hint="The values in use today. Read-only here — Stage 7 will explain and (with approval) tune these." testId="calc-accuracy-params">
+      <Section icon={SlidersHorizontal} title="Current estimating settings" hint="The values in use today. Tune them in the Auto-optimizer above — Set, Lock or Roll back, all reason-logged." testId="calc-accuracy-params">
         {cp.all_default && (
           <div data-testid="calc-params-default-note" className="mb-3 text-[11.5px] font-semibold text-ink-2 bg-surface-sunk rounded px-2.5 py-1.5 inline-block">
             All factors are on their baseline defaults (calibration {cp.calibration_version}). Nothing has been tuned.

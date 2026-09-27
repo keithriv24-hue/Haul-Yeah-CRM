@@ -10,7 +10,7 @@ import { ScopeLeadPicker } from "@/components/ScopeLeadPicker";
 import { useApp } from "@/context/AppContext";
 import { LF, f, leadAccess } from "@/lib/fields";
 import { apiErrorMessage, getScopeApi, getScopeAccessApi, getScopePricingValuesApi, getEstimatingParamsApi, listScopesApi,
-  commitScopeApi, retryScopeWriteApi, saveScopeDraftApi, findScopeDraftApi } from "@/lib/api";
+  commitScopeApi, retryScopeWriteApi, saveScopeDraftApi, findScopeDraftApi, scopeGuidanceApi } from "@/lib/api";
 import {
   TIERS, TRUCK_CF, TRUCK_LBS, ROOMS, ITEMS, PACKING, ACCESS, MATERIALS, NON_TRANSPORT,
   PKGS, STATE_OPTIONS, NO_PRICING, LEGACY_ITEM_KEYS, CUSTOM_BANDS, FIT_WORK_OPTIONS,
@@ -129,6 +129,7 @@ export default function ScopeCalculator() {
   const [showSaved, setShowSaved] = useState(false);
   const [label, setLabel] = useState("");
   const [tier, setTier] = useState(null);
+  const [guidance, setGuidance] = useState(null);   // Stage 7 non-monetary calculator guidance
 
   /* Lead context — access info from the Tally form + package prefill from home size */
   const { loadTable, loadSchema, records, schemas } = useApp();
@@ -202,6 +203,19 @@ export default function ScopeCalculator() {
   }, [r.specialtyOnly, pkg]);
 
   const finalMode = mode === "final" && surveyDone && !gate.blocked && !hasBlockers;
+
+  /* Stage 7 guidance — how much real-job data backs the model + anonymized similar completed jobs.
+     Non-monetary; debounced on volume/crew/package so it doesn't fire on every keystroke. */
+  const cfBucket = Math.round((r.cf || 0) / 100) * 100;
+  useEffect(() => {
+    if (!tier || tier === "none") return undefined;
+    const t = setTimeout(() => {
+      scopeGuidanceApi({ cf: cfBucket || undefined, crew: r.crew || undefined, pkg: pkg || undefined })
+        .then(setGuidance).catch(() => {});
+    }, 400);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tier, cfBucket, r.crew, pkg]);
 
   /* tier gates — UI mirrors of the backend enforcement, never the other way round */
   const isOwner = tier === "owner";
@@ -1021,6 +1035,49 @@ export default function ScopeCalculator() {
                 : "Using the recommended crew and time for this scope."}
             </p>
           </div>
+
+          {/* Stage 7 calculator guidance — non-monetary hints from real completed jobs */}
+          {guidance && (
+            <div className="surface p-4" data-testid="scope-guidance-card">
+              <Eyebrow>Calculator guidance — learned from completed jobs</Eyebrow>
+              <p data-testid="scope-guidance-hint" className="text-[12px] text-ink-2 mt-1">
+                {guidance.hint}
+              </p>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-2 text-[11.5px]">
+                <div className="rounded border border-border p-2">
+                  <div className="text-faint text-[10px] uppercase tracking-wide">Base rate</div>
+                  <div className="tnum text-primary font-semibold">{guidance.base_rate_mh_per_100cuft} mh/100cf</div>
+                </div>
+                <div className="rounded border border-border p-2">
+                  <div className="text-faint text-[10px] uppercase tracking-wide">Usable jobs</div>
+                  <div className="tnum text-primary font-semibold">{guidance.usable_jobs}</div>
+                </div>
+                {guidance.accuracy?.sample > 0 && (
+                  <div className="rounded border border-border p-2">
+                    <div className="text-faint text-[10px] uppercase tracking-wide">Model avg error</div>
+                    <div className="tnum text-primary font-semibold">{guidance.accuracy.mae == null ? "—" : `${guidance.accuracy.mae} mh`}</div>
+                  </div>
+                )}
+              </div>
+              {(guidance.similar || []).length > 0 ? (
+                <div className="mt-2.5">
+                  <div className="text-[10px] uppercase tracking-wide text-faint font-bold mb-1">Similar completed jobs (anonymized)</div>
+                  <div className="space-y-1">
+                    {guidance.similar.map((s, i) => (
+                      <div key={i} data-testid="scope-guidance-similar-row" className="flex items-center justify-between text-[11.5px] rounded border border-border/70 px-2 py-1">
+                        <span className="text-ink-2">~{s.volume_cf} cu ft · {s.crew || "?"} crew · {s.month || ""}</span>
+                        <span className="tnum text-faint">est {s.predicted_work_mh} → actual <b className="text-primary">{s.actual_work_mh}</b> mh</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <p className="text-[11px] text-faint mt-2">No closely-matching completed jobs yet — hints use the current model.</p>
+              )}
+              <p className="text-[10.5px] text-faint mt-2">These are learned hints — your crew and hours above always win.</p>
+            </div>
+          )}
+
 
           {!showPricing ? (
           <div className="surface p-4" data-testid="scope-no-pricing-card">
