@@ -1,0 +1,32 @@
+{
+  "summary": "Stage 5 frontend-only verification of /scope-calculator with new EP (estimating parameters) fetch wired into scopeOutputs. Logged in as owner (HaulYeahAdmin), confirmed page renders, quick-start packages produce non-zero quotes matching pre-Stage-5 numbers, room stepper updates quote live, Save flow opens lead picker and commits successfully, saved-scopes list opens an existing saved scope showing its saved snapshot with 'Refine this scope' banner. Zero console errors related to estimating-params / scopeOutputs / undefined EP across all flows.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "verified_flows": [
+    "Owner login (HaulYeahAdmin / HaulYeah2026!) via username - success",
+    "/scope-calculator renders data-testid=scope-calculator-page, 'Loading pricing…' not stuck (EP loads and epReady flips to ready quickly)",
+    "Quick-start 3BR (scope-pkg-br3-btn) -> Range $1,900–$2,125 (Crew 4, 6.5 hrs) — matches pre-Stage-5 numbers, unchanged by EP threading",
+    "Quick-start 2BR (scope-pkg-br2-btn) -> Range $1,250–$1,400 — matches pre-Stage-5 numbers",
+    "Room + stepper increments live, no errors, quote recomputes",
+    "scope-save-btn is enabled (epReady=true) with label 'Save Range to Lead' for a valid quote in owner tier",
+    "Clicking Save opens lead picker (scope-lead-picker) with 'Who is this quote for?' prompt; leads (Yale Klat, Keith Rivera II) shown — Airtable IS reachable in this preview",
+    "Selecting a lead -> scope-commit-result / scope-commit-ok-msg visible: 'Range saved to the lead — provisional, not a firm quote.' (successful save, no 503)",
+    "scope-saved-btn opens 'Saved scopes — newest first' list with 8 scopes and per-row Refine buttons",
+    "scope-saved-open-btn opens an existing saved scope in-place, shows banner 'Viewing a saved scope from Keith (Owner) … saved pricing snapshot' with 'Refine this scope' + 'Back to live pricing' buttons; Final Quote / Range renders using the snapshot without crashing or blanking",
+    "Zero console errors related to estimating-params, scopeOutputs, or undefined EP throughout all flows (one incidental 401 seen once on a resource load, unrelated to EP)"
+  ],
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Testid mismatch in requirements vs code: task doc references data-testid 'login-submit-btn' but actual code uses 'login-submit-button' — minor doc inconsistency, code is fine.",
+    "The 'scope-saved-refine-btn' testid exists on the row-level Refine button in the saved-scopes list, but the in-viewer 'Refine this scope' button (shown when viewing a saved scope) appears to lack a data-testid — consider adding one for E2E symmetry.",
+    "Toast 'Recovered your unsaved draft.' fires immediately on scope page load even for a fresh owner session; verify this is intentional UX (looks fine, just noting)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (frontend-only run)", "frontend": "100%"},
+  "test_credentials": "HaulYeahAdmin / HaulYeah2026! (owner, username login, case-insensitive) — verified working",
+  "seed_data_creation": "One extra committed scope was saved to lead 'Yale Klat' during the save-flow test (expected/acceptable per request).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Stage 5 EP wiring is verified end-to-end from the UI perspective. Numbers observed: 3BR=$1,900–$2,125, 2BR=$1,250–$1,400, default empty state=$650–$700 (spread 8%). Airtable IS live in this preview (lead-picker shows real leads and commit succeeded), contradicting the note that Airtable would be down — flag if Stage 6/7 depends on it being absent."
+}
