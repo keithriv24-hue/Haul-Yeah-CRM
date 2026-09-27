@@ -9,7 +9,7 @@ import { PageTitle } from "@/components/Bits";
 import { ScopeLeadPicker } from "@/components/ScopeLeadPicker";
 import { useApp } from "@/context/AppContext";
 import { LF, f, leadAccess } from "@/lib/fields";
-import { apiErrorMessage, getScopeApi, getScopeAccessApi, getScopePricingValuesApi, listScopesApi,
+import { apiErrorMessage, getScopeApi, getScopeAccessApi, getScopePricingValuesApi, getEstimatingParamsApi, listScopesApi,
   commitScopeApi, retryScopeWriteApi, saveScopeDraftApi, findScopeDraftApi } from "@/lib/api";
 import {
   TIERS, TRUCK_CF, TRUCK_LBS, ROOMS, ITEMS, PACKING, ACCESS, MATERIALS, NON_TRANSPORT,
@@ -121,6 +121,8 @@ export default function ScopeCalculator() {
   const [open, setOpen] = useState(null);
   const [ownerBlock, setOwnerBlock] = useState(false);
   const [livePricing, setLivePricing] = useState(null);
+  const [liveEP, setLiveEP] = useState(null);          // Stage 5 estimating parameters (non-monetary)
+  const [epStatus, setEpStatus] = useState("loading"); // loading|ready|error — gates commit
   const [viewingSaved, setViewingSaved] = useState(null);
   const [refineFrom, setRefineFrom] = useState(null);
   const [savedList, setSavedList] = useState([]);
@@ -147,6 +149,10 @@ export default function ScopeCalculator() {
     getScopeAccessApi().then(({ tier: t }) => {
       setTier(t || "none");
       if (!t) return;
+      // Estimating parameters (non-monetary) are served to EVERY tier, incl. survey.
+      getEstimatingParamsApi()
+        .then((ep) => { setLiveEP(ep); setEpStatus("ready"); })
+        .catch(() => { setEpStatus("error"); toast.error("Couldn't load estimating settings — reload before saving a quote."); });
       if (t === "survey") {
         setLivePricing(NO_PRICING);
         return;
@@ -168,10 +174,15 @@ export default function ScopeCalculator() {
   /* Saved snapshots price from their stored values; live pricing fills any
      key the snapshot pre-dates (older scopes saved before spec v2.0). */
   const P = viewingSaved ? { ...(livePricing || {}), ...(viewingSaved.pricing || {}) } : livePricing;
+  /* A reopened scope must replay with the estimating parameters it was SAVED with,
+     never today's — loading current EP must not silently re-fit an old quote. Scopes
+     saved before Stage 5 have no snapshot → {} → engine falls back to today's constants
+     (which is exactly the math they were computed with). */
+  const EP = viewingSaved ? (viewingSaved.estimating_snapshot || {}) : (liveEP || {});
 
   const inputs = { dens, cnt, qty, custom, acc, mat, pack, rate, jobType, crewOverride, hoursOverride, miles: Number(miles) || 0, pkg };
   /* eslint-disable react-hooks/exhaustive-deps */
-  const out = useMemo(() => scopeOutputs(inputs, P || {}), [dens, cnt, qty, custom, acc, mat, pack, rate, jobType, crewOverride, hoursOverride, miles, pkg, P]);
+  const out = useMemo(() => scopeOutputs(inputs, P || {}, EP), [dens, cnt, qty, custom, acc, mat, pack, rate, jobType, crewOverride, hoursOverride, miles, pkg, P, EP]);
   /* eslint-enable react-hooks/exhaustive-deps */
   const { r, bandLo, bandHi, spread, finalTotal, deposit, inc } = out;
 
@@ -262,6 +273,7 @@ export default function ScopeCalculator() {
     if (tier !== "survey") {
       getScopePricingValuesApi().then((vals) => setLivePricing(vals)).catch(() => {});
     }
+    getEstimatingParamsApi().then((ep) => { setLiveEP(ep); setEpStatus("ready"); }).catch(() => {});
     toast("Back to live pricing — current Settings values apply.");
   };
 
@@ -342,7 +354,12 @@ export default function ScopeCalculator() {
   }, [inputSig]);
 
   /* ---- deliberate commit: Save Quote (firm) / Save Range to Lead ---- */
+  const epReady = !!viewingSaved || epStatus === "ready";   // reopened scopes carry their own snapshot
   const doCommit = async (commitType, targetLeadId) => {
+    if (!epReady) {
+      toast.error("Estimating settings didn't finish loading. Reload the page before saving so the quote uses the right numbers.");
+      return;
+    }
     setCommitting(true);
     try {
       const doc = await commitScopeApi({
@@ -1154,7 +1171,7 @@ export default function ScopeCalculator() {
               <Input data-testid="scope-label-input" placeholder="Label (customer / address)" value={label}
                 onChange={(e) => setLabel(e.target.value)} className="h-9 flex-1" />
               <Button data-testid="scope-save-btn" size="sm" className="gap-1.5 bg-accent hover:bg-accent-press min-h-[44px]"
-                disabled={committing || (r.cf === 0 && !pkg && !hasBlockers) || gate.blocked}
+                disabled={committing || !epReady || (r.cf === 0 && !pkg && !hasBlockers) || gate.blocked}
                 onClick={() => saveQuote(finalMode ? "firm" : "range")}>
                 <Save className="w-3.5 h-3.5" /> {committing ? "Saving…" : isSurvey ? "Submit to owner" : finalMode ? "Save Quote" : hasBlockers ? "Save for assessment" : "Save Range to Lead"}
               </Button>

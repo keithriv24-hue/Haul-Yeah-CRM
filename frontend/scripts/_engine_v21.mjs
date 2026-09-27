@@ -211,7 +211,7 @@ export const roundUpTo = (n, inc) => Math.ceil(n / Math.max(1, inc) - 1e-9) * Ma
 export function mileageInfo(miles, P) {
   const m = Math.max(0, num(miles));
   const free = num(P?.mileageFreeMiles, 20);
-  const rate = num(P?.mileageRatePerMile);
+  const rate = num(P?.mileageRatePerMile, 8.0);
   const extra = Math.max(0, Math.round((m - free) * 10) / 10);
   const fee = Math.round(extra * rate * 100) / 100;
   return { miles: m, free, rate, extra, fee,
@@ -227,11 +227,19 @@ export function stateGate(pickupState, dropoffState, P) {
   return { blocked: bad.length > 0, badStates: bad, allowed };
 }
 
-/* ---- the engine — scope arithmetic calibrated, pricing per spec v2.0 ---- */
-export function computeScope(inputs, P, shift = 0) {
+/* ---- the engine — scope arithmetic calibrated, pricing per spec v2.0 ----
+   EP = learnable estimating parameters (Stage 5), NON-MONETARY only:
+     EP.packingMult[]  — per-tier packing multipliers (falls back to PACKING[].m)
+     EP.accessPer{}    — per-key access man-hours   (falls back to ACCESS[].per)
+     EP.itemMult       — item man-hour multiplier    (falls back to 1)
+   When EP is absent/empty the engine uses today's constants EXACTLY — so a
+   seeded EP that mirrors the constants changes no quote by even a penny. */
+export function computeScope(inputs, P, shift = 0, EP = {}) {
   const { dens = {}, cnt = {}, qty = {}, acc = {}, mat = {}, pack = 0, rate = 2.1,
     jobType = "truck", crewOverride = null, hoursOverride = null, miles = 0, pkg = "" } = inputs || {};
   const custom = Array.isArray(inputs?.custom) ? inputs.custom : []; // scopes saved before custom items read as []
+  const packMults = Array.isArray(EP?.packingMult) && EP.packingMult.length === PACKING.length ? EP.packingMult : null;
+  const itemMult = num(EP?.itemMult, 1);
 
   let cf = 0, lbs = 0, itemMH = 0, beds = 0;
   ROOMS.forEach((r) => {
@@ -298,12 +306,13 @@ export function computeScope(inputs, P, shift = 0) {
   const billableTrips = jobType === "labor" ? 1 : trucksRaw;   // …but still bills one trip fee
   const trucks = displayTrucks;                                // graphic / margin read this
   const sc = Math.max(1, cf / 800);          // volume scaling factor (man-hours only)
-  const volMH = (cf / 100) * rate * PACKING[pack].m;
+  const packM = packMults ? num(packMults[pack], PACKING[pack].m) : PACKING[pack].m;
+  const volMH = (cf / 100) * rate * packM;
 
   let accMH = 0, accBill = 0;
   ACCESS.forEach((a) => {
     const v = acc[a.k] || 0; if (!v) return;
-    accMH += a.per * v * (a.scale ? sc : 1);
+    accMH += num(EP?.accessPer?.[a.k], a.per) * v * (a.scale ? sc : 1);
     accBill += itemBill(a, P) * v;           // flat dollars per flight / carry / piece / stop
   });
   let itemBillTotal = 0;
@@ -311,7 +320,8 @@ export function computeScope(inputs, P, shift = 0) {
   let matBill = 0;
   MATERIALS.forEach((m) => { matBill += (mat[m.k] || 0) * materialPrice(m, P); });
 
-  let billMH = volMH + itemMH;
+  const rawBillMH = volMH + itemMH * itemMult;
+  let billMH = rawBillMH;
   const schedMH = billMH + accMH;
 
   const hardBeds = num(P?.hardFloorBedrooms, 3);
@@ -342,7 +352,7 @@ export function computeScope(inputs, P, shift = 0) {
   }
   const floorMH = hourFloor * Math.min(crew, 4);
   const hardFloorApplied = bedsEff >= hardBeds && Math.abs(billMH - hardHours * Math.min(crew, 4)) < 1e-9
-    && (effHoursOverride ? effHoursOverride * crew < billMH : volMH + itemMH < billMH);
+    && (effHoursOverride ? effHoursOverride * crew < billMH : rawBillMH < billMH);
 
   /* ---- final pricing steps — every value from the pricing config, exact spec order ---- */
   const manHourRate = num(P?.manHourRate);
@@ -366,10 +376,10 @@ export function computeScope(inputs, P, shift = 0) {
     beds, bedsEff, priceFloor, floorMH, hardFloorApplied };
 }
 
-export function scopeOutputs(inputs, P) {
-  const r = computeScope(inputs, P, 0);
-  const lo = computeScope(inputs, P, -1);
-  const hi = computeScope(inputs, P, +1);
+export function scopeOutputs(inputs, P, EP = {}) {
+  const r = computeScope(inputs, P, 0, EP);
+  const lo = computeScope(inputs, P, -1, EP);
+  const hi = computeScope(inputs, P, +1, EP);
   const inc = Math.max(1, num(P?.roundingIncrement, 25));
   const roundUp = (n) => roundUpTo(n, inc);                                       // 6 — round UP, never down
   const bandLo = roundUp(Math.max(r.priceFloor, Math.min(lo.total, r.total) * 0.94));

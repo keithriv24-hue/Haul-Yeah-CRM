@@ -19,6 +19,7 @@ from zoneinfo import ZoneInfo
 
 import bcrypt
 import meta_capi
+import scope_engine
 import httpx
 from reportlab.lib.pagesizes import letter as PDF_LETTER
 from reportlab.lib.utils import ImageReader
@@ -650,6 +651,105 @@ async def save_rates(payload: Dict[str, Any], p: Dict[str, Any] = Depends(requir
     return {**values, "_updatedAt": stamps}
 
 
+# ------- Stage 5: learnable estimating parameters (non-monetary) -------
+# ONE record (_id="estimating_params") holds the engine's learnable WORK-MODEL knobs at today's
+# exact values. Seeded once; manHoursPer100CuFt + packageHours mirror live rates so nothing can drift
+# out of parity in Stage 5. calibration_version="v0" (the frozen baseline Stage 6 compares against).
+# Adding these knobs changes NO quote — the seed reproduces the current engine exactly.
+EST_ENGINE_KEYS = ("packingMult", "accessPer", "itemMult", "crewEfficiency",
+                   "avgDriveMph", "travelInHours", "travelOutHours")
+
+
+async def _estimating_engine_doc() -> Dict[str, Any]:
+    doc = await mongo_db.settings.find_one({"_id": "estimating_params"})
+    if not doc or not doc.get("params"):
+        seed = scope_engine.estimating_defaults()
+        await mongo_db.settings.update_one(
+            {"_id": "estimating_params"},
+            {"$set": {"params": seed, "calibration_version": "v0",
+                      "seeded_at": now_iso(), "updated_at": now_iso()}}, upsert=True)
+        return {"params": seed, "calibration_version": "v0"}
+    return doc
+
+
+async def get_estimating_params() -> Dict[str, Any]:
+    """Current estimating parameters. Engine knobs come from the estimating_params record; the volume
+    rate and package hours mirror live rates (single source of truth in Stage 5)."""
+    doc = await _estimating_engine_doc()
+    p = dict(scope_engine.estimating_defaults())
+    p.update({k: v for k, v in (doc.get("params") or {}).items() if k in EST_ENGINE_KEYS})
+    rates = await get_rates_values()
+    p["manHoursPer100CuFt"] = float(rates.get("manHoursPer100CuFt", 2.1))
+    p["packageHours"] = {
+        "studio": float(rates.get("pkgStudioHours", 3.5)), "br2": float(rates.get("pkg2brHours", 5.5)),
+        "br3": float(rates.get("pkg3brHours", 6.5)), "br4": float(rates.get("pkg4brHours", 8.0))}
+    p["calibration_version"] = doc.get("calibration_version", "v0")
+    return p
+
+
+def _pricing_version(rates: Dict[str, Any]) -> str:
+    """Stable short hash of the monetary settings so a scope records which price world it was quoted in."""
+    monetary = {k: rates.get(k) for k in sorted(rates.keys())}
+    return hashlib.sha256(json.dumps(monetary, sort_keys=True, default=str).encode()).hexdigest()[:12]
+
+
+@api_router.get("/settings/estimating-params")
+async def get_estimating_params_endpoint(request: Request):
+    # Served to EVERY calculator tier (incl. survey) — these values are non-monetary.
+    await require_scope_tier(request)
+    params = await get_estimating_params()
+    return {**params, "feature_registry": scope_engine.feature_registry()}
+
+
+class EstimatingParamsPayload(BaseModel):
+    params: Dict[str, Any]
+
+
+@api_router.put("/settings/estimating-params")
+async def put_estimating_params(payload: EstimatingParamsPayload, p: Dict[str, Any] = Depends(require_owner)):
+    """Owner edit of the engine knobs (packingMult/accessPer/itemMult/crewEfficiency/scheduling).
+    manHoursPer100CuFt + package hours stay in /settings/rates. No auto-suggestions in Stage 5."""
+    doc = await _estimating_engine_doc()
+    current = dict(doc.get("params") or scope_engine.estimating_defaults())
+    for k in EST_ENGINE_KEYS:
+        if k in payload.params:
+            current[k] = payload.params[k]
+    await mongo_db.settings.update_one(
+        {"_id": "estimating_params"},
+        {"$set": {"params": current, "updated_at": now_iso(), "updated_by": p.get("name")}}, upsert=True)
+    await audit(p, "edited estimating parameters", "estimating_params", {})
+    return await get_estimating_params()
+
+
+async def _attach_estimating_features(doc: Dict[str, Any], inputs: Dict[str, Any]) -> None:
+    """Record the learnable feature breakdown + parameter/pricing snapshots on a saved scope.
+    Stage 5 = data capture only; this changes no pricing and is not itself a training example."""
+    params = await get_estimating_params()
+    rates = await get_rates_values()
+    feats = scope_engine.compute_scope_features(inputs, params)
+    result = doc.get("result") or {}
+    hours_source = "rep_override" if inputs.get("hoursOverride") else ("package" if inputs.get("pkg") else "model")
+    base_rate = float(params.get("manHoursPer100CuFt", 2.1))
+    rate_in = inputs.get("rate")
+    try:
+        rate_override = float(rate_in) if (rate_in is not None and abs(float(rate_in) - base_rate) > 1e-9) else None
+    except (TypeError, ValueError):
+        rate_override = None
+    doc["features"] = feats
+    doc["model"] = {
+        "schedMH": result.get("schedMH"), "billMH": result.get("billMH"),
+        "onsiteRec": result.get("onsiteRec"), "crewRec": result.get("crewRec"),
+        "crew": result.get("crew"), "final_hours": result.get("onsite"),
+        "predicted_work_mh": feats.get("predicted_work_mh"),
+    }
+    doc["hours_source"] = hours_source
+    doc["estimating_snapshot"] = params
+    doc["calibration_version"] = params.get("calibration_version", "v0")
+    doc["pricing_version"] = _pricing_version(rates)
+    doc["rate_override_used"] = rate_override
+    doc["quote_scope_id"] = doc["_id"]
+
+
 # ------- Saved job scopes (lead_scopes) + calculator access tiers
 # Tiers: owner (everything) · final (final quotes, no margin) · survey (no pricing) · sales (range only)
 
@@ -782,6 +882,7 @@ async def save_scope(payload: ScopeSavePayload, request: Request):
         "created_at": now_iso(),
         "updated_at": now_iso(),
     }
+    await _attach_estimating_features(doc, payload.inputs or {})
     await mongo_db.lead_scopes.insert_one(doc)
     return redact_scope_doc(doc, tier)
 
