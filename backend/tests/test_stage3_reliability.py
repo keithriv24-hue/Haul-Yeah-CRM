@@ -204,3 +204,35 @@ class TestWorkRecord:
         assert data.get("is_self") is False
         assert data.get("records") is None
         assert "stats" not in data
+
+
+# --- no-show flag does not resurrect after review (regression) ----------------
+
+class TestNoShowNoResurrection:
+    def _count_no_show(self, db):
+        return db.reliability_flags.count_documents(
+            {"assignment_id": ASSIGNMENT_ID, "user_id": HELPER_ID, "type": "possible_no_show"})
+
+    def test_board_scan_never_duplicates_existing_no_show(self, owner_headers, db):
+        # A reviewed (resolved) possible_no_show must NOT be re-created by _scan_no_shows,
+        # which runs on every /api/dispatch/board fetch.
+        fid = f"test-stage3-noshow-{uuid.uuid4()}"
+        day = datetime.now(timezone.utc).astimezone().date().isoformat()
+        db.reliability_flags.insert_one({
+            "_id": fid, "assignment_id": ASSIGNMENT_ID, "job_name": "Stage 2 QA — Crew Lead Demo",
+            "job_date": day, "user_id": HELPER_ID, "user_name": "Stage2 Helper",
+            "type": "possible_no_show", "status": "resolved",
+            "detail": "TEST_stage3 resolved no-show — should not resurrect.",
+            "meta": {}, "created_at": datetime.now(timezone.utc).isoformat(),
+            "resolved_by": "QA", "resolved_at": datetime.now(timezone.utc).isoformat(),
+            "resolve_reason": "reviewed", "disputed_at": None, "dispute_reason": None})
+        try:
+            before = self._count_no_show(db)
+            for _ in range(2):
+                r = requests.get(f"{API}/dispatch/board", headers=owner_headers,
+                                 params={"date": day}, timeout=20)
+                assert r.status_code == 200, r.text
+            after = self._count_no_show(db)
+            assert after == before, f"scan resurrected a no-show flag: {before} -> {after}"
+        finally:
+            db.reliability_flags.delete_one({"_id": fid})

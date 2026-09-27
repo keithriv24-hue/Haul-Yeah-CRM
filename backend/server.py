@@ -7835,6 +7835,12 @@ async def _scan_no_shows(day: str) -> None:
                 {"user_id": uid, "clock_in.at": {"$gte": day_prefix}})
             if any_today:   # they clocked in somewhere today — a consecutive-job case, not a no-show
                 continue
+            # Once a no-show has been raised for this person on this job today, don't resurrect it —
+            # even after the owner resolves or the crew disputes it (dedup below only covers open/unverified).
+            prior = await mongo_db.reliability_flags.find_one(
+                {"assignment_id": a["_id"], "user_id": uid, "type": "possible_no_show"})
+            if prior:
+                continue
             await _create_reliability_flag(
                 a, uid, c.get("name"), "possible_no_show",
                 f"No clock-in by {a.get('arrival_time')} + {grace} min grace. Unverified — confirm or dismiss.",
