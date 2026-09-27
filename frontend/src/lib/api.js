@@ -298,6 +298,24 @@ export const saveReliabilityConfigApi = (p) => axios.put(`${API}/settings/reliab
 export const inspectionsCsvUrl = (start, end) =>
   `${API}/fleet/inspections-export?${start ? `start=${start}&` : ""}${end ? `end=${end}&` : ""}auth=${localStorage.getItem("hy_token")}`;
 
+// Stage 4 — reliable actuals & versioned job outcomes (owner + quality)
+export const jobOutcomeApi = (jobKey, rebuild = false) =>
+  axios.get(`${API}/outcomes/${encodeURIComponent(jobKey)}${rebuild ? "?rebuild=1" : ""}`).then((r) => r.data);
+export const jobOutcomeHistoryApi = (jobKey) =>
+  axios.get(`${API}/outcomes/${encodeURIComponent(jobKey)}/history`).then((r) => r.data.versions);
+export const correctOutcomeApi = (jobKey, field, value, reason) =>
+  axios.post(`${API}/outcomes/${encodeURIComponent(jobKey)}/correct`, { field, value, reason }).then((r) => r.data);
+export const repointOutcomeScopeApi = (jobKey, quote_scope_id, reason) =>
+  axios.post(`${API}/outcomes/${encodeURIComponent(jobKey)}/repoint-scope`, { quote_scope_id, reason }).then((r) => r.data);
+export const excludeOutcomeApi = (jobKey, excluded, reason) =>
+  axios.post(`${API}/outcomes/${encodeURIComponent(jobKey)}/exclude`, { excluded, reason }).then((r) => r.data);
+export const surveyMissDecisionApi = (jobKey, key, decision, reason) =>
+  axios.post(`${API}/outcomes/${encodeURIComponent(jobKey)}/survey-miss`, { key, decision, reason }).then((r) => r.data);
+export const outcomeCandidateScopesApi = (jobKey) =>
+  axios.get(`${API}/outcomes/${encodeURIComponent(jobKey)}/scopes`).then((r) => r.data);
+export const backfillOutcomesApi = (days = 180) =>
+  axios.post(`${API}/outcomes-backfill?days=${days}`).then((r) => r.data);
+
 
 export const apiErrorMessage = (e) => {
   const detail = e?.response?.data?.detail;

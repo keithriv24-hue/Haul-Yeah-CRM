@@ -3929,28 +3929,6 @@ async def _actual_hours_by_project(projects: List[Dict[str, Any]]) -> Dict[str, 
     by_date: Dict[str, List[Dict[str, Any]]] = {}
     for a in assignments:
         by_date.setdefault((a.get("job_date") or "")[:10], []).append(a)
-    entries = await mongo_db.time_entries.find({}).to_list(5000)
-    entries_by_assignment: Dict[str, List[Dict[str, Any]]] = {}
-    for e in entries:
-        entries_by_assignment.setdefault(e.get("assignment_id"), []).append(e)
-
-    def onsite_hours(assignment_ids: List[str]) -> Optional[float]:
-        ins, outs, open_left = [], [], 0
-        for aid in assignment_ids:
-            for e in entries_by_assignment.get(aid, []):
-                if e.get("clock_in"):
-                    ins.append(e["clock_in"]["at"])
-                if e.get("clock_out"):
-                    outs.append(e["clock_out"]["at"])
-                else:
-                    open_left += 1
-        if not ins or not outs or open_left:
-            return None
-        try:
-            span = (datetime.fromisoformat(max(outs)) - datetime.fromisoformat(min(ins))).total_seconds() / 3600
-            return round(max(0.0, span), 2)
-        except (ValueError, TypeError):
-            return None
 
     out: Dict[str, Optional[float]] = {}
     for pr in projects:
@@ -3969,7 +3947,8 @@ async def _actual_hours_by_project(projects: List[Dict[str, Any]]) -> Dict[str, 
         name = str(f.get(PROJECT_NAME_FIELD) or "").lower()
         matched = [a for a in candidates if a.get("job_name") and str(a["job_name"]).lower()[:12] in name] if name else []
         chosen = matched or candidates
-        out[pr["id"]] = onsite_hours([a["_id"] for a in chosen])
+        # Stage 4 A1/A9: the ONE shared on-site definition (Arrived→Complete), not yard-in→last-out.
+        out[pr["id"]] = await _shared_on_site_hours([a["_id"] for a in chosen])
     return out
 
 
@@ -6081,6 +6060,14 @@ async def job_mgmt_detail(project_id: str, request: Request) -> Dict[str, Any]:
     if role in ("owner", "sales", "quality"):
         quality = await _job_quality_links(project_id, str(f.get(PROJECT_NAME_FIELD) or ""))
 
+    outcome = None
+    if role in ("owner", "quality") and assignments:
+        job_key = _job_key_for_assignment(assignments[0])
+        odoc = await mongo_db.job_outcomes.find_one({"_id": job_key})
+        if not odoc:
+            odoc = await build_outcome(job_key, "job_detail_view", p.get("name", ""))
+        outcome = _outcome_out(odoc, role)
+
     return {
         "id": project_id,
         "fields": rec.get("fields"),
@@ -6090,6 +6077,7 @@ async def job_mgmt_detail(project_id: str, request: Request) -> Dict[str, Any]:
         "assignments": assignment_summaries,
         "crew_clock": crew_clock,
         "actual_onsite_hours": _actual_onsite_for_assignments(assignments, entries_by_a),
+        "outcome": outcome,
         "timeline": await _job_timeline_events(project_id),
         "scope": scope,
         "quality": quality,
@@ -6975,6 +6963,7 @@ async def _apply_exec_status(a: Dict[str, Any], status: str, p: Dict[str, Any],
             logger.warning("crew credit prompt failed: %s", exc)
     if payload.status == "Complete":
         await queue_timelog_sync(assignment_id)
+        await _queue_outcome_rebuild_for_assignment(assignment_id, "crew_status", p.get("name", ""))
 
 
 @api_router.post("/crew/jobs/{assignment_id}/status")
@@ -7654,6 +7643,8 @@ async def clock_out(payload: PunchPayload, p: Dict[str, Any] = Depends(require_c
     await mongo_db.time_entries.update_one({"_id": entry["_id"]},
                                            {"$set": {"clock_out": clock_out_data, "hours": hours, "flags": flags}})
     await queue_timelog_sync(entry.get("assignment_id"))
+    if entry.get("assignment_id"):
+        await _queue_outcome_rebuild_for_assignment(entry["assignment_id"], "time_edit", p.get("name", ""))
     if assignment and (assignment.get("exec_status") or "Assigned") != "Complete":
         # Stage 3: clocked out before the job is Complete → owner review (never auto-called an early departure)
         await _create_reliability_flag(
@@ -12045,6 +12036,764 @@ async def dedupe_crew_users() -> None:
             await mongo_db.users.update_one({"_id": keep["_id"]}, {"$set": {"name": canonical}})
 
 
+# ======= Stage 4: reliable actuals & versioned job outcomes =======
+# ONE definition of job actuals feeds every screen. Outcomes are DATA CAPTURE for later learning —
+# Stage 4 changes NO pricing, trains NOTHING, writes NO Square/invoice, and honors staging's read-only
+# Airtable (a 403 stays queued/reported). job_outcomes holds the CURRENT snapshot per job; every material
+# change appends an immutable job_outcome_versions row (append-only, never overwritten/deleted).
+
+# Stage 2 tap keys → the milestones this stage reasons about (mapped, never duplicated).
+TAP_ARRIVED, TAP_LEAVE_PICKUP, TAP_DROPOFF, TAP_COMPLETE = "arrived", "loaded", "dropoff", "complete"
+OUTCOME_GEOFENCE_MI = 0.15
+OUTCOME_AVG_DRIVE_MPH = 25.0
+GPS_LEARN_WEIGHT = 0.75
+OUTCOME_OUTLIER_HOURS = 3.0
+
+
+async def require_outcome_role(request: Request) -> Dict[str, Any]:
+    p = await current_principal(request)
+    if p["role"] not in ("owner", "quality"):
+        raise HTTPException(status_code=403, detail="Only the owner and Quality can review job outcomes.")
+    return p
+
+
+def _job_key_for_assignment(a: Dict[str, Any]) -> str:
+    """Stable outcome identity: the Airtable Project when matched (assignment.project_id), else the
+    Mongo assignment itself. Never merges two jobs by date+name."""
+    pid = a.get("project_id")
+    return f"project:{pid}" if pid else f"assignment:{a['_id']}"
+
+
+async def _assignments_for_job_key(job_key: str) -> List[Dict[str, Any]]:
+    kind, _, ref = job_key.partition(":")
+    if kind == "project":
+        return await mongo_db.assignments.find({"project_id": ref}).to_list(50)
+    a = await mongo_db.assignments.find_one({"_id": ref})
+    return [a] if a else []
+
+
+def _tap_at(a: Dict[str, Any], key: str) -> Optional[datetime]:
+    t = ((a.get("crew_lead") or {}).get("taps") or {}).get(key)
+    return _parse_iso((t or {}).get("at")) if t else None
+
+
+def _status_at(a: Dict[str, Any], status: str) -> Optional[datetime]:
+    for ev in reversed(a.get("status_history") or []):
+        if ev.get("status") == status:
+            return _parse_iso(ev.get("at"))
+    return None
+
+
+def _overlap_hours(s1: Optional[datetime], e1: Optional[datetime],
+                   s2: Optional[datetime], e2: Optional[datetime]) -> float:
+    if not (s1 and e1 and s2 and e2):
+        return 0.0
+    lo, hi = max(s1, s2), min(e1, e2)
+    return (hi - lo).total_seconds() / 3600 if hi > lo else 0.0
+
+
+def _gps_window_for(a: Dict[str, Any], pings: List[Dict[str, Any]]) -> Tuple[Optional[datetime], Optional[datetime]]:
+    """Best-effort Arrived/Complete from GPS: first ping inside the pickup geofence → last ping near it."""
+    site = a.get("site_coords") or {}
+    if not (site.get("lat") is not None and site.get("lng") is not None):
+        return None, None
+    inside = []
+    for g in pings:
+        if g.get("lat") is None or g.get("lng") is None:
+            continue
+        try:
+            d = haversine_miles(g["lat"], g["lng"], site["lat"], site["lng"])
+        except (TypeError, ValueError):
+            continue
+        if d <= OUTCOME_GEOFENCE_MI:
+            t = _parse_iso(g.get("at"))
+            if t:
+                inside.append(t)
+    if len(inside) < 2:
+        return None, None
+    inside.sort()
+    return inside[0], inside[-1]
+
+
+async def compute_job_actuals(assignments: List[Dict[str, Any]], quoted_crew: Optional[int]) -> Dict[str, Any]:
+    """THE shared actual-hours definition (spec A3). Window = Arrived→Complete from taps, else valid GPS,
+    else clock_only + incomplete (never first-yard-in→last-out as on-site time). Aggregates multi-truck
+    crew time without double-counting a person or an overlapping interval."""
+    assignments = [a for a in assignments if a]
+    if not assignments:
+        return {"data_quality": "unmatched", "window_source": None, "incomplete_reasons": ["no_assignment"]}
+    ids = [a["_id"] for a in assignments]
+    entries = await mongo_db.time_entries.find({"assignment_id": {"$in": ids}}).to_list(500)
+    incomplete: List[str] = []
+
+    # --- on-site window: taps first, then GPS, then clock_only ---
+    arrived = next((t for t in (_tap_at(a, TAP_ARRIVED) for a in assignments) if t), None) \
+        or next((t for t in (_status_at(a, "Arrived") for a in assignments) if t), None)
+    complete = next((t for t in (_tap_at(a, TAP_COMPLETE) for a in assignments) if t), None) \
+        or next((t for t in (_status_at(a, "Complete") for a in assignments) if t), None)
+    leave_pickup = next((t for t in (_tap_at(a, TAP_LEAVE_PICKUP) for a in assignments) if t), None)
+    dropoff = next((t for t in (_tap_at(a, TAP_DROPOFF) for a in assignments) if t), None)
+    window_source = None
+    if arrived and complete and complete > arrived:
+        window_source = "taps"
+    else:
+        day = (assignments[0].get("job_date") or "")[:10]
+        uids = {c.get("user_id") for a in assignments for c in a.get("crew", []) if c.get("user_id")}
+        pings = await mongo_db.gps_pings.find(
+            {"user_id": {"$in": list(uids)}, "at": {"$gte": f"{day}T00:00:00"}}).to_list(2000) if (uids and day) else []
+        g_start, g_end = _gps_window_for(assignments[0], pings)
+        if g_start and g_end and g_end > g_start:
+            arrived, complete, window_source = g_start, g_end, "gps"
+        else:
+            window_source = "clock_only"
+            incomplete.append("no_defensible_window")
+
+    open_punch = any(e.get("clock_in") and not e.get("clock_out") for e in entries)
+    if open_punch:
+        incomplete.append("open_clock_entry")
+
+    on_site_hours = round(max(0.0, (complete - arrived).total_seconds() / 3600), 2) if (
+        window_source in ("taps", "gps") and arrived and complete) else None
+
+    # --- per-person punches, man-hours, drive subtraction (no double counting) ---
+    by_user: Dict[str, Dict[str, Any]] = {}
+    for a in assignments:
+        for c in a.get("crew", []):
+            uid = c.get("user_id")
+            if uid and uid not in by_user:
+                by_user[uid] = {"user_id": uid, "name": c.get("name"),
+                                "position": c.get("position"), "punches": [], "worked": False,
+                                "estimated": False, "approved_all": True}
+    man_hours = 0.0
+    work_hours = 0.0
+    for e in entries:
+        uid = e.get("user_id")
+        if uid not in by_user:
+            by_user[uid] = {"user_id": uid, "name": e.get("user_name"), "position": e.get("position"),
+                            "punches": [], "worked": False, "estimated": False, "approved_all": True}
+        s = _parse_iso((e.get("clock_in") or {}).get("at"))
+        en = _parse_iso((e.get("clock_out") or {}).get("at"))
+        rec = {"in": (e.get("clock_in") or {}).get("at"), "out": (e.get("clock_out") or {}).get("at"),
+               "hours": e.get("hours"), "approved": bool(e.get("approved")),
+               "estimated": bool(e.get("estimated")), "flags": e.get("flags") or []}
+        by_user[uid]["punches"].append(rec)
+        if e.get("estimated"):
+            by_user[uid]["estimated"] = True
+        if not e.get("approved"):
+            by_user[uid]["approved_all"] = False
+        if window_source in ("taps", "gps") and s and en:
+            ov = _overlap_hours(s, en, arrived, complete)
+            if ov > 0:
+                by_user[uid]["worked"] = True
+                man_hours += ov
+                drive_ov = _overlap_hours(s, en, leave_pickup, dropoff) if (leave_pickup and dropoff) else 0.0
+                work_hours += max(0.0, ov - drive_ov)
+
+    workers = [u for u in by_user.values() if u["worked"]]
+    actual_crew_count = len(workers) if workers else None
+    crew_div = quoted_crew if (quoted_crew and quoted_crew > 0) else (actual_crew_count or 0)
+    crew_adj_work = round(work_hours / crew_div, 2) if (crew_div and window_source in ("taps", "gps")) else None
+    crew_adj_onsite = round(man_hours / crew_div, 2) if (crew_div and window_source in ("taps", "gps")) else None
+
+    # --- total day (scheduling context only; NEVER the estimating target) ---
+    all_ins = sorted(x for x in ((e.get("clock_in") or {}).get("at") for e in entries) if x)
+    all_outs = sorted(x for x in ((e.get("clock_out") or {}).get("at") for e in entries) if x)
+    total_day_hours = None
+    if all_ins and all_outs and not open_punch:
+        try:
+            total_day_hours = round(max(0.0, (
+                datetime.fromisoformat(all_outs[-1]) - datetime.fromisoformat(all_ins[0])).total_seconds() / 3600), 2)
+        except (ValueError, TypeError):
+            total_day_hours = None
+
+    # --- segment times (labeled, for audit) + drive source ---
+    def seg(a1, b1):
+        return round((b1 - a1).total_seconds() / 3600, 2) if (a1 and b1 and b1 > a1) else None
+    drive_source = "taps" if (leave_pickup and dropoff) else None
+    drive_hours = seg(leave_pickup, dropoff)
+    if drive_hours is None:
+        miles = None
+        for a in assignments:
+            miles = miles or a.get("one_way_miles")
+        if miles:
+            drive_hours = round(2 * float(miles) / OUTCOME_AVG_DRIVE_MPH, 2)
+            drive_source = "estimated"
+    segments = {
+        "load": seg(arrived, leave_pickup), "drive": drive_hours,
+        "unload": seg(dropoff, complete), "travel_in": None, "travel_out": None,
+    }
+    if all_ins and arrived:
+        segments["travel_in"] = seg(_parse_iso(all_ins[0]), arrived)
+    if complete and all_outs:
+        segments["travel_out"] = seg(complete, _parse_iso(all_outs[-1]))
+
+    data_quality = "complete"
+    confidence = 1.0
+    if incomplete:
+        data_quality = "incomplete"
+        confidence = 0.0
+    elif window_source == "gps":
+        confidence = GPS_LEARN_WEIGHT
+    if any(u["estimated"] for u in workers):
+        confidence = min(confidence, GPS_LEARN_WEIGHT)
+
+    return {
+        "window_source": window_source, "drive_source": drive_source,
+        "arrived_at": arrived.isoformat() if arrived else None,
+        "complete_at": complete.isoformat() if complete else None,
+        "leave_pickup_at": leave_pickup.isoformat() if leave_pickup else None,
+        "dropoff_at": dropoff.isoformat() if dropoff else None,
+        "on_site_hours": on_site_hours, "actual_man_hours": round(man_hours, 2) if window_source in ("taps", "gps") else None,
+        "work_man_hours": round(work_hours, 2) if window_source in ("taps", "gps") else None,
+        "crew_adjusted_work_hours": crew_adj_work, "crew_adjusted_on_site_hours": crew_adj_onsite,
+        "total_day_hours": total_day_hours, "segments": segments,
+        "actual_crew_count": actual_crew_count, "planned_crew_count": sum(len(a.get("crew", [])) for a in assignments),
+        "quoted_crew_used": crew_div or None,
+        "crew": [{"user_id": u["user_id"], "name": u["name"], "position": u["position"],
+                  "worked": u["worked"], "estimated": u["estimated"], "approved": u["approved_all"],
+                  "punches": u["punches"]} for u in by_user.values()],
+        "delay_factors": sorted({d for a in assignments for d in (a.get("delay_factors") or [])}),
+        "completion_notes": next((a.get("completion_notes") for a in assignments if a.get("completion_notes")), None),
+        "data_quality": data_quality, "confidence": confidence, "incomplete_reasons": incomplete,
+        "learning_eligible": data_quality == "complete",
+    }
+
+
+async def _shared_on_site_hours(assignment_ids: List[str]) -> Optional[float]:
+    """Arrived→Complete on-site hours for a set of assignments (A9 fix — never yard clock-in→last-out).
+    Used by Quality quote-accuracy so every surface agrees."""
+    assigns = await mongo_db.assignments.find({"_id": {"$in": assignment_ids}}).to_list(50)
+    if not assigns:
+        return None
+    res = await compute_job_actuals(assigns, None)
+    return res.get("on_site_hours")
+
+
+# ---- quote snapshot (B2–B4): the committed quote frozen as it was at Save Quote ----
+async def _select_quote_scope(lead_id: Optional[str], assignments: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Explicit quote_scope_id wins; otherwise a documented fallback among the lead's scopes. Ambiguous =
+    unmatched (excluded from learning). Records the selection rule + confidence; never guesses across ties."""
+    if not lead_id:
+        return {"scope": None, "rule": "no_lead", "confidence": 0.0}
+    link = await mongo_db.lead_quote_links.find_one({"_id": lead_id})
+    active = (link or {}).get("active_quote_scope_id")
+    if active:
+        doc = await mongo_db.lead_scopes.find_one({"_id": active})
+        if doc:
+            return {"scope": doc, "rule": "explicit_quote_scope_id", "confidence": 1.0}
+    scopes = await mongo_db.lead_scopes.find(
+        {"lead_id": lead_id, "status": "saved"}).sort("created_at", -1).to_list(50)
+    if not scopes:
+        return {"scope": None, "rule": "no_scope", "confidence": 0.0}
+    project_quote = None
+    for a in assignments:
+        project_quote = project_quote or a.get("quote_amount")
+    if project_quote is not None:
+        matches = [s for s in scopes if s.get("amount") is not None
+                   and abs(float(s["amount"]) - float(project_quote)) < 0.5]
+        if len(matches) == 1:
+            return {"scope": matches[0], "rule": "amount_match", "confidence": 0.9}
+    finals = [s for s in scopes if (s.get("result") or {}).get("mode") == "final"]
+    if finals:
+        return {"scope": finals[0], "rule": "latest_final", "confidence": 0.6}
+    surveyed = [s for s in scopes if s.get("survey_complete")]
+    if surveyed:
+        return {"scope": surveyed[0], "rule": "latest_survey_complete", "confidence": 0.5}
+    if len(scopes) > 1:
+        # Multiple plain saved quotes and nothing to disambiguate them (no committed link, no amount
+        # match, none final or survey-complete). Refuse to guess — ambiguous is unmatched, never learned.
+        return {"scope": None, "rule": "ambiguous", "confidence": 0.0}
+    return {"scope": scopes[0], "rule": "latest_scope", "confidence": 0.4}
+
+
+def _build_quote_snapshot(sel: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    s = sel.get("scope")
+    if not s:
+        return None
+    result = s.get("result") or {}
+    inputs = s.get("inputs") or {}
+    optimizer_present = bool(s.get("calibration_version") and s.get("calibration_version") != "v0")
+    return {
+        "quote_scope_id": s.get("_id"), "created_at": s.get("created_at"), "created_by": s.get("created_by"),
+        "commit_type": s.get("commit_type"), "estimate_mode": s.get("estimate_mode") or result.get("mode"),
+        "amount": s.get("amount"), "finalTotal": result.get("finalTotal"),
+        "bandLo": result.get("bandLo"), "bandHi": result.get("bandHi"),
+        "sched_mh": result.get("schedMH") if result.get("schedMH") is not None else inputs.get("schedMH"),
+        "bill_mh": result.get("billMH"), "crew_rec": result.get("crewRec") or inputs.get("crew"),
+        "hours_source": s.get("hours_source"), "pricing_version": s.get("pricing_version"),
+        "calibration_version": s.get("calibration_version"), "optimizer_fields": optimizer_present,
+        "survey_complete": bool(s.get("survey_complete")), "video": s.get("video") or {},
+        "inputs": inputs, "pricing": s.get("pricing") or {}, "result": result,
+        "floor_applied": bool(result.get("floorApplied") or result.get("floor_applied")),
+    }
+
+
+def _derive_errors(quote: Optional[Dict[str, Any]], actuals: Dict[str, Any],
+                   final_total: Optional[float]) -> Dict[str, Any]:
+    """Per-job errors (B7). bias sign convention handled at the aggregate (Stage 6); here we store raw
+    predicted−actual deltas. Negative model error = under-estimate."""
+    out: Dict[str, Any] = {}
+    if not quote:
+        return {"available": False}
+    work = actuals.get("work_man_hours")
+    onsite = actuals.get("actual_man_hours")
+    sched = quote.get("sched_mh")
+    if sched is not None and work is not None:
+        out["model_work_mh_error"] = round(float(sched) - float(work), 2)
+    if sched is not None and onsite is not None:
+        out["model_on_site_mh_error"] = round(float(sched) - float(onsite), 2)
+    q_amount = quote.get("finalTotal") if quote.get("finalTotal") is not None else quote.get("amount")
+    if q_amount is not None and final_total is not None:
+        out["dollar_variance"] = round(float(final_total) - float(q_amount), 2)
+    lo, hi = quote.get("bandLo"), quote.get("bandHi")
+    if final_total is not None and lo is not None and hi is not None:
+        out["in_band"] = bool(float(lo) <= float(final_total) <= float(hi))
+    out["floor_applied"] = quote.get("floor_applied")
+    out["available"] = True
+    return out
+
+
+async def _final_total_for(assignments: List[Dict[str, Any]], lead_id: Optional[str]) -> Dict[str, Any]:
+    """Final BILLED amount (B6): newest job-audit Final total, else Project Final Revenue. NEVER a Square
+    deposit/paid-to-date and NEVER the original quote. Airtable-backed → 'missing' when unavailable (preview)."""
+    if not get_api_key():
+        return {"value": None, "source": "missing", "at": now_iso(), "note": "airtable_unavailable"}
+    pid = next((a.get("project_id") for a in assignments if a.get("project_id")), None)
+    try:
+        if pid:
+            audits = await _airtable_all(TABLES["job_audits"])
+            linked = [au for au in audits if pid in ((au.get("fields") or {}).get(JA_LINKED_JOB_F) or [])]
+            linked.sort(key=lambda au: ((au.get("fields") or {}).get(JA_COMPLETED_DATE_F) or "",
+                                        au.get("createdTime") or ""), reverse=True)
+            for au in linked:
+                ft = (au.get("fields") or {}).get(JA_FINAL_TOTAL_F)
+                if ft is not None:
+                    return {"value": float(ft), "source": "job_audit", "audit_id": au["id"], "at": now_iso()}
+            rec = await airtable_request("GET", TABLES["projects"], f"/{pid}")
+            rev = (rec.get("fields") or {}).get(PROJECT_REVENUE_FIELD)
+            if rev is not None:
+                return {"value": float(rev), "source": "project_final_revenue", "at": now_iso()}
+    except Exception as exc:
+        logger.warning("final_total lookup failed: %s", _safe_airtable_error(exc))
+        return {"value": None, "source": "missing", "at": now_iso(), "note": "airtable_error"}
+    return {"value": None, "source": "missing", "at": now_iso()}
+
+
+def _survey_miss_flags(quote: Optional[Dict[str, Any]], actuals: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Possible survey misses (B9): as-found/delay contradicts the quoted inputs. Owner/Quality decide."""
+    flags: List[Dict[str, Any]] = []
+    if not quote:
+        return flags
+    inputs = quote.get("inputs") or {}
+    delays = set(actuals.get("delay_factors") or [])
+    notes = (actuals.get("completion_notes") or "").lower()
+    if not inputs.get("packing") and ("not packed" in notes or "customer_not_packed" in delays):
+        flags.append({"key": "packing_miss", "detail": "As-found says the customer wasn't packed, but the quote didn't include packing."})
+    if not (inputs.get("elevatorPickup") or inputs.get("elevatorDropoff")) and ("elevator" in notes or "elevator_wait" in delays):
+        flags.append({"key": "elevator_miss", "detail": "An elevator/elevator wait appeared that the quote didn't account for."})
+    if "customer_added_items" in delays or "more items" in notes or "extra items" in notes:
+        flags.append({"key": "added_items", "detail": "Customer added items on move day (difference, not a counted quantity)."})
+    return flags
+
+
+def _sample_or_test(lead_id: Optional[str], assignments: List[Dict[str, Any]]) -> Optional[str]:
+    for a in assignments:
+        nm = str(a.get("job_name") or "").upper()
+        if nm.startswith("TEST") or nm.startswith("QA ") or "SAMPLE DATA" in nm:
+            return "test_or_sample"
+    return None
+
+
+async def build_outcome(job_key: str, source: str, actor: str = "", reason: str = "") -> Optional[Dict[str, Any]]:
+    """Assemble the CURRENT outcome and, when a material field changed, append an immutable version.
+    A no-op rebuild creates no version (B8). Never changes pricing or trains anything."""
+    assignments = await _assignments_for_job_key(job_key)
+    if not assignments:
+        return None
+    primary = assignments[0]
+    lead_id = next((a.get("lead_id") for a in assignments if a.get("lead_id")), None)
+    project_id = next((a.get("project_id") for a in assignments if a.get("project_id")), None)
+    sel = await _select_quote_scope(lead_id, assignments)
+    quote = _build_quote_snapshot(sel)
+    quoted_crew = None
+    if quote:
+        try:
+            quoted_crew = int(float(quote.get("crew_rec"))) if quote.get("crew_rec") else None
+        except (TypeError, ValueError):
+            quoted_crew = None
+    actuals = await compute_job_actuals(assignments, quoted_crew)
+    prev = await mongo_db.job_outcomes.find_one({"_id": job_key})
+    prev_corr_map = (prev or {}).get("corrections_map") or {}
+    prev_corrections = (prev or {}).get("corrections") or []
+    final_total = await _final_total_for(assignments, lead_id)
+    if prev_corr_map.get("final_total") is not None:
+        # An owner's explicit correction of the final billed amount always wins over the
+        # Airtable-derived value and survives every future rebuild (preserved in corrections_map).
+        final_total = {"value": prev_corr_map["final_total"], "source": "owner_correction",
+                       "at": final_total.get("at")}
+    errors = _derive_errors(quote, actuals, final_total.get("value"))
+    survey_flags = _survey_miss_flags(quote, actuals)
+
+    prev_decisions = (prev or {}).get("survey_miss", {}).get("decisions", {}) if prev else {}
+    manual_excl = (prev or {}).get("exclusion", {}) if prev else {}
+
+    reasons: List[str] = []
+    ts = _sample_or_test(lead_id, assignments)
+    if ts:
+        reasons.append(ts)
+    if actuals.get("data_quality") == "incomplete":
+        reasons.append("incomplete")
+    if actuals.get("data_quality") == "unmatched" or sel.get("rule") in ("no_lead", "no_scope", "ambiguous"):
+        reasons.append("unmatched_quote")
+    if not any(a.get("truck_id") for a in assignments):
+        reasons.append("labor_only_truck_params")
+    mwe = errors.get("model_work_mh_error")
+    if mwe is not None and abs(mwe) > OUTCOME_OUTLIER_HOURS:
+        reasons.append("model_outlier_pending_review")
+    excluded = bool(manual_excl.get("manual")) or bool(reasons)
+    exclusion = {"excluded": excluded, "reasons": sorted(set(reasons)),
+                 "manual": bool(manual_excl.get("manual")), "reason": manual_excl.get("reason")}
+
+    snapshot = {
+        "project_id": project_id, "assignment_ids": [a["_id"] for a in assignments], "lead_id": lead_id,
+        "job_name": primary.get("job_name"), "job_date": primary.get("job_date"),
+        "quote": quote, "quote_match": {"rule": sel.get("rule"), "confidence": sel.get("confidence"),
+                                        "quote_scope_id": (quote or {}).get("quote_scope_id")},
+        "actuals": actuals, "errors": errors, "final_total": final_total,
+        "survey_miss": {"flags": survey_flags, "decisions": prev_decisions},
+        "data_quality": actuals.get("data_quality"),
+        "learning_eligible": bool(actuals.get("learning_eligible") and not excluded),
+        "exclusion": exclusion,
+    }
+
+    compare_keys = ("actuals", "quote_match", "errors", "final_total", "data_quality", "exclusion", "survey_miss")
+
+    def _norm_cmp(key: str, val: Any) -> Any:
+        # `final_total.at` is a rebuild timestamp, not a material fact — ignore it so an unchanged
+        # re-derive (nightly reconcile, manual view) never manufactures a spurious version.
+        if key == "final_total" and isinstance(val, dict):
+            return {kk: vv for kk, vv in val.items() if kk != "at"}
+        return val
+
+    changed: Dict[str, Any] = {}
+    if prev:
+        for k in compare_keys:
+            if json.dumps(_norm_cmp(k, prev.get(k)), sort_keys=True, default=str) != json.dumps(_norm_cmp(k, snapshot.get(k)), sort_keys=True, default=str):
+                changed[k] = {"before": prev.get(k), "after": snapshot.get(k)}
+    version = int((prev or {}).get("version", 0))
+    if not prev or changed:
+        version += 1
+        current = {"_id": job_key, "version": version, "status": "current", **snapshot,
+                   "built_at": now_iso(), "built_source": source, "built_by": actor or None,
+                   "reason": reason or None, "created_at": (prev or {}).get("created_at") or now_iso(),
+                   "corrections": prev_corrections, "corrections_map": prev_corr_map}
+        await mongo_db.job_outcomes.replace_one({"_id": job_key}, current, upsert=True)
+        await mongo_db.job_outcome_versions.insert_one({
+            "_id": str(uuid4()), "job_key": job_key, "version": version, "at": now_iso(),
+            "source": source, "actor": actor or None, "reason": reason or None,
+            "changed_fields": changed if prev else {"created": True}, "snapshot": snapshot})
+        return current
+    return prev
+
+
+# ---- durable rebuild queue + retry loop + nightly reconcile (mirrors the timelog pattern) ----
+async def queue_outcome_rebuild(job_key: str, source: str, actor: str = "", reason: str = "") -> None:
+    await mongo_db.outcome_rebuild_queue.update_one(
+        {"_id": job_key}, {"$set": {"status": "pending", "source": source, "actor": actor,
+                                    "reason": reason, "at": now_iso()}}, upsert=True)
+    asyncio.create_task(_run_outcome_rebuild(job_key))
+
+
+async def _run_outcome_rebuild(job_key: str) -> None:
+    q = await mongo_db.outcome_rebuild_queue.find_one({"_id": job_key})
+    if not q:
+        return
+    try:
+        await build_outcome(job_key, q.get("source", "queue"), q.get("actor", ""), q.get("reason", ""))
+        await mongo_db.outcome_rebuild_queue.update_one(
+            {"_id": job_key}, {"$set": {"status": "done", "done_at": now_iso(), "error": None}})
+    except Exception as exc:
+        logger.warning("outcome rebuild failed for %s: %s", job_key, exc)
+        await mongo_db.outcome_rebuild_queue.update_one(
+            {"_id": job_key}, {"$set": {"status": "pending", "error": str(exc)[:300]}})
+
+
+async def _queue_outcome_rebuild_for_assignment(assignment_id: str, source: str, actor: str = "") -> None:
+    a = await mongo_db.assignments.find_one({"_id": assignment_id})
+    if a:
+        await queue_outcome_rebuild(_job_key_for_assignment(a), source, actor)
+
+
+async def outcome_rebuild_loop() -> None:
+    while True:
+        try:
+            for d in await mongo_db.outcome_rebuild_queue.find({"status": "pending"}).to_list(50):
+                await _run_outcome_rebuild(d["_id"])
+        except Exception as exc:
+            logger.warning("outcome_rebuild_loop: %s", exc)
+        await asyncio.sleep(120)
+
+
+async def _run_nightly_outcome_reconcile() -> Dict[str, Any]:
+    """2 AM ET: re-derive outcomes for jobs completed in the last 180 days so a direct Airtable edit or a
+    late-synced punch is caught. Never invents events."""
+    cutoff = (datetime.now(ZoneInfo("America/New_York")) - timedelta(days=180)).date().isoformat()
+    seen, n = set(), 0
+    for a in await mongo_db.assignments.find(
+            {"job_date": {"$gte": cutoff}, "exec_status": "Complete"}).to_list(2000):
+        key = _job_key_for_assignment(a)
+        if key in seen:
+            continue
+        seen.add(key)
+        await queue_outcome_rebuild(key, "nightly_reconcile")
+        n += 1
+    logger.info("nightly outcome reconcile queued=%s", n)
+    return {"queued": n}
+
+
+@public_router.post("/cron/nightly-outcome-reconcile")
+async def cron_nightly_outcome_reconcile(request: Request) -> Dict[str, Any]:
+    secret = os.environ.get("WEBHOOK_CRON_SECRET", "")
+    auth = request.headers.get("Authorization", "")
+    token = auth[7:] if auth.startswith("Bearer ") else ""
+    if not secret or not token or not hmac.compare_digest(token, secret):
+        raise HTTPException(status_code=401, detail="Bad cron secret.")
+    asyncio.create_task(_run_nightly_outcome_reconcile())
+    return {"ok": True}
+
+
+# ---- endpoints (owner + Quality; crew have no access) ----
+def _outcome_out(doc: Optional[Dict[str, Any]], role: str = "owner") -> Optional[Dict[str, Any]]:
+    if not doc:
+        return None
+    out = {k: v for k, v in doc.items() if k != "_id"} | {"job_key": doc["_id"]}
+    if role == "quality":
+        # Quality reviews outcomes but never sees revenue (final billed / dollar variance vs quote).
+        ft = dict(out.get("final_total") or {})
+        if "value" in ft:
+            ft["value"] = None
+            ft["redacted"] = True
+        out["final_total"] = ft
+        errs = dict(out.get("errors") or {})
+        errs.pop("dollar_variance", None)
+        errs.pop("in_band", None)
+        out["errors"] = errs
+    return out
+
+
+@api_router.get("/outcomes/{job_key}")
+async def get_outcome(job_key: str, request: Request, rebuild: int = 0):
+    p = await require_outcome_role(request)
+    if rebuild:
+        await build_outcome(job_key, "manual_view", p.get("name", ""))
+    doc = await mongo_db.job_outcomes.find_one({"_id": job_key})
+    if not doc:
+        assigns = await _assignments_for_job_key(job_key)
+        if not assigns:
+            raise HTTPException(status_code=404, detail="No such job.")
+        doc = await build_outcome(job_key, "manual_view", p.get("name", ""))
+    return _outcome_out(doc, p["role"])
+
+
+@api_router.get("/outcomes/{job_key}/history")
+async def get_outcome_history(job_key: str, request: Request):
+    p = await require_outcome_role(request)
+    versions = await mongo_db.job_outcome_versions.find({"job_key": job_key}).sort("version", -1).to_list(200)
+    out = []
+    for x in versions:
+        v = {k: val for k, val in x.items() if k != "_id"}
+        if p["role"] == "quality" and isinstance(v.get("snapshot"), dict):
+            snap = dict(v["snapshot"])
+            ft = dict(snap.get("final_total") or {})
+            if "value" in ft:
+                ft["value"] = None
+                ft["redacted"] = True
+            snap["final_total"] = ft
+            errs = dict(snap.get("errors") or {})
+            errs.pop("dollar_variance", None)
+            errs.pop("in_band", None)
+            snap["errors"] = errs
+            v["snapshot"] = snap
+            if isinstance(v.get("changed_fields"), dict):
+                v["changed_fields"] = {k: val for k, val in v["changed_fields"].items()
+                                       if k not in ("final_total",)}
+        out.append(v)
+    return {"versions": out}
+
+
+@api_router.get("/outcomes/{job_key}/scopes")
+async def outcome_candidate_scopes(job_key: str, request: Request):
+    """Saved quotes the owner/Quality can re-point this job to. Quality never sees the dollar amount."""
+    p = await require_outcome_role(request)
+    doc = await mongo_db.job_outcomes.find_one({"_id": job_key})
+    lead_id = (doc or {}).get("lead_id")
+    if not lead_id:
+        assigns = await _assignments_for_job_key(job_key)
+        lead_id = next((a.get("lead_id") for a in assigns if a.get("lead_id")), None)
+    if not lead_id:
+        return {"scopes": [], "active_quote_scope_id": None}
+    link = await mongo_db.lead_quote_links.find_one({"_id": lead_id})
+    active = (link or {}).get("active_quote_scope_id")
+    scopes = await mongo_db.lead_scopes.find({"lead_id": lead_id}).sort("created_at", -1).to_list(50)
+    rows = []
+    for s in scopes:
+        result = s.get("result") or {}
+        amount = s.get("amount") if s.get("amount") is not None else result.get("finalTotal")
+        rows.append({
+            "id": s["_id"], "created_at": s.get("created_at"), "created_by": s.get("created_by"),
+            "label": s.get("label") or "", "mode": result.get("mode") or s.get("estimate_mode"),
+            "crew_rec": result.get("crewRec") or (s.get("inputs") or {}).get("crew"),
+            "survey_complete": bool(s.get("survey_complete")),
+            "amount": (None if p["role"] == "quality" else amount),
+            "is_active": s["_id"] == active,
+        })
+    return {"scopes": rows, "active_quote_scope_id": active}
+
+
+class OutcomeCorrectionPayload(BaseModel):
+    field: str
+    value: Any = None
+    reason: str
+
+
+@api_router.post("/outcomes/{job_key}/correct")
+async def correct_outcome(job_key: str, payload: OutcomeCorrectionPayload, request: Request):
+    """Owner/Quality supplement or fix a missing/incorrect fact with a required reason. The original value
+    is preserved in the corrections log and a new version is created; nothing is overwritten in place."""
+    p = await require_outcome_role(request)
+    if len((payload.reason or "").strip()) < 5:
+        raise HTTPException(status_code=422, detail="Give a reason (5+ characters) so the record makes sense later.")
+    allowed = {"final_total", "actual_mileage", "as_found_note", "quoted_crew"}
+    if payload.field not in allowed:
+        raise HTTPException(status_code=422, detail=f"Can't correct '{payload.field}'.")
+    if payload.field == "final_total" and p["role"] != "owner":
+        raise HTTPException(status_code=403, detail="Only the owner can correct the final billed amount.")
+    doc = await mongo_db.job_outcomes.find_one({"_id": job_key})
+    if not doc:
+        raise HTTPException(status_code=404, detail="No such job outcome.")
+    entry = {"field": payload.field, "value": payload.value, "before": doc.get("corrections_map", {}).get(payload.field),
+             "by": p["name"], "by_id": p.get("user_id"), "at": now_iso(), "reason": payload.reason.strip()[:500]}
+    await mongo_db.job_outcomes.update_one(
+        {"_id": job_key}, {"$push": {"corrections": entry},
+                           "$set": {f"corrections_map.{payload.field}": payload.value}})
+    # NOTE: final_total is NOT pre-written here — build_outcome honors corrections_map.final_total and
+    # rewrites the field itself, so the correction survives the rebuild instead of being clobbered by it.
+    await audit(p, "corrected a job outcome", job_key, {"field": payload.field, "reason": payload.reason.strip()})
+    src = "quality_edit" if p["role"] == "quality" else "owner_edit"
+    fresh = await build_outcome(job_key, src, p["name"], payload.reason.strip())
+    return _outcome_out(fresh, p["role"])
+
+
+class ScopeRepointPayload(BaseModel):
+    quote_scope_id: str
+    reason: str
+
+
+@api_router.post("/outcomes/{job_key}/repoint-scope")
+async def repoint_outcome_scope(job_key: str, payload: ScopeRepointPayload, request: Request):
+    p = await require_outcome_role(request)
+    if len((payload.reason or "").strip()) < 5:
+        raise HTTPException(status_code=422, detail="Give a reason (5+ characters) for re-pointing the quote.")
+    doc = await mongo_db.job_outcomes.find_one({"_id": job_key})
+    if not doc:
+        raise HTTPException(status_code=404, detail="No such job outcome.")
+    scope = await mongo_db.lead_scopes.find_one({"_id": payload.quote_scope_id})
+    if not scope:
+        raise HTTPException(status_code=404, detail="No such saved quote.")
+    if doc.get("lead_id"):
+        await _set_active_quote_link(doc["lead_id"], payload.quote_scope_id, scope.get("amount"),
+                                     scope.get("commit_type") or "firm", p["name"], "outcome_repoint")
+    await audit(p, "re-pointed the quote for a job outcome", job_key,
+                {"quote_scope_id": payload.quote_scope_id, "reason": payload.reason.strip()})
+    src = "quality_edit" if p["role"] == "quality" else "owner_edit"
+    fresh = await build_outcome(job_key, src, p["name"], payload.reason.strip())
+    return _outcome_out(fresh, p["role"])
+
+
+class OutcomeExcludePayload(BaseModel):
+    excluded: bool
+    reason: str
+
+
+@api_router.post("/outcomes/{job_key}/exclude")
+async def exclude_outcome(job_key: str, payload: OutcomeExcludePayload, request: Request):
+    p = await require_outcome_role(request)
+    if len((payload.reason or "").strip()) < 5:
+        raise HTTPException(status_code=422, detail="Give a reason (5+ characters).")
+    doc = await mongo_db.job_outcomes.find_one({"_id": job_key})
+    if not doc:
+        raise HTTPException(status_code=404, detail="No such job outcome.")
+    excl = dict(doc.get("exclusion") or {})
+    excl["manual"] = bool(payload.excluded)
+    excl["reason"] = payload.reason.strip()[:500]
+    await mongo_db.job_outcomes.update_one({"_id": job_key}, {"$set": {"exclusion": excl}})
+    await audit(p, "manually " + ("excluded" if payload.excluded else "re-included") + " a job outcome",
+                job_key, {"reason": payload.reason.strip()})
+    src = "quality_edit" if p["role"] == "quality" else "owner_edit"
+    fresh = await build_outcome(job_key, src, p["name"], payload.reason.strip())
+    return _outcome_out(fresh, p["role"])
+
+
+class SurveyMissPayload(BaseModel):
+    key: str
+    decision: str   # confirmed | dismissed
+    reason: Optional[str] = None
+
+
+@api_router.post("/outcomes/{job_key}/survey-miss")
+async def decide_survey_miss(job_key: str, payload: SurveyMissPayload, request: Request):
+    p = await require_outcome_role(request)
+    if payload.decision not in ("confirmed", "dismissed"):
+        raise HTTPException(status_code=422, detail="Decision must be 'confirmed' or 'dismissed'.")
+    doc = await mongo_db.job_outcomes.find_one({"_id": job_key})
+    if not doc:
+        raise HTTPException(status_code=404, detail="No such job outcome.")
+    decisions = dict((doc.get("survey_miss") or {}).get("decisions") or {})
+    decisions[payload.key] = {"decision": payload.decision, "by": p["name"], "at": now_iso(),
+                              "reason": (payload.reason or "").strip()[:400]}
+    await mongo_db.job_outcomes.update_one({"_id": job_key}, {"$set": {"survey_miss.decisions": decisions}})
+    await audit(p, f"{payload.decision} a survey-miss flag", job_key, {"key": payload.key})
+    src = "quality_edit" if p["role"] == "quality" else "owner_edit"
+    fresh = await build_outcome(job_key, src, p["name"], f"survey miss {payload.decision}")
+    return _outcome_out(fresh, p["role"])
+
+
+@api_router.post("/outcomes-backfill")
+async def backfill_outcomes(request: Request, days: int = 180):
+    """Owner-only: build version 1 (source=backfill) for completed jobs in the window. Reports the mix
+    without manufacturing missing events."""
+    p = await require_owner(request)
+    cutoff = (datetime.now(ZoneInfo("America/New_York")) - timedelta(days=max(1, min(3650, days)))).date().isoformat()
+    keys, report = set(), {"processed": 0, "complete": 0, "incomplete": 0, "unmatched": 0,
+                           "test": 0, "excluded": 0, "missing_final_total": 0, "explicit_scope": 0, "legacy_scope": 0}
+    for a in await mongo_db.assignments.find(
+            {"job_date": {"$gte": cutoff}, "exec_status": "Complete"}).to_list(3000):
+        key = _job_key_for_assignment(a)
+        if key in keys:
+            continue
+        keys.add(key)
+        doc = await build_outcome(key, "backfill", p["name"])
+        if not doc:
+            continue
+        report["processed"] += 1
+        dq = doc.get("data_quality")
+        report["complete"] += dq == "complete"
+        report["incomplete"] += dq == "incomplete"
+        report["unmatched"] += dq == "unmatched"
+        if (doc.get("quote_match") or {}).get("rule") == "explicit_quote_scope_id":
+            report["explicit_scope"] += 1
+        elif doc.get("quote"):
+            report["legacy_scope"] += 1
+        if (doc.get("exclusion") or {}).get("excluded"):
+            report["excluded"] += 1
+        if "test_or_sample" in ((doc.get("exclusion") or {}).get("reasons") or []):
+            report["test"] += 1
+        if (doc.get("final_total") or {}).get("value") is None:
+            report["missing_final_total"] += 1
+    await audit(p, "ran the job-outcome backfill", f"{report['processed']} jobs", report)
+    return report
+
+
 @app.on_event("startup")
 async def seed_on_startup():
     try:
@@ -12094,6 +12843,7 @@ async def seed_on_startup():
     asyncio.create_task(lead_alert_loop())
     asyncio.create_task(meta_poll_loop())
     asyncio.create_task(challenge_agent_loop())
+    asyncio.create_task(outcome_rebuild_loop())
     if not meta_capi.capi_enabled():
         logger.warning("Meta CAPI disabled — set META_DATASET_ID and META_CAPI_ACCESS_TOKEN "
                        "in the secrets panel to send ad conversion events.")

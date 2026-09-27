@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   ArrowLeft, MapPin, Users, Clock3, CheckCircle2, XCircle, ShieldCheck, ShieldAlert,
-  FileText, Star, DollarSign, Send, CalendarClock, Loader2, UserCog, Pencil, History,
+  FileText, Star, DollarSign, Send, CalendarClock, Loader2, UserCog, Pencil, History, ClipboardCheck,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -11,6 +11,7 @@ import { InstructionBanner } from "@/components/Bits";
 import { ComplianceSection } from "@/components/ComplianceSection";
 import { JobEditDialog } from "@/components/job/JobEditDialog";
 import { CrewLeadDoc } from "@/components/crew/CrewLeadDoc";
+import { JobOutcomePanel } from "@/components/JobOutcomePanel";
 import { useAuth } from "@/components/AuthGate";
 import { PF, STATUS_PILL } from "@/lib/fields";
 import { fmtDate, fmtMoney, mapsLink } from "@/lib/format";
@@ -94,6 +95,10 @@ export default function JobDetail() {
   const status = g(f, PF.status) || "—";
   const portal = data.portal;
   const quality = data.quality;
+  const canOutcome = role === "owner" || role === "quality";
+  const hasAssignments = (data.assignments || []).length > 0;
+  const isComplete = String(status).toLowerCase().includes("complete")
+    || (data.assignments || []).some((asg) => asg.exec_status === "Complete");
 
   return (
     <div data-testid="job-detail-page" className="space-y-4">
@@ -140,6 +145,7 @@ export default function JobDetail() {
           {money && <TabsTrigger data-testid="job-tab-financial" value="financial">Financial</TabsTrigger>}
           {data.can_see_compliance && <TabsTrigger data-testid="job-tab-compliance" value="compliance">Compliance</TabsTrigger>}
           {data.can_see_quality && <TabsTrigger data-testid="job-tab-quality" value="quality">Quality</TabsTrigger>}
+          {canOutcome && <TabsTrigger data-testid="job-tab-outcome" value="outcome">Outcome</TabsTrigger>}
           <TabsTrigger data-testid="job-tab-documents" value="documents">Customer page</TabsTrigger>
           <TabsTrigger data-testid="job-tab-history" value="history">History</TabsTrigger>
         </TabsList>
@@ -348,6 +354,27 @@ export default function JobDetail() {
                     ) : <p className="text-sm text-faint">No review captured.</p>}
                   </div>
                 </>
+              )}
+            </div>
+          </TabsContent>
+        )}
+
+        {/* OUTCOME (owner + Quality) */}
+        {canOutcome && (
+          <TabsContent value="outcome" className="mt-4">
+            <div className="surface p-4" data-testid="job-outcome-tab">
+              <h3 className="font-bold text-primary flex items-center gap-2 mb-1"><ClipboardCheck className="w-4 h-4 text-accent-ink" /> Job outcome</h3>
+              <p className="text-xs text-faint mb-3">Actuals vs the committed quote — captured for later learning. This never changes pricing, pay, or the customer's bill.{role === "quality" ? " Revenue figures are hidden for the Quality view." : ""}</p>
+              {data.outcome ? (
+                <JobOutcomePanel jobKey={data.outcome.job_key} role={role} initial={data.outcome} />
+              ) : (
+                <p data-testid="job-outcome-unavailable" className="text-sm text-faint py-4">
+                  {!hasAssignments
+                    ? "This job hasn't been dispatched to a crew yet — the outcome is built from the crew's on-site clock and taps once they work it."
+                    : isComplete
+                      ? "Outcome is being assembled — reopen this tab in a moment, or it will finalize on tonight's reconcile."
+                      : "Outcome will be available after the job is completed and the crew's times are recorded."}
+                </p>
               )}
             </div>
           </TabsContent>
