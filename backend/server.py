@@ -12902,6 +12902,194 @@ async def backfill_outcomes(request: Request, days: int = 180):
     return report
 
 
+# ======= Stage 6: Calculator Accuracy workspace (MEASUREMENT ONLY) =======
+# Read-only aggregation of Stage-4 job_outcomes against the Stage-5 recorded model. It MEASURES how
+# accurate the estimator is (man-hour bias/error, per-factor sample coverage, data-quality review queue,
+# Stage-7 readiness preview) and shows the CURRENT estimating parameters. It NEVER suggests a calibration
+# value, changes a quote, or trains anything — that is Stage 7 (separate explicit approval).
+# Owner + Quality only; revenue (final billed / dollar variance / in-band) is redacted for Quality.
+STAGE7_READINESS_TARGET = 10        # readiness REVIEW marker, NOT a trigger to enable learning
+SPECIALTY_ITEM_KEYS = ("upright", "grand", "safe1", "safe2", "safe3", "pool", "tread", "gym", "moto")
+
+
+def _coverage_label(n: int) -> str:
+    if n <= 0:
+        return "no_data"
+    if n < 3:
+        return "insufficient"
+    if n < 8:
+        return "limited"
+    return "ok"
+
+
+def _mean(vals: List[float]) -> Optional[float]:
+    return round(sum(vals) / len(vals), 3) if vals else None
+
+
+@api_router.get("/quality/calculator-accuracy")
+async def quality_calculator_accuracy(request: Request):
+    p = await require_outcome_role(request)      # owner + quality; sales/crew/marketing → 403
+    is_owner = p["role"] == "owner"
+    qp = request.query_params
+    d_from, d_to = qp.get("from"), qp.get("to")
+
+    outcomes = await mongo_db.job_outcomes.find({}).to_list(3000)
+
+    def in_range(o: Dict[str, Any]) -> bool:
+        d = (o.get("job_date") or "")[:10]
+        if d_from and d and d < d_from:
+            return False
+        if d_to and d and d > d_to:
+            return False
+        return True
+    outcomes = [o for o in outcomes if in_range(o)]
+
+    def qinputs(o: Dict[str, Any]) -> Dict[str, Any]:
+        return ((o.get("quote") or {}).get("inputs") or {})
+
+    def werr(o: Dict[str, Any]) -> Optional[float]:
+        return (o.get("errors") or {}).get("model_work_mh_error")
+
+    usable: List[Dict[str, Any]] = []
+    review: List[Dict[str, Any]] = []
+    for o in outcomes:
+        errs = o.get("errors") or {}
+        excl = o.get("exclusion") or {}
+        dq = o.get("data_quality")
+        sm = o.get("survey_miss") or {}
+        decisions = sm.get("decisions") or {}
+        pending_sm = [fl.get("key") for fl in (sm.get("flags") or []) if fl.get("key") not in decisions]
+        reasons: List[str] = []
+        if dq == "incomplete":
+            reasons.append("incomplete_actuals")
+        if dq == "unmatched" or not o.get("quote") or "unmatched_quote" in (excl.get("reasons") or []):
+            reasons.append("no_matched_quote")
+        if "model_outlier_pending_review" in (excl.get("reasons") or []):
+            reasons.append("model_outlier")
+        if pending_sm:
+            reasons.append("survey_miss_pending")
+        if excl.get("manual"):
+            reasons.append("manually_excluded")
+        if is_owner and dq == "complete" and (o.get("final_total") or {}).get("value") is None:
+            reasons.append("final_total_missing")
+        if reasons:
+            review.append({
+                "job_key": o["_id"], "project_id": o.get("project_id"),
+                "job_name": o.get("job_name") or "Untitled job", "job_date": o.get("job_date"),
+                "reasons": sorted(set(reasons)), "data_quality": dq,
+                "excluded": bool(excl.get("excluded")), "exclusion_reasons": excl.get("reasons") or [],
+                "survey_miss_pending": pending_sm, "linkable": bool(o.get("project_id")),
+            })
+        if o.get("learning_eligible") and werr(o) is not None:
+            usable.append(o)
+
+    we = [werr(o) for o in usable if werr(o) is not None]
+    abs_we = [abs(x) for x in we]
+    pcts = [abs(werr(o)) / (o.get("actuals") or {}).get("work_man_hours")
+            for o in usable if werr(o) is not None and (o.get("actuals") or {}).get("work_man_hours")]
+    bias = _mean(we)
+    bias_dir = "balanced" if bias is None else ("over" if bias > 0.05 else "under" if bias < -0.05 else "balanced")
+    work_mh = {
+        "sample": len(we), "label": _coverage_label(len(we)),
+        "mean_signed_error": bias, "bias_direction": bias_dir, "mae": _mean(abs_we),
+        "mean_abs_pct_error": (round(_mean(pcts) * 100, 1) if pcts else None),
+        "within_1mh_rate": (round(sum(x <= 1.0 for x in abs_we) / len(abs_we) * 100, 1) if abs_we else None),
+        "within_15pct_rate": (round(sum(x <= 0.15 for x in pcts) / len(pcts) * 100, 1) if pcts else None),
+    }
+    summary: Dict[str, Any] = {
+        "total_outcomes": len(outcomes), "usable_jobs": len(usable),
+        "excluded_jobs": sum(1 for o in outcomes if (o.get("exclusion") or {}).get("excluded")),
+        "incomplete_jobs": sum(1 for o in outcomes if o.get("data_quality") == "incomplete"),
+        "review_count": len(review), "data_label": _coverage_label(len(usable)), "work_mh": work_mh,
+    }
+    if is_owner:
+        dv = [(o.get("errors") or {}).get("dollar_variance") for o in usable
+              if (o.get("errors") or {}).get("dollar_variance") is not None]
+        ib = [(o.get("errors") or {}).get("in_band") for o in usable
+              if (o.get("errors") or {}).get("in_band") is not None]
+        summary["dollars"] = {
+            "sample": len(dv), "mean_dollar_variance": _mean(dv),
+            "in_band_sample": len(ib),
+            "in_band_rate": (round(sum(1 for b in ib if b) / len(ib) * 100, 1) if ib else None),
+        }
+
+    # ---- monthly trend (usable only) ----
+    from collections import defaultdict
+    months: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for o in usable:
+        months[(o.get("job_date") or "")[:7] or "unknown"].append(o)
+    trends = []
+    for m in sorted(k for k in months if k != "unknown"):
+        grp = months[m]
+        g = [werr(o) for o in grp if werr(o) is not None]
+        row = {"month": m, "jobs": len(grp), "mean_signed_error": _mean(g), "mae": _mean([abs(v) for v in g])}
+        if is_owner:
+            gdv = [(o.get("errors") or {}).get("dollar_variance") for o in grp
+                   if (o.get("errors") or {}).get("dollar_variance") is not None]
+            row["mean_dollar_variance"] = _mean(gdv)
+        trends.append(row)
+
+    # ---- per-factor sample coverage (measurement only; NO suggested values) ----
+    def cov(subset: List[Dict[str, Any]]) -> Dict[str, Any]:
+        e = [werr(o) for o in subset if werr(o) is not None]
+        return {"sample": len(subset), "label": _coverage_label(len(subset)),
+                "mean_signed_error": _mean(e), "mae": _mean([abs(v) for v in e])}
+
+    packing = [{"tier": t, **cov([o for o in usable if int(qinputs(o).get("pack") or 0) == t])} for t in range(4)]
+    access = [{"key": k, **cov([o for o in usable if (_num((qinputs(o).get("acc") or {}).get(k)) or 0) > 0])}
+              for k in scope_engine.ACCESS_KEYS]
+    specialty = cov([o for o in usable
+                     if any((_num((qinputs(o).get("qty") or {}).get(k)) or 0) > 0 for k in SPECIALTY_ITEM_KEYS)
+                     or (isinstance(qinputs(o).get("custom"), list) and qinputs(o).get("custom"))])
+    packages = [{"key": k, **cov([o for o in usable if (qinputs(o).get("pkg") or "") == k])}
+                for k in ("studio", "br2", "br3", "br4")]
+    packages.append({"key": "none", **cov([o for o in usable if not qinputs(o).get("pkg")])})
+
+    def crew_of(o: Dict[str, Any]) -> Optional[int]:
+        cr = (o.get("quote") or {}).get("crew_rec")
+        try:
+            return int(float(cr)) if cr is not None else None
+        except (TypeError, ValueError):
+            return None
+    crew_buckets = []
+    for lo, hi, lbl in [(2, 2, "2"), (3, 3, "3"), (4, 4, "4"), (5, 99, "5plus")]:
+        crew_buckets.append({"key": lbl, **cov([o for o in usable if crew_of(o) is not None and lo <= crew_of(o) <= hi])})
+
+    coverage = {"base_rate": cov(usable), "packing": packing, "access": access,
+                "specialty": specialty, "packages": packages, "crew": crew_buckets}
+
+    # ---- current estimating parameters (read-only, non-monetary) ----
+    params = await get_estimating_params()
+    rates = await get_rates_values()
+    calib = params.get("calibration_version", "v0")
+    current_parameters = {
+        "calibration_version": calib, "all_default": calib == "v0",
+        "base_rate_mh_per_100cuft": rates.get("manHoursPer100CuFt"),
+        "package_hours": params.get("packageHours"),
+        "packing_multipliers": params.get("packingMult"),
+        "access_per_mh": params.get("accessPer"),
+        "item_multiplier": params.get("itemMult"),
+        "crew_efficiency": params.get("crewEfficiency"),
+        "scheduling": {"targetHoursOnSite": rates.get("targetHoursOnSite"),
+                       "maxHoursOnSite": rates.get("maxHoursOnSite"),
+                       "maxCrewPerDay": rates.get("maxCrewPerDay")},
+    }
+
+    progress = {
+        "usable_jobs": len(usable), "readiness_target": STAGE7_READINESS_TARGET,
+        "ready_for_stage7_review": len(usable) >= STAGE7_READINESS_TARGET,
+        "stage7_enabled": False,
+        "note": ("Stage 7 (learning / suggested calibration) is not enabled. It needs your explicit "
+                 "approval and its own per-parameter sample thresholds. This page only measures."),
+    }
+
+    review.sort(key=lambda r: r.get("job_date") or "", reverse=True)
+    trends.sort(key=lambda r: r["month"])
+    return {"role": p["role"], "summary": summary, "trends": trends, "coverage": coverage,
+            "review_queue": review, "current_parameters": current_parameters, "progress": progress,
+            "filters": {"from": d_from, "to": d_to}}
+
+
 @app.on_event("startup")
 async def seed_on_startup():
     try:

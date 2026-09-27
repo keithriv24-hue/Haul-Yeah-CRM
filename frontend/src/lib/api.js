@@ -67,6 +67,7 @@ export const jobMgmtHistoryApi = (projectId) =>
 // Quality & Compliance module
 export const qualityAuditQueueApi = () => axios.get(`${API}/quality/audit-queue`).then((r) => r.data);
 export const qualityQuoteAccuracyApi = (params) => axios.get(`${API}/quality/quote-accuracy`, { params }).then((r) => r.data);
+export const qualityCalculatorAccuracyApi = (params) => axios.get(`${API}/quality/calculator-accuracy`, { params }).then((r) => r.data);
 export const qualityFeedbackListApi = () => axios.get(`${API}/quality/feedback`).then((r) => r.data.feedback);
 export const qualityFeedbackCreateApi = (payload) => axios.post(`${API}/quality/feedback`, payload).then((r) => r.data);
 // Quality prompt 3 — dashboard, claims, reviews, monthly review

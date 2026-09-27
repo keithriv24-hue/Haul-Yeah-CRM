@@ -42,6 +42,7 @@ import QualityAudits from "@/pages/QualityAudits";
 import QualityProblems from "@/pages/QualityProblems";
 import QualityDocuments from "@/pages/QualityDocuments";
 import QualityQuoteAccuracy from "@/pages/QualityQuoteAccuracy";
+import QualityCalculatorAccuracy from "@/pages/QualityCalculatorAccuracy";
 import QualityDashboard from "@/pages/QualityDashboard";
 import QualityClaims from "@/pages/QualityClaims";
 import QualityMonthly from "@/pages/QualityMonthly";
@@ -138,6 +139,7 @@ function RoleRoutes() {
           <Route path="/quality/claims" element={<QualityClaims />} />
           <Route path="/quality/documents" element={<QualityDocuments />} />
           <Route path="/quality/quote-accuracy" element={<QualityQuoteAccuracy />} />
+          <Route path="/quality/calculator-accuracy" element={<QualityCalculatorAccuracy />} />
           <Route path="/quality/monthly" element={<QualityMonthly />} />
           <Route path="/projects" element={<Projects />} />
           <Route path="/projects/:id" element={<JobDetail />} />
@@ -185,6 +187,7 @@ function RoleRoutes() {
         <Route path="/quality/claims" element={<QualityClaims />} />
         <Route path="/quality/documents" element={<QualityDocuments />} />
         <Route path="/quality/quote-accuracy" element={<QualityQuoteAccuracy />} />
+        <Route path="/quality/calculator-accuracy" element={<QualityCalculatorAccuracy />} />
         <Route path="/quality/monthly" element={<QualityMonthly />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

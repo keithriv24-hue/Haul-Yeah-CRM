@@ -136,7 +136,7 @@ export default function JobDetail() {
         />
       )}
 
-      <Tabs defaultValue="overview">
+      <Tabs defaultValue={new URLSearchParams(window.location.search).get("tab") || "overview"}>
         <TabsList className="flex-wrap h-auto">
           <TabsTrigger data-testid="job-tab-overview" value="overview">Overview</TabsTrigger>
           <TabsTrigger data-testid="job-tab-scope" value="scope">Scope</TabsTrigger>

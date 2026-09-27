@@ -6,7 +6,7 @@ import {
   CreditCard, Handshake, HelpCircle, Eye, EyeOff, RefreshCw, KeyRound, LogOut, SlidersHorizontal, MessageSquareText, Video, UserRound,
   HardHat, ClipboardList, AlarmClock, CalendarDays, Briefcase, Sun, Megaphone, UsersRound, Trophy, Swords, Medal,
   BadgeDollarSign, BellRing, Radio, Wrench, MoreHorizontal, Search, Boxes,
-  ClipboardCheck, AlertOctagon, FileText, Scale, CalendarRange,
+  ClipboardCheck, AlertOctagon, FileText, Scale, CalendarRange, Gauge,
 } from "lucide-react";import { useApp } from "@/context/AppContext";
 import { useAuth } from "@/components/AuthGate";
 import { NotificationsBell } from "@/components/NotificationsBell";
@@ -66,6 +66,7 @@ const NAV = [
   { to: "/quality/claims", label: "Claims", icon: Scale, roles: ["owner", "quality"], group: "Quality" },
   { to: "/quality/documents", label: "Documents", icon: FileText, roles: ["owner", "quality"], group: "Quality" },
   { to: "/quality/monthly", label: "Monthly Review", icon: CalendarRange, roles: ["owner", "quality"], group: "Quality" },
+  { to: "/quality/calculator-accuracy", label: "Calculator Accuracy", icon: Gauge, roles: ["owner", "quality"], group: "Quality" },
 ];
 
 /** Four fixed thumb targets per role. Everything else lives behind More. */
