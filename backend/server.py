@@ -6825,6 +6825,12 @@ async def dispatch_board(date: Optional[str] = None, p: Dict[str, Any] = Depends
     docs.sort(key=lambda a: (a.get("arrival_time") or "99:99", a.get("job_name") or ""))
     ids = [a["_id"] for a in docs]
     entries = await mongo_db.time_entries.find({"assignment_id": {"$in": ids}}).to_list(500)
+    await _scan_no_shows(day)
+    rflags = await mongo_db.reliability_flags.find(
+        {"job_date": day, "status": {"$in": ["open", "unverified", "disputed"]}}).sort("created_at", -1).to_list(300)
+    flags_by_user: Dict[str, int] = {}
+    for f in rflags:
+        flags_by_user[f.get("user_id")] = flags_by_user.get(f.get("user_id"), 0) + 1
     cl_docs = await mongo_db.job_checklists.find({"_id": {"$in": ids}}).to_list(100)
     cl_done = {d["_id"]: _checklist_done_count(d) for d in cl_docs}
     open_by_assignment: Dict[str, int] = {}
@@ -6879,7 +6885,7 @@ async def dispatch_board(date: Optional[str] = None, p: Dict[str, Any] = Depends
     off_ids = {d.get("user_id") for d in off_docs}
     crew_pool = [{"id": u["_id"], "name": u.get("name", ""), "jobs_today": on_today.get(u["_id"], 0),
                   "jobs_week": week_count.get(u["_id"], 0), "clocked_in": u["_id"] in clocked_ids,
-                  "off": u["_id"] in off_ids} for u in crew_users]
+                  "off": u["_id"] in off_ids, "flags": flags_by_user.get(u["_id"], 0)} for u in crew_users]
     trucks = await mongo_db.trucks.find({"active": {"$ne": False}}).sort("name", 1).to_list(100)
     truck_use = {a.get("truck_id"): a.get("job_name") for a in docs if a.get("truck_id")}
     truck_pool = [{"id": t["_id"], "name": t.get("name", ""), "on_job": truck_use.get(t["_id"])} for t in trucks]
@@ -6896,6 +6902,7 @@ async def dispatch_board(date: Optional[str] = None, p: Dict[str, Any] = Depends
             revenue_today += inv.get("amount") or 0
     return {"date": day, "is_today": is_today, "assignments": out, "crew": crew_pool, "trucks": truck_pool,
             "revenue_today": round(revenue_today, 2),
+            "reliability": [_reliability_flag_out(f) for f in rflags],
             "counts": {"total": len(out), "active": active, "complete": complete,
                        "behind": behind_count, "needs_crew": needs_crew}}
 
@@ -7150,6 +7157,10 @@ async def job_timeline(assignment_id: str, request: Request):
     for ph in await mongo_db.job_photos.find({"assignment_id": assignment_id}).to_list(100):
         events.append({"at": ph.get("created_at"), "kind": "photo",
                        "title": f"Photo added by {ph.get('user_name')}", "by": ph.get("user_name", "")})
+    for f in await mongo_db.reliability_flags.find({"assignment_id": assignment_id}).to_list(100):
+        events.append({"at": f.get("created_at"), "kind": "flag",
+                       "title": f"{RELIABILITY_LABELS.get(f.get('type'), f.get('type'))} — {f.get('user_name')}: "
+                                f"{f.get('detail')} [{f.get('status')}]", "by": f.get("user_name", "")})
     events = [e for e in events if e.get("at")]
     events.sort(key=lambda e: e["at"], reverse=True)
     events = events[:199]
@@ -7609,6 +7620,16 @@ async def clock_in(payload: PunchPayload, request: Request, p: Dict[str, Any] = 
         await notify(None, "owner", "Unscheduled clock-in",
                      f"{p['name']} just clocked in but isn't on any job today. Check the Time tab on the Crew page.",
                      "flag", {"entry_id": doc["_id"]})
+    if assignment:   # Stage 3: late clock-in vs the person's scheduled report time (owner-configurable grace)
+        sched = _scheduled_report_dt(assignment)
+        if sched:
+            grace = (await _reliability_config())["grace_minutes"]
+            late_min = int((now.astimezone(ZoneInfo("America/New_York")) - sched).total_seconds() / 60)
+            if late_min > grace:
+                await _create_reliability_flag(
+                    assignment, p["user_id"], p["name"], "late_clock_in",
+                    f"Clocked in {late_min} min after the {assignment.get('arrival_time')} report time "
+                    f"(grace {grace} min).", meta={"minutes_late": late_min, "grace_minutes": grace})
     if coords:
         await mongo_db.gps_pings.insert_one({"_id": str(uuid4()), "user_id": p["user_id"], "user_name": p["name"],
                                              "lat": payload.lat, "lng": payload.lng, "at": now.isoformat()})
@@ -7633,6 +7654,13 @@ async def clock_out(payload: PunchPayload, p: Dict[str, Any] = Depends(require_c
     await mongo_db.time_entries.update_one({"_id": entry["_id"]},
                                            {"$set": {"clock_out": clock_out_data, "hours": hours, "flags": flags}})
     await queue_timelog_sync(entry.get("assignment_id"))
+    if assignment and (assignment.get("exec_status") or "Assigned") != "Complete":
+        # Stage 3: clocked out before the job is Complete → owner review (never auto-called an early departure)
+        await _create_reliability_flag(
+            assignment, p["user_id"], p["name"], "early_clock_out",
+            f"Clocked out while \"{assignment.get('job_name')}\" was still "
+            f"\"{assignment.get('exec_status') or 'Assigned'}\" (not Complete).",
+            meta={"exec_status": assignment.get("exec_status")})
     job_today = await mongo_db.jobs.find_one({"crew.user_id": p["user_id"], "job_date": _et_today()})
     return {"entry_id": str(entry["_id"]), "hours": hours, "flags": flags,
             "review_prompt": bool(job_today), "job_id": str(job_today["_id"]) if job_today else None,
@@ -7661,6 +7689,10 @@ async def my_time(p: Dict[str, Any] = Depends(require_crew)):
             wk = week_key(e["clock_in"]["at"])
             weeks[wk] = round(weeks.get(wk, 0) + h, 2)
     open_entry = next((e for e in docs if not e.get("clock_out")), None)
+    nudge = False
+    if open_entry and open_entry.get("assignment_id"):
+        oa = await mongo_db.assignments.find_one({"_id": open_entry["assignment_id"]}, {"exec_status": 1})
+        nudge = bool(oa and oa.get("exec_status") == "Complete")
     return {
         "entries": [{"id": e["_id"], "clock_in": e["clock_in"], "clock_out": e.get("clock_out"),
                      "hours": e.get("hours"), "job_name": e.get("job_name"), "position": e.get("position"),
@@ -7668,8 +7700,377 @@ async def my_time(p: Dict[str, Any] = Depends(require_crew)):
         "weekly_totals": weeks,
         "clocked_in": bool(open_entry),
         "open_entry": {"id": open_entry["_id"], "clocked_in_at": open_entry["clock_in"]["at"],
-                       "job_name": open_entry.get("job_name")} if open_entry else None,
+                       "job_name": open_entry.get("job_name"),
+                       "assignment_id": open_entry.get("assignment_id")} if open_entry else None,
+        "still_clocked_in_after_complete": nudge,
     }
+
+
+# ======= Stage 3: helpers, clocks, reliability, accountability & records =======
+# Everything here is REVIEW + VISIBILITY. Derived flags never auto-dock pay, change assignments,
+# clock anyone out, or touch rewards. Documentation points stay OFF (0) until the owner enables them.
+
+RELIABILITY_LABELS = {
+    "late_clock_in": "Late clock-in",
+    "possible_no_show": "Possible no-show (unverified)",
+    "early_clock_out": "Clocked out before Complete",
+    "missing_clock_out": "Missing clock-out",
+    "owner_correction": "Owner corrected a punch",
+    "disputed_punch": "Disputed punch",
+}
+
+
+async def _reliability_config() -> Dict[str, Any]:
+    doc = await mongo_db.settings.find_one({"_id": "reliability_config"}) or {}
+    return {
+        "grace_minutes": int(doc.get("grace_minutes", 10)),
+        "documentation_points": int(doc.get("documentation_points", 0)),
+        "documentation_points_enabled": bool(doc.get("documentation_points_enabled", False)),
+    }
+
+
+class ReliabilityConfigPayload(BaseModel):
+    grace_minutes: Optional[int] = None
+    documentation_points: Optional[int] = None
+    documentation_points_enabled: Optional[bool] = None
+
+
+@api_router.get("/settings/reliability")
+async def get_reliability_config(p: Dict[str, Any] = Depends(require_owner)):
+    return await _reliability_config()
+
+
+@api_router.put("/settings/reliability")
+async def save_reliability_config(payload: ReliabilityConfigPayload, p: Dict[str, Any] = Depends(require_owner)):
+    updates: Dict[str, Any] = {}
+    if payload.grace_minutes is not None:
+        updates["grace_minutes"] = max(0, min(240, int(payload.grace_minutes)))
+    if payload.documentation_points is not None:
+        updates["documentation_points"] = max(0, min(1000, int(payload.documentation_points)))
+    if payload.documentation_points_enabled is not None:
+        updates["documentation_points_enabled"] = bool(payload.documentation_points_enabled)
+    if updates:
+        await mongo_db.settings.update_one({"_id": "reliability_config"}, {"$set": updates}, upsert=True)
+        await audit(p, "updated reliability settings", "settings", updates)
+    return await _reliability_config()
+
+
+def _parse_iso(s: Any) -> Optional[datetime]:
+    try:
+        return datetime.fromisoformat(str(s))
+    except (ValueError, TypeError):
+        return None
+
+
+def _scheduled_report_dt(a: Dict[str, Any]) -> Optional[datetime]:
+    at, d = a.get("arrival_time"), a.get("job_date")
+    if not at or not d:
+        return None
+    try:
+        hh, mm = [int(x) for x in str(at).split(":")[:2]]
+        return datetime.fromisoformat(f"{d}T00:00:00").replace(
+            hour=hh, minute=mm, tzinfo=ZoneInfo("America/New_York"))
+    except (ValueError, TypeError):
+        return None
+
+
+def _reliability_flag_out(f: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "id": f["_id"], "assignment_id": f.get("assignment_id"), "job_name": f.get("job_name"),
+        "job_date": f.get("job_date"), "user_id": f.get("user_id"), "user_name": f.get("user_name"),
+        "type": f.get("type"), "label": RELIABILITY_LABELS.get(f.get("type"), f.get("type")),
+        "status": f.get("status"), "detail": f.get("detail"), "meta": f.get("meta") or {},
+        "created_at": f.get("created_at"), "resolved_by": f.get("resolved_by"),
+        "resolved_at": f.get("resolved_at"), "resolve_reason": f.get("resolve_reason"),
+        "disputed_at": f.get("disputed_at"), "dispute_reason": f.get("dispute_reason"),
+    }
+
+
+async def _create_reliability_flag(a: Dict[str, Any], user_id: Optional[str], user_name: Optional[str],
+                                   ftype: str, detail: str, status: str = "open",
+                                   meta: Optional[Dict[str, Any]] = None, notify_owner: bool = True) -> Optional[str]:
+    """Create a review flag (deduped per assignment+user+type while still open/unverified). NEVER changes
+    pay, credits, badges, or assignments — it's a review item the owner resolves and the crew can dispute."""
+    if not user_id:
+        return None
+    existing = await mongo_db.reliability_flags.find_one(
+        {"assignment_id": a["_id"], "user_id": user_id, "type": ftype, "status": {"$in": ["open", "unverified"]}})
+    if existing:
+        return existing["_id"]
+    doc = {"_id": str(uuid4()), "assignment_id": a["_id"], "job_name": a.get("job_name"),
+           "job_date": a.get("job_date"), "user_id": user_id, "user_name": user_name,
+           "type": ftype, "status": status, "detail": detail, "meta": meta or {},
+           "created_at": now_iso(), "resolved_by": None, "resolved_at": None, "resolve_reason": None,
+           "disputed_at": None, "dispute_reason": None}
+    await mongo_db.reliability_flags.insert_one(doc)
+    label = RELIABILITY_LABELS.get(ftype, ftype)
+    if notify_owner:
+        await notify(None, "owner", f"Reliability flag — {label}",
+                     f"{user_name}: {detail} (\"{a.get('job_name')}\"). Review it on the Dispatch board.",
+                     "flag", {"assignment_id": a["_id"], "flag_id": doc["_id"]})
+    await notify(user_id, None, f"Timekeeping flag — {label}",
+                 f"{detail} on \"{a.get('job_name')}\". If that's not right, open the job and dispute it.",
+                 "flag", {"assignment_id": a["_id"], "flag_id": doc["_id"]})
+    return doc["_id"]
+
+
+async def _scan_no_shows(day: str) -> None:
+    """Persist an unverified possible-no-show for anyone scheduled who has no punch by report-time + grace.
+    Idempotent (deduped). Labeled 'unverified' — the owner confirms or dismisses; nothing is assumed."""
+    grace = (await _reliability_config())["grace_minutes"]
+    now_et = datetime.now(ZoneInfo("America/New_York"))
+    day_prefix = f"{day}T00:00:00"
+    for a in await mongo_db.assignments.find({"job_date": day}).to_list(200):
+        sched = _scheduled_report_dt(a)
+        if not sched or now_et < sched + timedelta(minutes=grace):
+            continue
+        for c in a.get("crew", []):
+            uid = c.get("user_id")
+            if not uid:
+                continue
+            bound = await mongo_db.time_entries.find_one({"user_id": uid, "assignment_id": a["_id"]})
+            if bound:
+                continue
+            any_today = await mongo_db.time_entries.find_one(
+                {"user_id": uid, "clock_in.at": {"$gte": day_prefix}})
+            if any_today:   # they clocked in somewhere today — a consecutive-job case, not a no-show
+                continue
+            await _create_reliability_flag(
+                a, uid, c.get("name"), "possible_no_show",
+                f"No clock-in by {a.get('arrival_time')} + {grace} min grace. Unverified — confirm or dismiss.",
+                status="unverified", meta={"grace_minutes": grace})
+
+
+async def _user_phone(user_id: Optional[str]) -> str:
+    if not user_id:
+        return ""
+    u = await mongo_db.users.find_one({"_id": user_id}, {"member_profile": 1, "profile": 1})
+    if not u:
+        return ""
+    return (((u.get("member_profile") or {}).get("phone")) or ((u.get("profile") or {}).get("phone")) or "").strip()
+
+
+async def _assignment_window(a: Dict[str, Any]) -> Tuple[Optional[datetime], Optional[datetime]]:
+    """Best-effort on-site window for a job: Crew Lead main clock-in → the Complete status time."""
+    cl = a.get("crew_lead") or {}
+    start = _parse_iso(cl.get("main_clock_at"))
+    end = None
+    for ev in reversed(a.get("status_history") or []):
+        if ev.get("status") == "Complete":
+            end = _parse_iso(ev.get("at"))
+            break
+    if not start:
+        e = await mongo_db.time_entries.find_one({"assignment_id": a["_id"]}, sort=[("clock_in.at", 1)])
+        start = _parse_iso((e or {}).get("clock_in", {}).get("at")) if e else None
+    return start, end
+
+
+async def _estimate_helper_hours(a: Dict[str, Any], user_id: str) -> Dict[str, Any]:
+    """Actual hours from a punch bound to this job, else an ESTIMATE from the job's main-clock window
+    overlapped with the person's own punches that day. Estimates are labeled and are NOT payroll punches."""
+    bound = await mongo_db.time_entries.find({"assignment_id": a["_id"], "user_id": user_id}).to_list(10)
+    actual = sum((e.get("hours") or 0) for e in bound if e.get("hours"))
+    if bound and actual:
+        return {"hours": round(actual, 2), "estimated": False}
+    start, end = await _assignment_window(a)
+    if not start:
+        return {"hours": None, "estimated": True}
+    end = end or datetime.now(timezone.utc)
+    day = a.get("job_date")
+    punches = await mongo_db.time_entries.find(
+        {"user_id": user_id, "clock_out": {"$ne": None},
+         "clock_in.at": {"$gte": f"{day}T00:00:00"}}).to_list(20) if day else []
+    total = 0.0
+    for e in punches:
+        s = _parse_iso(e.get("clock_in", {}).get("at"))
+        en = _parse_iso((e.get("clock_out") or {}).get("at"))
+        if not s or not en:
+            continue
+        lo, hi = max(s, start), min(en, end)
+        if hi > lo:
+            total += (hi - lo).total_seconds() / 3600
+    return {"hours": round(total, 2) if total else None, "estimated": True}
+
+
+async def _crew_work_record(user_id: str) -> Dict[str, Any]:
+    """Dated job history + documentation completion + reliability flags for a crew member (Team HQ record)."""
+    assigns = await mongo_db.assignments.find({"crew.user_id": user_id}).sort("job_date", -1).to_list(60)
+    jobs, as_lead_total, fully_documented = [], 0, 0
+    for a in assigns:
+        slot = next((c for c in a.get("crew", []) if c["user_id"] == user_id), {})
+        was_lead = _is_crew_lead(a, user_id)
+        taps_done = len((a.get("crew_lead") or {}).get("taps") or {}) if was_lead else 0
+        if was_lead:
+            as_lead_total += 1
+            if taps_done >= len(JOB_LEAD_STEPS):
+                fully_documented += 1
+        est = await _estimate_helper_hours(a, user_id)
+        jobs.append({
+            "assignment_id": a["_id"], "job_name": a.get("job_name"), "job_date": a.get("job_date"),
+            "position": slot.get("position"), "exec_status": a.get("exec_status") or "Assigned",
+            "was_lead": was_lead, "taps_done": taps_done, "taps_total": len(JOB_LEAD_STEPS),
+            "hours": est["hours"], "hours_estimated": est["estimated"],
+        })
+    flags = await mongo_db.reliability_flags.find({"user_id": user_id}).sort("created_at", -1).to_list(80)
+    return {
+        "jobs": jobs,
+        "documentation": {"as_lead_total": as_lead_total, "fully_documented": fully_documented},
+        "flags": [_reliability_flag_out(f) for f in flags],
+        "flags_open": sum(1 for f in flags if f.get("status") in ("open", "unverified", "disputed")),
+        "flags_resolved": sum(1 for f in flags if f.get("status") == "resolved"),
+    }
+
+
+@api_router.get("/reliability/flags")
+async def reliability_flags(date: Optional[str] = None, status: Optional[str] = None,
+                            user_id: Optional[str] = None, p: Dict[str, Any] = Depends(require_owner)):
+    day = (date or _et_today())[:10]
+    await _scan_no_shows(day)
+    q: Dict[str, Any] = {"job_date": day}
+    if status:
+        q["status"] = status
+    if user_id:
+        q["user_id"] = user_id
+    docs = await mongo_db.reliability_flags.find(q).sort("created_at", -1).to_list(300)
+    cfg = await _reliability_config()
+    return {"date": day, "grace_minutes": cfg["grace_minutes"],
+            "flags": [_reliability_flag_out(f) for f in docs],
+            "open_count": sum(1 for f in docs if f.get("status") in ("open", "unverified", "disputed"))}
+
+
+class FlagResolvePayload(BaseModel):
+    reason: str
+
+
+@api_router.post("/reliability/flags/{flag_id}/resolve")
+async def resolve_reliability_flag(flag_id: str, payload: FlagResolvePayload, p: Dict[str, Any] = Depends(require_owner)):
+    f = await mongo_db.reliability_flags.find_one({"_id": flag_id})
+    if not f:
+        raise HTTPException(status_code=404, detail="No such flag.")
+    reason = (payload.reason or "").strip()
+    if len(reason) < 3:
+        raise HTTPException(status_code=422, detail="Give a short reason so the record makes sense later.")
+    await mongo_db.reliability_flags.update_one({"_id": flag_id}, {"$set": {
+        "status": "resolved", "resolved_by": p["name"], "resolved_at": now_iso(), "resolve_reason": reason[:500]}})
+    await audit(p, "resolved a reliability flag",
+                f"{f.get('user_name')} — {RELIABILITY_LABELS.get(f.get('type'), f.get('type'))}", {"reason": reason})
+    if f.get("user_id"):
+        await notify(f["user_id"], None, "Timekeeping flag resolved",
+                     f"The owner reviewed the {RELIABILITY_LABELS.get(f.get('type'), 'flag').lower()} on "
+                     f"\"{f.get('job_name')}\": {reason[:160]}", "info", {"flag_id": flag_id})
+    fresh = await mongo_db.reliability_flags.find_one({"_id": flag_id})
+    return _reliability_flag_out(fresh)
+
+
+@api_router.get("/crew/my-flags")
+async def my_reliability_flags(p: Dict[str, Any] = Depends(require_crew)):
+    docs = await mongo_db.reliability_flags.find({"user_id": p["user_id"]}).sort("created_at", -1).to_list(60)
+    return {"flags": [_reliability_flag_out(f) for f in docs]}
+
+
+class FlagDisputePayload(BaseModel):
+    reason: str
+
+
+@api_router.post("/crew/my-flags/{flag_id}/dispute")
+async def dispute_reliability_flag(flag_id: str, payload: FlagDisputePayload, p: Dict[str, Any] = Depends(require_crew)):
+    f = await mongo_db.reliability_flags.find_one({"_id": flag_id})
+    if not f or f.get("user_id") != p["user_id"]:
+        raise HTTPException(status_code=404, detail="No such flag.")
+    reason = (payload.reason or "").strip()
+    if len(reason) < 3:
+        raise HTTPException(status_code=422, detail="Tell the owner what actually happened.")
+    await mongo_db.reliability_flags.update_one({"_id": flag_id}, {"$set": {
+        "status": "disputed", "disputed_at": now_iso(), "dispute_reason": reason[:500]}})
+    await notify(None, "owner", "Punch flag disputed",
+                 f"{p['name']} disputes the {RELIABILITY_LABELS.get(f.get('type'), 'flag').lower()} on "
+                 f"\"{f.get('job_name')}\": {reason[:160]}", "flag", {"flag_id": flag_id})
+    fresh = await mongo_db.reliability_flags.find_one({"_id": flag_id})
+    return _reliability_flag_out(fresh)
+
+
+class ProblemReportPayload(BaseModel):
+    message: str
+
+
+@api_router.post("/crew/jobs/{assignment_id}/report-problem")
+async def report_problem(assignment_id: str, payload: ProblemReportPayload, p: Dict[str, Any] = Depends(require_crew)):
+    """Any crew member on the job (helper or lead) can flag a problem to the Crew Lead + owner. This never
+    changes job status, completes a checklist, or counts as a Crew Lead milestone."""
+    a = await mongo_db.assignments.find_one({"_id": assignment_id, "crew.user_id": p["user_id"]})
+    if not a:
+        raise HTTPException(status_code=404, detail="That job isn't on your schedule.")
+    msg = (payload.message or "").strip()
+    if len(msg) < 3:
+        raise HTTPException(status_code=422, detail="Add a quick note about the problem.")
+    msg = msg[:800]
+    await log_job_event(assignment_id, "problem", f"Problem reported by {p['name']}", by=p["name"], detail=msg)
+    pid, sid = _effective_lead_ids(a)
+    for uid in (pid, sid):
+        if uid and uid != p["user_id"]:
+            await notify(uid, None, "Crew flagged a problem",
+                         f"{p['name']} on \"{a.get('job_name')}\": {msg[:160]}", "flag",
+                         {"assignment_id": assignment_id})
+    await notify(None, "owner", "Problem reported on a job",
+                 f"{p['name']} on \"{a.get('job_name')}\": {msg[:160]}", "flag", {"assignment_id": assignment_id})
+    return {"ok": True}
+
+
+@dl_router.get("/fleet/inspections-export")
+async def export_inspections(start: Optional[str] = None, end: Optional[str] = None,
+                             auth: Optional[str] = None, request: Request = None):
+    p = await principal_from_token_string(auth) if auth else await current_principal(request)
+    if p["role"] != "owner":
+        raise HTTPException(status_code=403, detail="Only the owner can export inspections.")
+    q: Dict[str, Any] = {}
+    if start:
+        q.setdefault("date", {})["$gte"] = start
+    if end:
+        q.setdefault("date", {})["$lte"] = end
+    docs = await mongo_db.truck_inspections.find(q).sort([("date", -1), ("created_at", -1)]).to_list(2000)
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["Date", "Truck", "Phase", "By", "Result", "Failed items", "Odometer", "Job", "Logged at"])
+    for d in docs:
+        writer.writerow([d.get("date", ""), d.get("truck_name", ""), d.get("phase", ""), d.get("by", ""),
+                         "PASS" if d.get("passed") else "FAIL", "; ".join(d.get("failed", [])),
+                         d.get("odometer", "") or "", d.get("assignment_id", "") or "",
+                         (d.get("created_at") or "")[:19]])
+    filename = f"haulyeah-inspections-{start or 'all'}-to-{end or 'now'}.csv"
+    return Response(content=buf.getvalue(), media_type="text/csv",
+                    headers={"Content-Disposition": f"attachment; filename={filename}"})
+
+
+async def _run_nightly_open_punch() -> Dict[str, Any]:
+    """11 PM ET review pass: flag every still-open punch for owner review (proposing a clock-out but NEVER
+    performing it) and persist end-of-day no-shows. Only the owner can act on these."""
+    et = ZoneInfo("America/New_York")
+    day = datetime.now(et).date().isoformat()
+    flagged = 0
+    for e in await mongo_db.time_entries.find({"clock_out": None}).to_list(300):
+        a = await mongo_db.assignments.find_one({"_id": e.get("assignment_id")}) if e.get("assignment_id") else None
+        target = a or {"_id": f"punch:{e['_id']}", "job_name": e.get("job_name") or "no assigned job", "job_date": day}
+        fid = await _create_reliability_flag(
+            target, e["user_id"], e.get("user_name"), "missing_clock_out",
+            "Still clocked in at the 11 PM check — needs a clock-out. Proposed: clock out now (owner must approve).",
+            status="open", meta={"entry_id": e["_id"], "proposed_clock_out": now_iso(), "clocked_in_at": e.get("clock_in", {}).get("at")})
+        if fid:
+            flagged += 1
+    await _scan_no_shows(day)
+    logger.info("nightly open-punch review: flagged=%s", flagged)
+    return {"flagged": flagged}
+
+
+@public_router.post("/cron/nightly-open-punch")
+async def cron_nightly_open_punch(request: Request) -> Dict[str, Any]:
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    secret = os.environ.get("WEBHOOK_CRON_SECRET", "")
+    auth = request.headers.get("Authorization", "")
+    token = auth[7:] if auth.startswith("Bearer ") else ""
+    if not secret or not token or not hmac.compare_digest(token, secret):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    asyncio.create_task(_run_nightly_open_punch())
+    return {"ok": True}
 
 
 # ------- Stage 2: eight-tap Crew Lead flow (lives inside crew "My Jobs") -------
@@ -7784,6 +8185,7 @@ async def _crew_lead_flow_state(a: Dict[str, Any], p: Dict[str, Any]) -> Dict[st
         "end_address": a.get("end_address"), "truck_id": a.get("truck_id"), "truck_name": a.get("truck_name"),
         "is_today": a.get("job_date") == _et_today(), "exec_status": a.get("exec_status") or "Assigned",
         "primary_id": pid, "primary_name": names.get(pid) or cl.get("primary_name"),
+        "primary_phone": await _user_phone(pid),
         "secondary_id": sid, "secondary_name": (names.get(sid) if sid else None) or cl.get("secondary_name"),
         "lead_source": cl.get("source"),
         "role_on_job": role, "is_lead": role in ("primary", "secondary"),
@@ -7956,6 +8358,14 @@ async def crew_lead_tap(assignment_id: str, tap_key: str, payload: TapPayload, p
         await log_job_event(assignment_id, "crew_lead",
                             "Clocked out — post-trip " + ("no defects" if rec.get("no_defects") else "DEFECT flagged"),
                             by=p["name"])
+        # Stage 3: this tap clocks out ONLY the Crew Lead's own punch — never the whole crew.
+        own = await mongo_db.time_entries.find_one({"user_id": p["user_id"], "clock_out": None})
+        if own:
+            co = {"at": now_iso(), "lat": payload.lat, "lng": payload.lng, "accuracy": payload.accuracy}
+            hrs = entry_hours({**own, "clock_out": co})
+            await mongo_db.time_entries.update_one({"_id": own["_id"]}, {"$set": {"clock_out": co, "hours": hrs}})
+            rec["clocked_out_entry"] = own["_id"]
+            await queue_timelog_sync(own.get("assignment_id"))
 
     set_ops[f"crew_lead.taps.{tap_key}"] = rec
     set_ops["updated_at"] = now_iso()
@@ -8031,6 +8441,16 @@ async def patch_time_entry(entry_id: str, payload: TimeEntryPatch, p: Dict[str, 
         await mongo_db.time_entries.update_one({"_id": entry_id}, {"$set": updates})
         await audit(p, "edited time entry", f"{entry['user_name']} — {entry['clock_in']['at'][:10]}", {"changes": changes})
         await queue_timelog_sync(entry.get("assignment_id"))
+        if (payload.clock_in_at or payload.clock_out_at) and entry.get("assignment_id"):
+            a = await mongo_db.assignments.find_one({"_id": entry["assignment_id"]})
+            if a:   # Stage 3: keep a labeled record that the owner corrected this punch (already-resolved)
+                await mongo_db.reliability_flags.insert_one({
+                    "_id": str(uuid4()), "assignment_id": a["_id"], "job_name": a.get("job_name"),
+                    "job_date": a.get("job_date"), "user_id": entry["user_id"], "user_name": entry.get("user_name"),
+                    "type": "owner_correction", "status": "resolved", "detail": f"Owner edited {', '.join(changes)}.",
+                    "meta": {"entry_id": entry_id}, "created_at": now_iso(),
+                    "resolved_by": p["name"], "resolved_at": now_iso(), "resolve_reason": "Owner time-clock correction",
+                    "disputed_at": None, "dispute_reason": None})
     fresh = await mongo_db.time_entries.find_one({"_id": entry_id})
     return {"id": fresh["_id"], "hours": fresh.get("hours"), "approved": fresh.get("approved", False),
             "edited": fresh.get("edited", False), "clock_in": fresh["clock_in"], "clock_out": fresh.get("clock_out")}
@@ -8515,6 +8935,7 @@ async def member_detail(user_id: str, request: Request):
                                  "metric": a["metric"], "count": cur, "threshold": a.get("threshold") or 1})
         progress.sort(key=lambda x: x["threshold"] - x["count"])
         out["progress"] = progress
+        out["records"] = await _crew_work_record(user_id)
     return out
 
 

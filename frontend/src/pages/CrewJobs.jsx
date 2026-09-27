@@ -10,6 +10,7 @@ import { InstructionBanner, SearchBar, searchMatch, EmptyState } from "@/compone
 import { JobChecklists } from "@/components/JobChecklists";
 import { InspectionDialog } from "@/components/fleet/InspectionDialog";
 import { JobLeadFlow } from "@/components/crew/JobLeadFlow";
+import { MyFlagsStrip, JobHelperActions, StillClockedInNudge } from "@/components/crew/CrewExtras";
 import { myJobsApi, myTimeApi, setJobStatusApi, uploadJobPhotoApi, listJobPhotosApi, photoUrl, crewLeadFlowApi, apiErrorMessage } from "@/lib/api";
 import { fmtDate, todayISO, mapsLink } from "@/lib/format";
 
@@ -184,6 +185,7 @@ const JobCard = ({ job, onChanged, clockedIn }) => {
       )}
       {flowMode && <JobLeadFlow assignmentId={job.id} seedFlow={leadFlow} onChanged={onChanged} />}
       {legacyMode && <ChecklistSection job={job} onChanged={onChanged} clockedIn={clockedIn} />}
+      {flowMode && <JobHelperActions assignmentId={job.id} leadFlow={leadFlow} />}
       <PhotoSection jobId={job.id} />
       <Dialog open={completeOpen} onOpenChange={setCompleteOpen}>
         <DialogContent data-testid="complete-job-dialog">
@@ -219,10 +221,12 @@ export default function CrewJobs() {
   const [jobs, setJobs] = useState(null);
   const [query, setQuery] = useState("");
   const [clockedIn, setClockedIn] = useState(undefined);
+  const [nudge, setNudge] = useState(false);
 
   const load = useCallback(() => {
     myJobsApi().then(setJobs).catch(() => setJobs([]));
-    myTimeApi().then((d) => setClockedIn(!!d.clocked_in)).catch(() => setClockedIn(undefined));
+    myTimeApi().then((d) => { setClockedIn(!!d.clocked_in); setNudge(!!d.still_clocked_in_after_complete); })
+      .catch(() => setClockedIn(undefined));
   }, []);
   useEffect(() => {
     load();
@@ -255,6 +259,8 @@ export default function CrewJobs() {
         Tap the big button as your day moves along: on the way → arrived → start → finish. Snap photos before and after.
       </InstructionBanner>
       <SearchBar value={query} onChange={setQuery} placeholder="Search your jobs…" testId="crew-jobs-search-input" />
+      <StillClockedInNudge show={nudge} />
+      <MyFlagsStrip />
       {jobs === null ? (
         <p className="text-sm text-faint">Loading your jobs…</p>
       ) : (

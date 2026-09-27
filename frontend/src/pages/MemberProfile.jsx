@@ -9,6 +9,7 @@ import { BadgeMedallion, RARITY_CHIP, TEAM_CHIP } from "@/components/team/BadgeM
 import { EditProfileDialog } from "@/components/team/EditProfileDialog";
 import { PinPicker } from "@/components/team/PinPicker";
 import { RewardsWallet } from "@/components/team/RewardsWallet";
+import { WorkRecord } from "@/components/team/WorkRecord";
 import { memberDetailApi, listChallengesApi } from "@/lib/api";
 import { fmtDate } from "@/lib/format";
 
@@ -177,6 +178,10 @@ export default function MemberProfile() {
 
       {detail.can_see_numbers && detail.teams.length > 0 && (
         <RewardsWallet userId={detail.id} isSelf={detail.is_self} />
+      )}
+
+      {detail.records && detail.teams.includes("crew") && (
+        <WorkRecord records={detail.records} isSelf={detail.is_self} />
       )}
 
       {detail.is_self && myChallenges.length > 0 && (

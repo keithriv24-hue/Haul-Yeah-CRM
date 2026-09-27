@@ -14,3 +14,11 @@ crons:
     endpoint: "{{BASE_URL}}/api/cron/monthly-metrics-snapshot"
     method: POST
     enabled: true
+  - name: nightly-open-punch
+    description: "11pm ET: flag still-open time punches for owner review + persist end-of-day no-shows (never auto clocks anyone out)"
+    cron: "0 23 * * *"
+    timezone: "America/New_York"
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    endpoint: "{{BASE_URL}}/api/cron/nightly-open-punch"
+    method: POST
+    enabled: true

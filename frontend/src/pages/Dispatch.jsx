@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
-  ChevronLeft, ChevronRight, MapPin, Truck, CalendarPlus, AlertTriangle, GripVertical, X, Clock, History, Star,
+  ChevronLeft, ChevronRight, MapPin, Truck, CalendarPlus, AlertTriangle, GripVertical, X, Clock, History, Star, ShieldAlert,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -15,6 +15,7 @@ import { PageTitle, InstructionBanner, KpiCard } from "@/components/Bits";
 import { AssignmentModal } from "@/components/crew/AssignmentModal";
 import { JobTimeline } from "@/components/JobTimeline";
 import { JobChecklists } from "@/components/JobChecklists";
+import { ReliabilityPanel } from "@/components/dispatch/ReliabilityPanel";
 import { dispatchBoardApi, updateAssignmentApi, listUsersApi, listTrucksApi, apiErrorMessage } from "@/lib/api";
 import { fmtMoney, fmtDate, mapsLink } from "@/lib/format";
 
@@ -337,6 +338,8 @@ export default function Dispatch() {
         </div>
 
         <div className="space-y-4">
+          <ReliabilityPanel flags={board?.reliability || []} onResolved={load} />
+
           <div data-testid="dispatch-crew-pool" className="surface p-4">
             <p className="text-xs font-bold uppercase tracking-wide text-faint mb-2">Crew pool</p>
             <div className="space-y-1.5">
@@ -352,6 +355,11 @@ export default function Dispatch() {
                   <span className={`w-2 h-2 rounded-full shrink-0 ${u.clocked_in ? "bg-success animate-pulse" : "bg-muted"}`} title={u.clocked_in ? "On the clock" : "Not clocked in"} />
                   <span className="text-sm font-semibold text-primary flex-1 truncate">{u.name}</span>
                   {u.off && <Badge variant="outline" className="text-[9px] bg-destructive/10 text-destructive border-destructive/25">OFF</Badge>}
+                  {u.flags > 0 && (
+                    <Badge data-testid="crew-flag-badge" variant="outline" title={`${u.flags} timekeeping flag${u.flags === 1 ? "" : "s"} to review`} className="text-[9px] bg-warning/10 text-warning border-warning/30 gap-0.5">
+                      <ShieldAlert className="w-2.5 h-2.5" /> {u.flags}
+                    </Badge>
+                  )}
                   {board?.is_today && u.clocked_in && u.jobs_today === 0 && (
                     <Badge data-testid="crew-unscheduled-badge" variant="outline" className="text-[9px] bg-warning/10 text-warning border-warning/30 gap-0.5">
                       <AlertTriangle className="w-2.5 h-2.5" /> On clock, no job

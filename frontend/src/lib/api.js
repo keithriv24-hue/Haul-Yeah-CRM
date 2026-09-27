@@ -286,6 +286,19 @@ export const metaDisconnectApi = () => axios.post(`${API}/meta/disconnect`).then
 export const metaFeedApi = () => axios.get(`${API}/meta/feed`).then((r) => r.data);
 export const metaRefreshApi = () => axios.post(`${API}/meta/refresh`).then((r) => r.data);
 
+// Stage 3 — reliability, records, helper actions
+export const reliabilityFlagsApi = (params = {}) => axios.get(`${API}/reliability/flags`, { params }).then((r) => r.data);
+export const resolveFlagApi = (id, reason) => axios.post(`${API}/reliability/flags/${id}/resolve`, { reason }).then((r) => r.data);
+export const myFlagsApi = () => axios.get(`${API}/crew/my-flags`).then((r) => r.data.flags);
+export const disputeFlagApi = (id, reason) => axios.post(`${API}/crew/my-flags/${id}/dispute`, { reason }).then((r) => r.data);
+export const reportProblemApi = (assignmentId, message) =>
+  axios.post(`${API}/crew/jobs/${assignmentId}/report-problem`, { message }).then((r) => r.data);
+export const reliabilityConfigApi = () => axios.get(`${API}/settings/reliability`).then((r) => r.data);
+export const saveReliabilityConfigApi = (p) => axios.put(`${API}/settings/reliability`, p).then((r) => r.data);
+export const inspectionsCsvUrl = (start, end) =>
+  `${API}/fleet/inspections-export?${start ? `start=${start}&` : ""}${end ? `end=${end}&` : ""}auth=${localStorage.getItem("hy_token")}`;
+
+
 export const apiErrorMessage = (e) => {
   const detail = e?.response?.data?.detail;
   if (detail?.message) return detail.message;
