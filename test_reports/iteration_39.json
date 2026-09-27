@@ -1,0 +1,43 @@
+{
+  "summary": "Stage 4 Outcome tab UI tested end-to-end for Owner and confirmed Sales/Crew hide behavior. All 8 owner-facing flows (panel render, badges, History dialog, Rebuild, Correct fact for Final billed amount + As-found note, Re-point to Alternate then restore, Exclude/Re-include from learning) pass; version bumped v1 -> v6 and demo job was restored (Committed scope, included in learning) at end. Sales and Crew do NOT see the Outcome tab (0 tab count each). Mobile viewport 390x844 renders Outcome tab with zero horizontal overflow. BLOCKER for Quality UI redaction test: role-switch-select does NOT expose 'Quality view' as an option (only Owner/Sales/Crew/Marketing), so the Quality redaction of $ amounts, 'Dollar variance' hide, correct-fact field allowlist, and repoint-dialog no-dollar checks could NOT be exercised via UI. Frontend source (JobOutcomePanel.jsx L33 ownerOnly + L126/L211 redacted->'hidden') is coded correctly and backend Quality redaction is verified by pytest.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Layout.jsx role switcher", "issue": "switchOptions hardcoded to [owner, sales, employee, marketing] at L187 — 'quality' is missing, so Owner cannot switch to Quality view via top-bar. Blocks all Quality-side UI verification requested for Stage 4 (redacted amount cell, no Dollar variance line, Correct-fact field omits Final billed, Re-point dialog hides $ amounts).", "selector": "[data-testid=role-switch-select]", "priority": "HIGH"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "verified_flows": {
+    "owner_outcome_panel": "PASS — Complete badge, Learning-eligible badge, v1 initial, On-site man-hours 7.00h, On-site elapsed 3.50h, Crew 2/2, Amount $1,450/—, Window: from Crew Lead taps",
+    "history_dialog": "PASS — dialog opens, at least one version row (outcome-version-1) present",
+    "rebuild": "PASS — no error toast, panel remains rendered",
+    "correct_final_billed_amount": "PASS — 'Final billed amount' offered for owner; after submitting 1800 with reason, outcome-row-amount shows $1,800, Corrections log renders, Dollar variance line appears (+$350) in estimating-accuracy block",
+    "correct_as_found_note": "PASS — Corrections log gains a second outcome-correction-row (2 rows total)",
+    "repoint_to_alternate": "PASS — Two scopes listed (Committed w/ 'current' badge + Alternate 4-crew), selecting Alternate + reason -> success toast, Crew Quoted flips 2 -> 4, version -> v3",
+    "repoint_back_to_committed": "PASS — Restored, Crew Quoted returns to 2, version -> v4",
+    "exclude_from_learning": "PASS — outcome-excluded-note appears, button relabels to 'Re-include in learning'",
+    "re_include": "PASS — excluded note removed after re-include",
+    "sales_hides_outcome_tab": "PASS — job-tab-outcome count = 0",
+    "crew_hides_outcome_tab": "PASS — job-tab-outcome count = 0",
+    "mobile_layout_390x844": "PASS — Outcome tab renders, document horizontal overflow = 0px",
+    "quality_redaction_ui": "BLOCKED — Quality option missing from role-switch-select; could not test UI redaction path"
+  },
+  "test_report_links": ["/app/test_reports/iteration_39.json"],
+  "action_items": [
+    "Layout.jsx: add 'quality' to switchOptions (L187) so Owner can switch to Quality view, matching Stage 4 review request. e.g. ['owner','sales','employee','marketing','quality']. Otherwise the Quality UI redaction paths (JobOutcomePanel role='quality') are unreachable in staging."
+  ],
+  "critical_code_review_comments": [
+    "Backend server-side redaction + frontend redaction (JobOutcomePanel.jsx ownerOnly filter and 'hidden' label) look correctly implemented; only the role switcher exposure gap blocks e2e verification.",
+    "Race noted during rapid consecutive re-point (dialog reopened before first mutation propagated to /scopes GET): first pass showed stale Crew '2|2' in outcome-row-crew before re-render, causing subsequent submit to be disabled because dialog still reflected old selection. Not reproducible with a ~1s pause between actions — non-blocking."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "not tested (per instruction)", "frontend": "Owner 100%, Sales/Crew hide 100%, Mobile 100%, Quality UI BLOCKED"},
+  "test_credentials": "Owner HaulYeahAdmin / HaulYeah2026! (used). No Quality-role credentials available; only Owner can role-switch, and Quality is not in the switcher.",
+  "seed_data_creation": "None. Demo job recFfjigzZDl1zm6J mutated during tests but restored: scope back to Committed, included in learning. Corrections log still contains two test rows (final_total -> 1800 and as_found_note) which are immutable by design; not cleaned up.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "After main agent adds 'quality' to Layout switchOptions, re-run: switch role to Quality on /projects/recFfjigzZDl1zm6J -> Outcome tab -> verify outcome-row-amount cell shows 'hidden', no 'Dollar variance' text in panel, outcome-correct-field options exclude 'Final billed amount', and outcome-repoint-dialog inner text contains no '$'. Also the demo job's corrections log has 2 pre-existing rows from this run — do not treat as leftover contamination for subsequent tests.",
+  "rca of the issue": "Layout.jsx line 187: `const switchOptions = multiRoles || (canSwitch ? ['owner', 'sales', 'employee', 'marketing'] : null);` omits 'quality'. Fix: add 'quality' to the fallback array (and ensure the target /projects/... route allows role='quality' — JobDetail.jsx already gates the Outcome tab on ['owner','quality'] so it should just work)."
+}

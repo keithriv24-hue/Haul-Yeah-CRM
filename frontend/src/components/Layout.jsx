@@ -184,7 +184,7 @@ export default function Layout() {
     return items;
   }, [role, assignedCalc]);
   const multiRoles = (user?.roles || []).length > 1 ? user.roles : null;
-  const switchOptions = multiRoles || (canSwitch ? ["owner", "sales", "employee", "marketing"] : null);
+  const switchOptions = multiRoles || (canSwitch ? ["owner", "sales", "employee", "marketing", "quality"] : null);
   const [moreOpen, setMoreOpen] = useState(false);
   useGpsPing(role);
 
