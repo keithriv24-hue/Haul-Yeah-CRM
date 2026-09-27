@@ -1,0 +1,25 @@
+{
+  "summary": "Focused re-test of Quality-role redaction on Job Detail Outcome tab (job recFfjigzZDl1zm6J). All 6 request items verified. Quality option is now available in role-switch-select and success toast appears. Amount/final-billed Actual cell renders 'hidden', panel has no 'Dollar variance' text, Correct-a-fact field select excludes 'Final billed amount' (only Actual miles driven, Quoted crew — estimate restated, As-found note), Re-point dialog contains zero '$' characters while still rendering saved-quote rows. Actuals table (On-site man-hours, Crew) still visible, History button opens dialog, and role switches back to Owner. One redaction leak observed: the Corrections Log renders 'final_total: — → 1800' to Quality, which exposes the final billed dollar amount that the spec explicitly forbids.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "JobOutcomePanel — Corrections Log", "issue": "Under Quality role, corrections log entry 'final_total: — → 1800' displays the final billed amount, leaking revenue that Quality must never see per Stage-4 spec. Redact/omit rows where field == 'final_total' (or mask the value) for role=quality.", "selector": "[data-testid='job-outcome-panel'] corrections log rows", "priority": "HIGH"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [
+    "In JobOutcomePanel (and/or backend outcome payload for role=quality), redact/omit corrections-log entries where field is 'final_total' so the final billed dollar amount is not exposed to Quality role."
+  ],
+  "critical_code_review_comments": [
+    "Revenue redaction is applied to the primary Actual cell and the Re-point dialog but not to the corrections history rendered inline — same rule should be applied consistently across every surface that references final_total."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (skipped per request)", "frontend": "100% of requested checks executed; 1 redaction leak found beyond the 6-item checklist"},
+  "seed_data_creation": "None",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Quality role switch now works (Layout.jsx L187 fix confirmed). All originally-requested Quality redaction points pass. Only remaining gap is Corrections Log leaking 'final_total: — → 1800' to Quality. After main agent redacts final_total in corrections log for role=quality, re-open /projects/recFfjigzZDl1zm6J → Outcome tab under Quality and confirm no '1800' or 'final_total' revenue value appears in the corrections log; also verify as_found_note row still renders.",
+  "rca of the issue": "JobOutcomePanel renders the corrections log using the raw list returned by the outcome payload. The role='quality' gate is applied only to the top-level Amount/final_billed cell (shown as 'hidden'), the Dollar-variance stat, the Correct-a-fact field options, and Re-point amounts — but not to the corrections history entries. Because a prior owner correction wrote final_total 1800, that row remains fully visible to Quality, leaking revenue. Fix: filter/mask corrections where field === 'final_total' when role === 'quality' (either in the panel render or in the server-side redaction that already handles data.outcome)."
+}

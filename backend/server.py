@@ -12578,6 +12578,13 @@ def _outcome_out(doc: Optional[Dict[str, Any]], role: str = "owner") -> Optional
         errs.pop("dollar_variance", None)
         errs.pop("in_band", None)
         out["errors"] = errs
+        # the corrections history must not leak revenue either — drop final_total rows entirely
+        corr = out.get("corrections")
+        if isinstance(corr, list):
+            out["corrections"] = [c for c in corr if c.get("field") != "final_total"]
+        cmap = dict(out.get("corrections_map") or {})
+        cmap.pop("final_total", None)
+        out["corrections_map"] = cmap
     return out
 
 
@@ -12615,8 +12622,8 @@ async def get_outcome_history(job_key: str, request: Request):
             snap["errors"] = errs
             v["snapshot"] = snap
             if isinstance(v.get("changed_fields"), dict):
-                v["changed_fields"] = {k: val for k, val in v["changed_fields"].items()
-                                       if k not in ("final_total",)}
+                # keep only field NAMES for quality (values in errors/final_total would leak revenue)
+                v["changed_fields"] = {k: {} for k in v["changed_fields"] if k not in ("final_total",)}
         out.append(v)
     return {"versions": out}
 

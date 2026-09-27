@@ -456,3 +456,13 @@ class TestAccess:
         assert d["final_total"].get("redacted") is True
         assert "dollar_variance" not in d["errors"]
         assert "in_band" not in d["errors"]
+
+    def test_quality_corrections_log_omits_final_total(self, quality_headers, owner_headers, seed):
+        # a prior owner correction wrote final_total — Quality must never receive that revenue in ANY surface
+        requests.post(f"{API}/outcomes/{seed['main_key']}/correct", headers=owner_headers,
+                      json={"field": "final_total", "value": 3100, "reason": "regression: hide revenue from Quality corrections log"}, timeout=25)
+        d = _get(quality_headers, seed["main_key"]).json()
+        assert all(c.get("field") != "final_total" for c in d.get("corrections", []))
+        assert "final_total" not in (d.get("corrections_map") or {})
+        hist = requests.get(f"{API}/outcomes/{seed['main_key']}/history", headers=quality_headers, timeout=20).json()["versions"]
+        assert all("final_total" not in (v.get("changed_fields") or {}) for v in hist)
