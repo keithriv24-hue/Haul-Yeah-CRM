@@ -142,10 +142,17 @@ def test_pricing_values_sales_folded(sales_token, owner_token):
 
 
 # --- Role gating regression ---
-@pytest.mark.parametrize("path", ["/tables/projects", "/tables/invoices", "/tables/subscriptions", "/tables/contacts"])
+@pytest.mark.parametrize("path", ["/tables/invoices", "/tables/subscriptions", "/tables/contacts"])
 def test_sales_forbidden_on_owner_tables(sales_token, path):
     r = requests.get(f"{API}{path}", headers=_h(sales_token), timeout=20)
     assert r.status_code == 403, f"{path} => {r.status_code}"
+
+
+def test_sales_can_read_projects_job_board(sales_token):
+    """Sales may READ the projects job board (compliance panel); money fields are
+    stripped server-side (revenue/deposit) and writes stay blocked."""
+    r = requests.get(f"{API}/tables/projects", headers=_h(sales_token), timeout=20)
+    assert r.status_code in (200, 503), f"/tables/projects => {r.status_code}"
 
 
 def test_crew_forbidden_on_leads(crew_token):

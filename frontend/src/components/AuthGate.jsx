@@ -16,6 +16,7 @@ export default function AuthGate({ children }) {
   const [authed, setAuthed] = useState(null);
   const [role, setRole] = useState(() => localStorage.getItem("hy_role"));
   const [canSwitch, setCanSwitch] = useState(() => localStorage.getItem("hy_can_switch") === "1");
+  const [viewAs, setViewAs] = useState(() => localStorage.getItem("hy_view_as") === "1");
   const [user, setUser] = useState(null);
   const [mustChange, setMustChange] = useState(false);
   const [username, setUsername] = useState("");
@@ -34,17 +35,35 @@ export default function AuthGate({ children }) {
       setAuthed(false);
       return;
     }
+    const applyMe = (d, activeToken) => {
+      setRole(d.role);
+      setCanSwitch(!!d.can_switch);
+      setViewAs(!!d.view_as);
+      setUser(d.user || null);
+      localStorage.setItem("hy_role", d.role);
+      localStorage.setItem("hy_can_switch", d.can_switch ? "1" : "0");
+      localStorage.setItem("hy_view_as", d.view_as ? "1" : "0");
+      // Remember the owner's real authenticated session so "back to owner" can restore
+      // it without the (now forbidden) View-As → owner API path.
+      if (!d.view_as && d.role === "owner") localStorage.setItem("hy_owner_token", activeToken);
+      if (d.user?.must_change_password) setMustChange(true);
+      setAuthed(true);
+    };
     authMe()
-      .then((d) => {
-        setRole(d.role);
-        setCanSwitch(!!d.can_switch);
-        setUser(d.user || null);
-        localStorage.setItem("hy_role", d.role);
-        localStorage.setItem("hy_can_switch", d.can_switch ? "1" : "0");
-        if (d.user?.must_change_password) setMustChange(true);
-        setAuthed(true);
-      })
-      .catch(() => setAuthed(false));
+      .then((d) => applyMe(d, token))
+      .catch(() => {
+        // A short-lived View-As token may have expired — fall back to the owner session.
+        const ownerTok = localStorage.getItem("hy_owner_token");
+        if (ownerTok && ownerTok !== token) {
+          localStorage.setItem("hy_token", ownerTok);
+          localStorage.setItem("hy_view_as", "0");
+          authMe()
+            .then((d) => applyMe(d, ownerTok))
+            .catch(() => setAuthed(false));
+        } else {
+          setAuthed(false);
+        }
+      });
   }, []);
 
   useEffect(() => {
@@ -67,8 +86,12 @@ export default function AuthGate({ children }) {
       localStorage.setItem("hy_token", d.token);
       localStorage.setItem("hy_role", d.role);
       localStorage.setItem("hy_can_switch", d.can_switch ? "1" : "0");
+      localStorage.setItem("hy_view_as", "0");
+      localStorage.removeItem("hy_owner_token");
+      if (d.role === "owner") localStorage.setItem("hy_owner_token", d.token);
       setRole(d.role);
       setCanSwitch(!!d.can_switch);
+      setViewAs(false);
       setUser(d.user || null);
       if (d.user?.must_change_password) {
         setCurrentPw(password);
@@ -219,17 +242,36 @@ export default function AuthGate({ children }) {
   }
 
   const switchRole = async (targetRole) => {
+    // Exit View As → restore the owner's original authenticated session (no API call;
+    // a View-As token is forbidden from switching back to owner server-side).
+    if (targetRole === "owner") {
+      const ownerTok = localStorage.getItem("hy_owner_token");
+      if (ownerTok) {
+        localStorage.setItem("hy_token", ownerTok);
+        localStorage.setItem("hy_view_as", "0");
+        const d = await authMe();
+        localStorage.setItem("hy_role", d.role);
+        localStorage.setItem("hy_can_switch", d.can_switch ? "1" : "0");
+        setRole(d.role);
+        setCanSwitch(!!d.can_switch);
+        setViewAs(false);
+        setUser(d.user || null);
+        return d.role;
+      }
+    }
     const d = await switchRoleApi(targetRole);
     localStorage.setItem("hy_token", d.token);
     localStorage.setItem("hy_role", d.role);
     localStorage.setItem("hy_can_switch", d.can_switch ? "1" : "0");
+    localStorage.setItem("hy_view_as", d.view_as ? "1" : "0");
     setRole(d.role);
     setCanSwitch(!!d.can_switch);
+    setViewAs(!!d.view_as);
     if (d.user) setUser(d.user);
     return d.role;
   };
 
   const updateUser = (patch) => setUser((u) => (u ? { ...u, ...patch } : u));
 
-  return <AuthContext.Provider value={{ role, canSwitch, switchRole, user, updateUser }}>{children}</AuthContext.Provider>;
+  return <AuthContext.Provider value={{ role, canSwitch, viewAs, switchRole, user, updateUser }}>{children}</AuthContext.Provider>;
 }

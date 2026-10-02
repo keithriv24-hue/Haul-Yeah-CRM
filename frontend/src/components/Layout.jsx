@@ -168,7 +168,7 @@ const Badge = ({ count, testId, className = "" }) =>
 
 export default function Layout() {
   const { privacy, togglePrivacy, refreshAll, refreshing, health } = useApp();
-  const { role, canSwitch, switchRole, user } = useAuth();
+  const { role, canSwitch, viewAs, switchRole, user } = useAuth();
   const [assignedCalc, setAssignedCalc] = useState(false);
   useEffect(() => {
     if (role === "crew" || role === "marketing") {
@@ -199,6 +199,8 @@ export default function Layout() {
     localStorage.removeItem("hy_token");
     localStorage.removeItem("hy_role");
     localStorage.removeItem("hy_can_switch");
+    localStorage.removeItem("hy_view_as");
+    localStorage.removeItem("hy_owner_token");
     window.dispatchEvent(new Event("hy-logout"));
   };
 
@@ -336,7 +338,17 @@ export default function Layout() {
         </nav>
 
         <div className="border-t border-white/10 p-3 space-y-2">
-          {switchOptions ? (
+          {viewAs ? (
+            <Button
+              data-testid="exit-view-as-btn"
+              variant="outline"
+              size="sm"
+              onClick={() => handleSwitch("owner")}
+              className="w-full gap-2 border-accent/50 bg-accent/15 text-white hover:bg-accent/25"
+            >
+              <Eye className="w-4 h-4" /> Viewing as {ROLE_LABEL[role] || role} — exit
+            </Button>
+          ) : switchOptions ? (
             <Select value={role || switchOptions[0]} onValueChange={handleSwitch}>
               <SelectTrigger
                 data-testid="role-switch-select"
@@ -505,7 +517,18 @@ export default function Layout() {
                     {showPrivacy && <PrivacyButton testid="tab-privacy-btn" className="w-full" />}
                     {showOwnerTools && <RefreshButton testid="tab-refresh-btn" className="w-full" />}
                   </div>
-                  {canSwitch && (
+                  {viewAs ? (
+                    <div className="px-0.5">
+                      <Button
+                        data-testid="tab-exit-view-as-btn"
+                        variant="outline"
+                        onClick={() => handleSwitch("owner")}
+                        className="w-full gap-2 h-11"
+                      >
+                        <Eye className="w-4 h-4" /> Viewing as {ROLE_LABEL[role] || role} — exit
+                      </Button>
+                    </div>
+                  ) : canSwitch && (
                     <div className="px-0.5">
                       <Select value={role || "owner"} onValueChange={handleSwitch}>
                         <SelectTrigger data-testid="tab-account-select" className="w-full h-11">

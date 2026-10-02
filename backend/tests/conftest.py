@@ -13,10 +13,21 @@ ET = ZoneInfo("America/New_York")
 TODAY_ET = datetime.now(ET).strftime("%Y-%m-%d")
 TRACK_JOB_DATE = (datetime.now(ET) + timedelta(days=3)).strftime("%Y-%m-%d")
 from test_config import (CREW1_EMAIL, CREW1_PASSWORD, CREW2_EMAIL, CREW2_PASSWORD,  # noqa: E402
-                         QA_TRACK_TOKEN)
+                         GHOST_PASSWORD, QA_TRACK_TOKEN)
 
 QA_CREW1_ID = "f2a28cd4-2730-4ade-bc4d-3ed3e7506acb"
 QA_CREW2_ID = "29f04e08-fc5a-41fc-a393-9bb886c511a6"
+
+# Ephemeral ghost POV accounts — NO LONGER seeded in production (Problem #1). The test
+# suite seeds them here and deletes them when the run ends, so many existing tests can
+# still log in as a single-role view (sales/crew/marketing/quality) without a backdoor
+# account ever existing in production.
+GHOST_ACCOUNTS = (
+    ("testcrewadmin", "Test Crew (Ghost)", "crew"),
+    ("testsalesadmin", "Test Sales (Ghost)", "sales"),
+    ("testmarketingadmin", "Test Marketing (Ghost)", "marketing"),
+    ("testqualityadmin", "Test Quality (Ghost)", "quality"),
+)
 
 
 def _refresh_qa_seed_dates() -> None:
@@ -69,11 +80,22 @@ def _seed_qa_crew(db) -> None:
     db.jobs.update_one(
         {"tracking.token": QA_TRACK_TOKEN, "crew.user_id": QA_CREW1_ID},
         {"$set": {"crew.$.name": "QA Crew One"}})
+    for email, name, role in GHOST_ACCOUNTS:
+        db.users.update_one(
+            {"email": email},
+            {"$setOnInsert": {"_id": f"ghost-{role}"},
+             "$set": {"name": name, "email": email, "role": role, "roles": [role],
+                      "ghost": True, "active": True, "must_change_password": False,
+                      "password_hash": bcrypt.hashpw(GHOST_PASSWORD.encode("utf-8"), bcrypt.gensalt()).decode("utf-8"),
+                      "gps_consent_at": None, "created_at": now}},
+            upsert=True)
 
 
 def _remove_qa_crew() -> None:
     client = pymongo.MongoClient(os.environ["MONGO_URL"])
-    client[os.environ["DB_NAME"]].users.delete_many({"_id": {"$in": [QA_CREW1_ID, QA_CREW2_ID]}})
+    db = client[os.environ["DB_NAME"]]
+    db.users.delete_many({"_id": {"$in": [QA_CREW1_ID, QA_CREW2_ID]}})
+    db.users.delete_many({"ghost": True})
     client.close()
 
 

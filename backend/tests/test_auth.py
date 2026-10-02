@@ -166,13 +166,13 @@ class TestProtectedRoutes:
         assert r.status_code == 401
         assert r.json().get("detail") == "Not authenticated"
 
-    def test_leads_with_token_passes_auth_and_returns_503_missing_key(self, token):
-        """auth passed = 503 missing_key (AIRTABLE_API_KEY intentionally empty)."""
+    def test_leads_with_token_passes_auth_and_returns_data_or_503(self, token):
+        """auth passed = 200 (Airtable key present) or 503 missing_key (no key)."""
         r = requests.get(f"{BASE_URL}/api/tables/leads", headers={"Authorization": f"Bearer {token}"}, timeout=15)
-        assert r.status_code == 503, f"expected 503 missing_key, got {r.status_code}: {r.text}"
-        detail = r.json().get("detail", {})
-        assert isinstance(detail, dict)
-        assert detail.get("error") == "missing_key"
+        assert r.status_code in (200, 503), f"expected 200/503, got {r.status_code}: {r.text}"
+        if r.status_code == 503:
+            detail = r.json().get("detail", {})
+            assert isinstance(detail, dict) and detail.get("error") == "missing_key"
 
     def test_health_without_token_returns_401(self):
         r = requests.get(f"{BASE_URL}/api/health", timeout=15)
@@ -182,7 +182,8 @@ class TestProtectedRoutes:
         r = requests.get(f"{BASE_URL}/api/health", headers={"Authorization": f"Bearer {token}"}, timeout=15)
         assert r.status_code == 200
         body = r.json()
-        assert body.get("airtable_configured") == False
+        # airtable_configured varies by environment (preview may or may not have a key)
+        assert isinstance(body.get("airtable_configured"), bool)
         assert body.get("base_id_configured") == True
 
     def test_unknown_table_returns_404(self, token):
@@ -223,10 +224,18 @@ class TestRoles:
 
     def test_sales_blocked_from_money_tables(self):
         tok = _login("testsalesadmin", GHOST_PASSWORD)["token"]
-        for t in ("projects", "invoices", "subscriptions", "contacts"):
+        for t in ("invoices", "subscriptions", "contacts"):
             r = requests.get(f"{BASE_URL}/api/tables/{t}", headers={"Authorization": f"Bearer {tok}"}, timeout=15)
             assert r.status_code == 403, f"{t}: expected 403, got {r.status_code}"
             assert r.json().get("detail") == "Your role can't open this."
+
+    def test_sales_can_read_projects_job_board(self):
+        """Sales may READ the projects job board (compliance panel); revenue/deposit are
+        stripped server-side and writes stay blocked (verified elsewhere). Here we just
+        confirm the read is permitted (not a 403)."""
+        tok = _login("testsalesadmin", GHOST_PASSWORD)["token"]
+        r = requests.get(f"{BASE_URL}/api/tables/projects", headers={"Authorization": f"Bearer {tok}"}, timeout=15)
+        assert r.status_code in (200, 503), f"expected 200/503, got {r.status_code}: {r.text}"
 
     def test_crew_blocked_from_other_tables(self):
         tok = _login("testcrewadmin", GHOST_PASSWORD)["token"]
@@ -307,22 +316,57 @@ class TestRoles:
 
 
 class TestRoleSwitch:
-    def test_owner_can_switch_to_sales_and_back(self):
+    def test_owner_view_as_then_cannot_switch_again(self):
+        """Owner switches to a Sales view; that View-As token is a dead end — it can't
+        switch to another view and can NEVER climb back to owner (Problem #7)."""
         owner = _login(OWNER_EMAIL, CORRECT_PW)
         assert owner["can_switch"] == True
         r = requests.post(f"{BASE_URL}/api/auth/switch-role", json={"role": "sales"},
                           headers={"Authorization": f"Bearer {owner['token']}"}, timeout=15)
         assert r.status_code == 200, r.text
         sw = r.json()
-        assert sw["role"] == "sales" and sw["can_switch"] == True
-        leads = requests.get(f"{BASE_URL}/api/tables/leads", headers={"Authorization": f"Bearer {sw['token']}"}, timeout=15)
+        assert sw["role"] == "sales"
+        assert sw["can_switch"] == False, "a View-As session must not advertise can_switch"
+        assert sw.get("view_as") == True
+        view_token = sw["token"]
+        # the View-As token is correctly scoped to Sales RBAC
+        leads = requests.get(f"{BASE_URL}/api/tables/leads", headers={"Authorization": f"Bearer {view_token}"}, timeout=15)
         assert leads.status_code in (200, 503)
-        blocked = requests.get(f"{BASE_URL}/api/tables/invoices", headers={"Authorization": f"Bearer {sw['token']}"}, timeout=15)
+        blocked = requests.get(f"{BASE_URL}/api/tables/invoices", headers={"Authorization": f"Bearer {view_token}"}, timeout=15)
         assert blocked.status_code == 403
+        # ESCALATION ATTEMPT: the View-As token must not regain owner
         back = requests.post(f"{BASE_URL}/api/auth/switch-role", json={"role": "owner"},
-                             headers={"Authorization": f"Bearer {sw['token']}"}, timeout=15)
-        assert back.status_code == 200
-        assert back.json()["role"] == "owner"
+                             headers={"Authorization": f"Bearer {view_token}"}, timeout=15)
+        assert back.status_code == 403, f"View-As token escalated to owner: {back.status_code} {back.text}"
+        # nor pivot to any other view
+        other = requests.post(f"{BASE_URL}/api/auth/switch-role", json={"role": "marketing"},
+                              headers={"Authorization": f"Bearer {view_token}"}, timeout=15)
+        assert other.status_code == 403
+
+    def test_view_as_token_is_short_lived(self):
+        """A View-As token must expire far sooner than a normal 30-day session."""
+        owner = _login(OWNER_EMAIL, CORRECT_PW)
+        r = requests.post(f"{BASE_URL}/api/auth/switch-role", json={"role": "sales"},
+                          headers={"Authorization": f"Bearer {owner['token']}"}, timeout=15)
+        assert r.status_code == 200, r.text
+        claims = jwt.decode(r.json()["token"], options={"verify_signature": False})
+        assert claims.get("view_as") == True
+        assert claims.get("uid") is None, "View-As token must not carry an authenticated user id"
+        remaining = claims["exp"] - int(time.time())
+        assert 0 < remaining <= 3 * 3600, f"view-as TTL too long: {remaining}s"
+
+    def test_owner_me_reports_view_as(self):
+        """/me on a View-As token reports the view role, no switching, and view_as=True."""
+        owner = _login(OWNER_EMAIL, CORRECT_PW)
+        r = requests.post(f"{BASE_URL}/api/auth/switch-role", json={"role": "sales"},
+                          headers={"Authorization": f"Bearer {owner['token']}"}, timeout=15)
+        view_token = r.json()["token"]
+        me = requests.get(f"{BASE_URL}/api/auth/me", headers={"Authorization": f"Bearer {view_token}"}, timeout=15)
+        assert me.status_code == 200, me.text
+        body = me.json()
+        assert body["role"] == "sales"
+        assert body["can_switch"] == False
+        assert body.get("view_as") == True
 
     def test_real_sales_token_cannot_switch(self):
         data = _login("testsalesadmin", GHOST_PASSWORD)
@@ -353,7 +397,11 @@ class TestSchema:
         sales = _login("testsalesadmin", GHOST_PASSWORD)["token"]
         r = requests.get(f"{BASE_URL}/api/schema/leads", headers={"Authorization": f"Bearer {sales}"}, timeout=15)
         assert r.status_code in (200, 503)
+        # sales may read the projects job board (compliance panel), so its schema is reachable too
         r = requests.get(f"{BASE_URL}/api/schema/projects", headers={"Authorization": f"Bearer {sales}"}, timeout=15)
+        assert r.status_code in (200, 503)
+        # but a money-only table stays blocked
+        r = requests.get(f"{BASE_URL}/api/schema/invoices", headers={"Authorization": f"Bearer {sales}"}, timeout=15)
         assert r.status_code == 403
 
     def test_schema_unknown_table(self):

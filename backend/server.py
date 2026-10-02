@@ -200,10 +200,21 @@ def decode_token(request: Request) -> Dict[str, Any]:
     return payload
 
 
-def make_token(role: str, owner_switch: bool = False) -> str:
-    claims = {"sub": role, "role": role, "type": "access", "exp": datetime.now(timezone.utc) + timedelta(days=30)}
-    if owner_switch:
-        claims["owner_switch"] = True
+VIEW_AS_TTL_MINUTES = 120  # owner "View As" sessions are short-lived and cannot self-escalate
+
+
+def make_view_as_token(view_role: str, owner_uid: Optional[str]) -> str:
+    """Short-lived owner impersonation token.
+
+    It presents the view role for RBAC (role-only, no authenticated user identity),
+    records the originating owner via as_owner_uid, and is flagged view_as so the
+    switch-role endpoint refuses to let it change views or climb back to owner.
+    """
+    claims = {
+        "sub": view_role, "role": view_role, "type": "access",
+        "view_as": True, "as_owner_uid": owner_uid,
+        "exp": datetime.now(timezone.utc) + timedelta(minutes=VIEW_AS_TTL_MINUTES),
+    }
     return jwt.encode(claims, os.environ["JWT_SECRET"], algorithm=JWT_ALGORITHM)
 
 
@@ -519,35 +530,50 @@ class SwitchPayload(BaseModel):
 @auth_router.post("/switch-role")
 async def switch_role(payload: SwitchPayload, request: Request):
     token_payload = decode_token(request)
+    # A View-As (impersonation) session is a dead end: it can never switch again — not
+    # to another view, and never back to owner. The owner returns to their own account
+    # by restoring their original authenticated session in the browser, not via this API.
+    # owner_switch covers any legacy tokens still in the wild from before this change.
+    if token_payload.get("view_as") or token_payload.get("owner_switch"):
+        raise HTTPException(status_code=403,
+                            detail="You're in View As mode. Exit to your owner account to change views.")
     uid = token_payload.get("uid")
-    if uid:
-        user = await mongo_db.users.find_one({"_id": uid})
-        if not user or not user.get("active", True):
-            raise HTTPException(status_code=401, detail="This account is turned off. Talk to the owner.")
-        roles = user.get("roles") or [user.get("role")]
-        if "owner" in roles and payload.role in SWITCH_ROLES:
-            return {"token": make_token(payload.role, owner_switch=True), "role": payload.role, "can_switch": True}
-        if payload.role not in roles:
+    if not uid:
+        # Role-only tokens carry no authenticated user — they can never switch.
+        raise HTTPException(status_code=403, detail="Only the owner can switch views.")
+    user = await mongo_db.users.find_one({"_id": uid})
+    if not user or not user.get("active", True):
+        raise HTTPException(status_code=401, detail="This account is turned off. Talk to the owner.")
+    roles = user.get("roles") or [user.get("role")]
+    if payload.role == "owner":
+        if "owner" not in roles:
             raise HTTPException(status_code=403, detail="You don't have that view.")
-        return {"token": make_user_token(user, role=payload.role), "role": payload.role,
-                "can_switch": len(roles) > 1, "user": _user_public(user)}
-    current = token_payload.get("role") or "owner"
-    if current != "owner" and not token_payload.get("owner_switch"):
-        raise HTTPException(status_code=403, detail="Only the owner can switch accounts.")
-    if payload.role not in SWITCH_ROLES:
-        raise HTTPException(status_code=422, detail="Unknown role.")
-    return {"token": make_token(payload.role, owner_switch=True), "role": payload.role, "can_switch": True}
+        return {"token": make_user_token(user, role="owner"), "role": "owner",
+                "can_switch": True, "user": _user_public(user)}
+    if "owner" in roles:
+        if payload.role not in SWITCH_ROLES:
+            raise HTTPException(status_code=422, detail="Unknown role.")
+        # Owner impersonation → short-lived, non-escalating View-As token.
+        return {"token": make_view_as_token(payload.role, uid), "role": payload.role,
+                "can_switch": False, "view_as": True}
+    # Multi-role, non-owner user switching among their own granted roles.
+    if payload.role not in roles:
+        raise HTTPException(status_code=403, detail="You don't have that view.")
+    return {"token": make_user_token(user, role=payload.role), "role": payload.role,
+            "can_switch": len(roles) > 1, "user": _user_public(user)}
 
 
 @auth_router.get("/me")
 async def me(request: Request):
-    p = await current_principal(request)
-    can_switch = p["role"] == "owner" or bool(decode_token(request).get("owner_switch")) or len(p.get("roles") or []) > 1
+    token_payload = decode_token(request)
+    p = await principal_from_payload(token_payload)
+    view_as = bool(token_payload.get("view_as") or token_payload.get("owner_switch"))
+    can_switch = (not view_as) and (p["role"] == "owner" or len(p.get("roles") or []) > 1)
     user = None
     if p["is_user"]:
         doc = await mongo_db.users.find_one({"_id": p["user_id"]})
         user = _user_public(doc) if doc else None
-    return {"ok": True, "role": p["role"], "can_switch": can_switch, "user": user}
+    return {"ok": True, "role": p["role"], "can_switch": can_switch, "view_as": view_as, "user": user}
 
 
 class ChangePasswordPayload(BaseModel):
@@ -13897,19 +13923,13 @@ async def seed_on_startup():
                     "_id": str(uuid4()), "name": s["name"], "email": s["email"], "role": s["role"],
                     "password_hash": hash_password(s["password"]), "active": True,
                     "must_change_password": s["role"] != "owner", "gps_consent_at": None, "created_at": now_iso()})
-        ghost_seeds = [
-            {"name": "Test Crew (Ghost)", "email": "testcrewadmin", "role": "crew"},
-            {"name": "Test Sales (Ghost)", "email": "testsalesadmin", "role": "sales"},
-            {"name": "Test Marketing (Ghost)", "email": "testmarketingadmin", "role": "marketing"},
-            {"name": "Test Quality (Ghost)", "email": "testqualityadmin", "role": "quality"},
-        ]
-        for g in ghost_seeds:
-            if await mongo_db.users.find_one({"email": g["email"]}) is None:
-                await mongo_db.users.insert_one({
-                    "_id": str(uuid4()), "name": g["name"], "email": g["email"], "role": g["role"],
-                    "roles": [g["role"]], "ghost": True,
-                    "password_hash": hash_password("HaulYeah2026!"), "active": True,
-                    "must_change_password": False, "gps_consent_at": None, "created_at": now_iso()})
+        # SECURITY (Problem #1): hidden/backdoor "ghost" POV accounts are NO LONGER
+        # seeded in production. Actively remove any a prior deploy may have created, so
+        # production carries zero backdoor/test logins. The test suite seeds its own
+        # ephemeral ghost accounts via tests/conftest.py and deletes them when it ends.
+        await mongo_db.users.delete_many({"ghost": True})
+        await mongo_db.users.delete_many({"email": {"$in": [
+            "testcrewadmin", "testsalesadmin", "testmarketingadmin", "testqualityadmin"]}})
         if await mongo_db.trucks.count_documents({}) == 0:
             for i in range(1, 6):
                 await mongo_db.trucks.insert_one({"_id": str(uuid4()), "name": f"Truck {i}", "plate": "", "active": True})
