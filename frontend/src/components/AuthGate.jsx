@@ -258,6 +258,12 @@ export default function AuthGate({ children }) {
         setUser(d.user || null);
         return d.role;
       }
+      // Owner session was lost (storage cleared) — a View-As token is forbidden from
+      // switching back server-side, so the safe path is a fresh owner login.
+      localStorage.removeItem("hy_token");
+      localStorage.removeItem("hy_view_as");
+      window.dispatchEvent(new Event("hy-logout"));
+      return "owner";
     }
     const d = await switchRoleApi(targetRole);
     localStorage.setItem("hy_token", d.token);

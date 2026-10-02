@@ -414,3 +414,51 @@ STRICT PROTOCOL stage. Learns NON-monetary work-model parameters from completed-
 - **Verified**: /tmp/test_stage7.py (read-through parity, write-through reason/lock/version, 409 stale, shadow run, guidance, manual/activate/lock) + testing_agent iteration_43 (backend 16/16 pytest `tests/test_stage7_optimizer.py`, frontend 12/12 incl. owner+quality panel, quality no-activate + no-$, Settings reason dialog, guidance card). Stage5/6 pytest still green. Preview RESET to clean v0 (base 2.1, locks {}, optimizer OFF, history/runs cleared) so the owner activates explicitly.
 - **Pre-existing (NOT Stage 7, untouched)**: test_iteration29 `test_sales_forbidden_on_owner_tables[/tables/projects]` now fails because `check_table_access` intentionally lets sales READ projects (job-board compliance panel) — stale assertion, unrelated code.
 - **PROD FOLLOW-UP**: user must Save to GitHub + redeploy so the read-through/write-through + nightly-optimizer cron seed on production; the optimizer stays SHADOW until the owner clicks Activate in production (explicit approval), exactly as required.
+
+## 2026-10-02 (fork) — 56-PROBLEM AUDIT: PHASE 1 (Security) — Problems #1 + #7 ✅
+Audit saved at /app/memory/audit_56_problems.md (Prompts 1–3 of 9 received; 4–9 pending). User scoped
+THIS session to Problems #1 + #7 ONLY; Part C (Airtable normalization #2/#24/#25) DEFERRED to next.
+Auth change routed through integration_expert first (per rules). Existing login/role routing/role
+restrictions unchanged and still pass.
+- **Problem #1 — exposed credentials / hidden accounts (FIXED + tested):** removed the hardcoded
+  ghost/backdoor seeding block from `server.py` startup (was seeding testcrewadmin/testsalesadmin/
+  testmarketingadmin/testqualityadmin with hardcoded `HaulYeah2026!`). Startup now ACTIVELY deletes
+  any `ghost:true` user + those 4 emails, so production carries ZERO backdoor logins. The test suite
+  seeds them ephemerally in `tests/conftest.py` (fixed string `_id` `ghost-<role>`, deleted at
+  session end). Deleted the credential/hash backup file `memory/removed_users_backup.json` (held
+  bcrypt hashes). Added `scripts/scan_secrets.sh` (tracked-file secret scan — bcrypt hashes, committed
+  .env, provider tokens, hardcoded password literals; prints "clean"). Rotation guide:
+  `memory/SECURITY_ROTATION.md` (rotate owner pw/APP_PASSWORD off HaulYeah2026!, rotate JWT_SECRET,
+  review all secrets-panel values; git-history purge needs owner approval — NOT done).
+- **Problem #7 — Owner "View As" security (FIXED + tested):** new `make_view_as_token(view_role,
+  owner_uid)` in `server.py` — short-lived (VIEW_AS_TTL_MINUTES=120), role-only (effective RBAC =
+  view role, no owner powers), flagged `view_as` + `as_owner_uid`. `POST /auth/switch-role` now:
+  (a) a `view_as`/legacy-`owner_switch` token → 403 (a View-As session can NEVER switch again or
+  climb back to owner); (b) role-only tokens with no uid → 403; (c) owner uid → owner view reissues
+  owner token, owner→other view issues a View-As token (can_switch:false, view_as:true); (d)
+  multi-role non-owner switches among granted roles only. `/auth/me` returns `view_as`. Frontend
+  (`AuthGate.jsx`): owner login saves `hy_owner_token`; `switchRole(view)` keeps it + stores the
+  View-As token; `switchRole('owner')` RESTORES the saved owner session (no API call), or forces a
+  clean re-login if storage was cleared; expired View-As token on reload falls back to owner token.
+  `Layout.jsx`: desktop `exit-view-as-btn` + mobile `tab-exit-view-as-btn` replace the role switcher
+  while in View-As.
+- **Tests:** `tests/test_auth.py` rewritten for the secure contract (test_owner_view_as_then_cannot_
+  switch_again, test_view_as_token_is_short_lived, test_owner_me_reports_view_as) — 43/43 pass.
+  Updated 2 STALE RBAC assertions (test_auth + test_iteration29_review): sales may READ /tables/projects
+  (job-board/compliance panel; revenue+deposit stripped server-side via ROLE_FIELD_STRIPS) — not 403.
+  Made test_auth health/leads assertions environment-tolerant (preview now carries a live read-only
+  prod Airtable PAT). testing_agent iteration_44: frontend 100% (owner login, View-As enter/exit
+  desktop+mobile 390px, owner-token preserved, no re-auth on exit, nav regression).
+- **Full pytest suite: 561 passed, 18 pre-existing env/state failures PROVEN unrelated** (reverted
+  server.py to baseline → same 18 fail): all are the live read-only Airtable PAT (tests that assume a
+  no-key preview: expect 503 / airtable_available==False / Airtable writes→403) or known
+  state/date-sensitive suites (commissions/availability per PRD note; crew-lead taps; hardcoded
+  2026-08-25 date in iteration9). NOT regressions from the auth change; left for the Airtable-
+  normalization phase.
+- **Owner security actions (see SECURITY_ROTATION.md):** rotate owner password + APP_PASSWORD off
+  `HaulYeah2026!`; rotate JWT_SECRET (kills old long-lived owner_switch tokens); review/rotate
+  secrets-panel values; decide on git-history purge (needs approval). Then Save to GitHub + redeploy
+  so startup ghost-cleanup runs on production.
+- **NEXT (await explicit user go-ahead):** Phase 1 Part C — Airtable field-name/ID normalization
+  layer (Problems #2, #24, #25), then Prompt 2 (canonical job + project_record_id), then Prompt 3
+  (payment ledger + Square + money engine).
