@@ -16,8 +16,9 @@ Strict protocol: one phase at a time, test, present evidence, get explicit "yes"
   (by ID) → write → role-filter the id-keyed save response. Fixes mixed ID/name representation in app
   state, permission-stripping on save responses, and automation reads (Booked alert name, failed-audit
   → Nonconformance). Regression: tests/test_partc_airtable_norm.py (7/7).
-- Prompts 2–6 (canonical job, payment ledger, reporting/commissions/Meta, assignment system,
-  calculator snapshot): NOT STARTED. Order: Prompt 2 → 3 → 4 → 5 → 6.
+- Prompt 2 (canonical job + project_record_id + safe migration): ✅ DONE 2026-10-03 (see PRD).
+- Prompts 3–6 (payment ledger, reporting/commissions/Meta, assignment system,
+  calculator snapshot): NOT STARTED. Order: Prompt 3 → 4 → 5 → 6.
 
 ---
 

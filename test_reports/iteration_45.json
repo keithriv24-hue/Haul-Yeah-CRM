@@ -1,0 +1,39 @@
+{
+  "summary": "Prompt 2 (ONE CANONICAL JOB + SAFE MIGRATION) verified. Backend: pytest tests/test_prompt2_canonical.py 13/13 pass; new tests/test_prompt2_api_sanity.py 9/9 pass against the public URL (owner-only migration endpoints, booking-state, mark-booked-override 422 reason gate, cancel-job 404, 401/403 on unauth). Frontend: /migration-review renders for owner with title, mig-scan-btn, mig-run-btn, mig-counts and all six mig-count-* tiles (Scanned, Already linked, Linked now, Ambiguous, Skipped, Failed). Dry-run scan shows success toast 'Dry-run scan complete.', populates counts (scanned=2, skipped=2, others=0), 'Nothing to review' empty state renders. Mobile 390x844 has no horizontal overflow. RBAC: clearing storage and visiting /migration-review falls back to Login screen; owner-only migration API returns 403 without token. Owner Dashboard + sidebar nav still work, no page crashes. Override dialog validation is confirmed via code review (disabled={overrideReason.trim().length < 5}) and backend 422 test; could NOT interactively click the override/book-as-job path because all 3 preview leads are already status=Booked (expected — override and book-btn hide/disable on booked leads).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "verified_flows": [
+    "Owner login (HaulYeahAdmin/HaulYeah2026!) -> nav shows 'Migration Review' entry (Business group).",
+    "/migration-review renders: title, mig-scan-btn, mig-run-btn, mig-counts region with 6 tiles.",
+    "mig-scan-btn (dry-run) -> toast 'Dry-run scan complete.', mig-count-scanned=2, no crash.",
+    "'Nothing to review — every job is either linked or waiting for a deposit.' empty state visible.",
+    "Mobile 390x844: no horizontal overflow on migration review page.",
+    "RBAC without auth: /migration-review redirects/falls back to login screen; /api/migration/status without token returns 403.",
+    "Backend API sanity (9/9) via public URL: /api/migration/project-ids/scan 200 w/ counts, /api/migration/status 200 w/ last_scan+pending_review, /api/migration/review 200 w/ items[], /api/leads/anyid/booking-state -> booking_state:'none',booked:false, /api/leads/x/mark-booked-override reason 'no' -> 422, /api/jobs/nope/cancel -> 404, unauth migration -> 403.",
+    "Owner Dashboard regression: loads cleanly, sidebar nav functional, no console/page errors on touched pages."
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_prompt2_canonical.py",
+    "/app/backend/tests/test_prompt2_api_sanity.py",
+    "/app/test_reports/pytest/prompt2_api_sanity.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Preview DB has all 3 leads at status=Booked so interactive 'Mark booked (override)' dialog and 'Book as job' 403-toast paths cannot be exercised in UI. Code review confirms correct wiring: LeadDetail.jsx line 406 gates override btn on status !== 'Booked' and line 483 gates confirm on overrideReason.trim().length < 5 (matches spec >=5 chars).",
+    "Spec wording vs backend naming: scan response uses 'deterministically_linked' while spec/UI label it 'Linked now'. Frontend MigrationReview.jsx correctly reads scan.deterministically_linked and labels tile 'Linked now' — no change needed; just noting the naming divergence between spec text and payload.",
+    "Non-blocking: 2 console 401 errors appear on initial pre-login /auth/me request — expected behavior but noisy."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_prompt2_api_sanity.py (new)"
+  ],
+  "success_rate": {"backend": "100% (13/13 canonical + 9/9 api sanity = 22/22)", "frontend": "100% of testable flows (override dialog interactive path not reachable: preview data limitation)"},
+  "test_credentials": "Owner: HaulYeahAdmin / HaulYeah2026!",
+  "seed_data_creation": "none",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All 3 preview leads are Booked, so you cannot click 'Mark booked (override)' or 'Book as job' in the UI (buttons are hidden/disabled on booked leads). Backend tests exercise the reason validation (422) and 403/404 paths directly. The Airtable PAT is read-only so any Project-create write returns 403 by design — this surfaces as a toast and the backend logs; no action needed. Migration dry-run reports: scanned=2, already_linked=0, deterministically_linked=0, ambiguous=0, skipped=2, failed=0 (both existing jobs skipped — expected per request)."
+}

@@ -462,3 +462,70 @@ restrictions unchanged and still pass.
 - **NEXT (await explicit user go-ahead):** Phase 1 Part C — Airtable field-name/ID normalization
   layer (Problems #2, #24, #25), then Prompt 2 (canonical job + project_record_id), then Prompt 3
   (payment ledger + Square + money engine).
+
+
+## 2026-10-03 (fork) — 56-PROBLEM AUDIT: PROMPT 2 — ONE CANONICAL JOB + SAFE MIGRATION ✅
+Addresses Problems #3,#6,#8,#9,#10,#11,#12,#23,#26,#31,#36,#37. User approved all design decisions
+(deposit-gated booking + owner override, dedicated /migration-review UI, dry-run in preview / real
+backfill on prod, immutable project_record_id, concurrency safety, restartable migration). Scope
+kept strictly to Prompt 2 — pricing, Square-ledger internals, commissions, Meta/CAPI, optimizer and
+payroll were NOT touched. Legacy fuzzy fallbacks (_job_assignment_ids, find_timelog_project_id)
+LEFT in place for backward compat until coverage is proven.
+- **One authoritative Project service** (server.py ~2332): `ensure_project_for_lead(lead_id, seed,
+  source, actor, allow_create)` → `(record, created)`. Per-lead `asyncio.Lock` (_lead_lock) +
+  Mongo `project_links` (_id = lead_id, unique) make it concurrency-safe, idempotent and retry-safe
+  — one lead can never spawn two Projects. Deterministic resolve order: project_links fast path →
+  Airtable lead-link field (_find_projects_for_lead) → create. >1 match = AMBIGUOUS → never guessed,
+  queued to Owner review + returns (None, False). `sync_project_for_job(job, actor)` rewritten to
+  route through it (deposit sync + patch_job both use it). `_bind_lead_project` enforces
+  project_record_id IMMUTABILITY (auto paths never repoint an established link; owner /migration/relink
+  does, with reason + audit). Every association writes a `canonical_link_events` row.
+- **Booking = deposit OR owner override** (never a sales click): `POST /api/leads/{id}/book`
+  (owner+sales) creates/links the Project as 'Pending Deposit' and sets booking_state=pending_deposit
+  WITHOUT marking the lead Booked. `POST /api/leads/{id}/mark-booked-override` (owner-only, reason≥5
+  → else 422) marks Booked, logs by/at/reason/prior_state, notifies owner. Real deposit
+  (`_book_on_deposit` in ensure_job_for_deposit) flips booking_state→booked + funnel lead→Booked
+  (promotes only, never downgrades an override). Canonical state in Mongo `job_booking` (_id=lead_id).
+  `GET /api/leads/{id}/booking-state` for the UI.
+- **Job-edit propagation + completed-job audit** (patch_job): completed/financially-closed job
+  (paid_in_full paid / cancelled_at / completed_at) + a MATERIAL change (job_date/pickup/dropoff)
+  now REQUIRES `edit_reason`≥5 (422 otherwise) and writes a before/after row to `job_edit_audit`.
+  Open jobs behave exactly as before (no reason needed → crew/truck assignment UX unchanged). Address
+  change fans out to linked Dispatch assignments (_propagate_job_addresses re-geocodes). `POST
+  /api/jobs/{id}/cancel` (owner, reason≥5): job.status=cancelled (already stops the T-48h reminder +
+  portal loops), flags future linked assignments cancelled + notifies crew, booking_state=cancelled,
+  full audit — financial/job records preserved (never deleted).
+- **Safe migration/backfill** (`_migrate_project_ids`): `POST /api/migration/project-ids/scan`
+  (read-only dry-run) + `/run` (idempotent/restartable; backfills Mongo job.project_record_id for
+  leads mapping to exactly ONE Project, queues ambiguous to `project_migration_queue`, never guesses).
+  Counts: scanned/already_linked/deterministically_linked/ambiguous/failed/skipped. Owner review UI
+  `GET /api/migration/review` + `POST /api/migration/review/{id}/resolve` (link one candidate / skip /
+  mark resolved, logged) + `POST /api/migration/relink` (owner correction of an immutable link).
+  `GET /api/migration/status`. Startup seeds indexes on the 4 new collections.
+- **Frontend**: owner-only page `pages/MigrationReview.jsx` (route in App.js owner branch, nav entry
+  'Migration Review' GitMerge icon in Business group) — Run dry-run scan / Run backfill, 6 count
+  tiles, candidate-radio review list with Link/Skip/Mark-resolved. `lib/leadActions.js` bookLeadAsJob
+  now calls server `bookLeadApi` (no more direct Airtable create + false Booked). `pages/LeadDetail.jsx`
+  owner 'Mark booked (override)' button + reason dialog (confirm gated ≥5 chars). api.js + Leads.jsx
+  toasts updated. testids: migration-review-page, mig-scan-btn, mig-run-btn, mig-counts, mig-count-*,
+  mig-review-item, mig-candidate-radio, mig-link/skip/resolved-btn, lead-detail-mark-booked-override-btn,
+  mark-booked-override-dialog/-reason/-confirm.
+- **Bonus (pre-existing CI-build blocker fixed, lint-only, no behavior change):** components/
+  ScopeLeadPicker.jsx had a react-hooks/exhaustive-deps warning that failed `CI=true yarn build`
+  (warnings-as-errors) — moved `records("leads")` inside the useMemo + dep list. CI build now exit 0.
+- **Tested**: tests/test_prompt2_canonical.py 13/13 (in-process, Airtable monkeypatched: get-or-create
+  dedup/idempotent/concurrency, immutability, ambiguous→queue, booking rules, deposit promotion,
+  completed-job reason guard, cancel, deterministic-vs-ambiguous migration + idempotent rerun +
+  resolve + relink). testing_agent iteration_45: backend 22/22 (13 canonical + new
+  test_prompt2_api_sanity.py 9/9 live), frontend 100% of testable flows (desktop + mobile 390px,
+  RBAC, dry-run scan, counts, empty review state). ZERO bugs.
+- **PREVIEW LIMITS / PROD FOLLOW-UP**: Airtable PAT is READ-ONLY in preview → actually creating a
+  Project (Book-as-job confirm, override confirm, backfilling a lead that needs a new Project) 403s
+  in preview by design (graceful toast). On PROD after Save-to-GitHub + redeploy: startup creates the
+  new indexes; run /migration/project-ids/scan first, review counts, then /run (deterministic only;
+  ambiguous → /migration-review). All 3 preview leads are already Booked so the override/book buttons
+  are hidden/disabled there — verify those two UI paths on prod.
+- **NEXT (await explicit user go-ahead):** Prompt 3 — ONE PAYMENT LEDGER + SQUARE + ONE MONEY ENGINE
+  (canonical ledger keyed by project_record_id, server-calculated remaining balance, Square
+  idempotency #55, refunds, cash/Zelle/ACH manual entry, one money engine). Then Prompts 4 → 5 → 6.
+  PRICING RULE for Prompts 4 & 6: if a new dollar amount/rate is needed, STOP and ask the Owner.
