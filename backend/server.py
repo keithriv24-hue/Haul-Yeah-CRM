@@ -3038,6 +3038,12 @@ async def patch_job(job_id: str, payload: JobPatchPayload,
                 "after": {k: updates.get(k) for k in before}})
         if "job_date" in updates or "pickup_address" in updates or "dropoff_address" in updates:
             await sync_project_for_job(job, actor=p)
+        if "job_date" in updates:
+            # A rescheduled job must get its T-48h reminder based on the NEW move date — clear the
+            # one-per-job latch + the owner paperwork-alert state so both recompute off the new date.
+            await mongo_db.jobs.update_one({"_id": job_id}, {"$unset": {"reminder_sent_at": ""},
+                                                             "$set": {"paperwork_alert": {"active": False}}})
+            job.pop("reminder_sent_at", None)
         await _propagate_job_addresses(job, updates, p)
     return _job_out(job)
 
@@ -3726,18 +3732,34 @@ async def portal_acknowledge_paperwork(token: str, payload: PaperworkAckPayload,
     portal = await _portal_settings()
     brochure_url = (portal.get("brochure_url") or "").strip()
     documents: List[Dict[str, Any]] = []
-    if brochure_url:
-        sha, size = None, None
-        try:
-            async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
-                r = await client.get(brochure_url)
-            if r.status_code < 300:
-                sha, size = hashlib.sha256(r.content).hexdigest(), len(r.content)
-        except Exception as exc:
-            logger.warning("brochure hash failed: %s", exc)
-        documents.append({"id": str(uuid4()), "kind": "brochure",
-                          "filename": (brochure_url.rsplit("/", 1)[-1] or "brochure")[:120],
-                          "url": brochure_url, "sha256": sha, "bytes": size})
+    if not brochure_url:
+        raise HTTPException(status_code=422, detail=(
+            "There's no brochure on file to acknowledge yet. Ask the office to send it first."))
+    sha, size = None, None
+    try:
+        async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
+            r = await client.get(brochure_url)
+    except Exception as exc:
+        # Temporary infrastructure failure / timeout — the paperwork state is UNKNOWN, not invalid.
+        # Return 503 (not 422), never record an acknowledgment, never clear the owner paperwork alert.
+        logger.warning("brochure fetch failed (temporary) for job %s: %s", job["_id"], exc)
+        raise HTTPException(status_code=503, detail=(
+            "We couldn't reach the brochure document right now. Please try again in a moment."))
+    if r.status_code >= 500:
+        # The document host erred — also unknown/temporary, not the customer's fault.
+        logger.warning("brochure host error %s for job %s", r.status_code, job["_id"])
+        raise HTTPException(status_code=503, detail=(
+            "The document service is temporarily unavailable. Please try again shortly."))
+    if r.status_code >= 300 or not r.content:
+        # The link resolves to missing/broken content (e.g. 404) — acknowledging it would be false.
+        # Keep the owner paperwork alert active so the office re-sends a real document.
+        logger.warning("brochure link broken (%s) for job %s", r.status_code, job["_id"])
+        raise HTTPException(status_code=422, detail=(
+            "The brochure on file can't be opened. Ask the office to re-send it before confirming."))
+    sha, size = hashlib.sha256(r.content).hexdigest(), len(r.content)
+    documents.append({"id": str(uuid4()), "kind": "brochure",
+                      "filename": (brochure_url.rsplit("/", 1)[-1] or "brochure")[:120],
+                      "url": brochure_url, "sha256": sha, "bytes": size})
     rec = {"_id": str(uuid4()), "job_id": job["_id"], "invoice_number": job.get("invoice_number"),
            "name": name, "ip": (request.client.host if request.client else None),
            "user_agent": (request.headers.get("user-agent") or "")[:400],
@@ -3937,6 +3959,86 @@ async def _run_daily_9am_et() -> None:
     await _run_owner_paperwork_alerts()
 
 
+# ---- Prompt 7 Part C: background-job health (scheduled crons + in-process loops) ----
+# Every scheduled job and long-running loop records last start/success/failure so a job can't
+# silently stop. Surfaced to the owner at GET /api/cron/health.
+CRON_JOB_NAMES = [
+    "customer-reminders", "owner-paperwork-alerts", "monthly-metrics",
+    "nightly-open-punch", "nightly-outcome-reconcile", "nightly-optimizer",
+]
+LOOP_JOB_NAMES = [
+    "invoice-sync-loop", "late-alert-loop", "lead-alert-loop", "meta-poll-loop",
+    "challenge-agent-loop", "outcome-rebuild-loop", "timelog-retry-loop",
+]
+
+
+async def _record_job_health(name: str, kind: str, status: str,
+                             result: Any = None, error: Optional[str] = None) -> None:
+    now = now_iso()
+    upd: Dict[str, Any] = {"name": name, "kind": kind, "last_status": status, "updated_at": now}
+    if status == "started":
+        upd["last_started_at"] = now
+    elif status == "success":
+        upd["last_success_at"] = now
+        if result is not None:
+            upd["last_result"] = result
+    elif status == "failure":
+        upd["last_failure_at"] = now
+        upd["last_error"] = (error or "")[:500]
+    inc = {"runs": 1} if status == "started" else ({"failures": 1} if status == "failure" else {})
+    ops: Dict[str, Any] = {"$set": upd, "$setOnInsert": {"created_at": now}}
+    if inc:
+        ops["$inc"] = inc
+    try:
+        await mongo_db.job_health.update_one({"_id": name}, ops, upsert=True)
+    except Exception as exc:
+        logger.warning("job health write failed for %s: %s", name, exc)
+
+
+async def _tracked_cron(name: str, coro_factory) -> None:
+    """Run a scheduled cron's work, recording start/success/failure. Never raises (cron already 2xx-acked)."""
+    await _record_job_health(name, "cron", "started")
+    try:
+        result = await coro_factory()
+        await _record_job_health(name, "cron", "success", result=result)
+    except Exception as exc:
+        logger.error("cron %s failed: %s", name, exc)
+        await _record_job_health(name, "cron", "failure", error=str(exc))
+
+
+async def _loop_heartbeat(name: str, status: str = "success", error: Optional[str] = None) -> None:
+    await _record_job_health(name, "loop", status, error=error)
+
+
+def _job_health_status(doc: Dict[str, Any]) -> str:
+    """healthy if the last run succeeded; failing if the last run failed; unknown if never run."""
+    if not doc:
+        return "unknown"
+    last = doc.get("last_status")
+    if last == "failure":
+        return "failing"
+    if doc.get("last_success_at"):
+        return "healthy"
+    return "unknown"
+
+
+@api_router.get("/cron/health")
+async def cron_health(p: Dict[str, Any] = Depends(require_owner)):
+    docs = {d["_id"]: d async for d in mongo_db.job_health.find({})}
+    jobs = []
+    for name in CRON_JOB_NAMES + LOOP_JOB_NAMES:
+        d = docs.get(name) or {}
+        kind = "cron" if name in CRON_JOB_NAMES else "loop"
+        jobs.append({
+            "name": name, "kind": kind, "status": _job_health_status(d),
+            "last_started_at": d.get("last_started_at"), "last_success_at": d.get("last_success_at"),
+            "last_failure_at": d.get("last_failure_at"), "last_error": d.get("last_error"),
+            "runs": d.get("runs", 0), "failures": d.get("failures", 0), "last_result": d.get("last_result"),
+        })
+    return {"jobs": jobs, "at": now_iso()}
+
+
+
 @public_router.post("/cron/customer-reminders")
 async def cron_customer_reminders(request: Request) -> Dict[str, Any]:
     # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
@@ -3945,7 +4047,8 @@ async def cron_customer_reminders(request: Request) -> Dict[str, Any]:
     token = auth[7:] if auth.startswith("Bearer ") else ""
     if not secret or not token or not hmac.compare_digest(token, secret):
         raise HTTPException(status_code=401, detail="Unauthorized")
-    asyncio.create_task(_run_daily_9am_et())
+    asyncio.create_task(_tracked_cron("customer-reminders", _run_customer_reminders))
+    asyncio.create_task(_tracked_cron("owner-paperwork-alerts", _run_owner_paperwork_alerts))
     return {"ok": True}
 
 
@@ -5741,6 +5844,74 @@ async def override_job_compliance(project_id: str, payload: OverridePayload, p: 
             "summary": summary, "override": override, "can_edit": True, "can_override": True}
 
 
+# ---- Prompt 7 Part B: wire the EXISTING critical gates into the Depart workflow ----
+# No new legal rules are invented. The set of critical gates is unchanged (CRITICAL_GATE_KEYS =
+# the 11 Liability-risk + Regulatory gates). An owner can toggle enforcement; the authorized clear
+# is the existing owner depart-override OR a recorded compliance override (both audited, open an NC).
+
+DEFAULT_COMPLIANCE_CONFIG = {"block_depart_on_critical": True}
+
+
+async def _compliance_config() -> Dict[str, Any]:
+    doc = await mongo_db.settings.find_one({"_id": "compliance_config"}) or {}
+    return {**DEFAULT_COMPLIANCE_CONFIG, **{k: v for k, v in doc.items() if k != "_id"}}
+
+
+@api_router.get("/settings/compliance")
+async def get_compliance_config(p: Dict[str, Any] = Depends(require_owner)):
+    return await _compliance_config()
+
+
+class ComplianceConfigPayload(BaseModel):
+    block_depart_on_critical: bool
+
+
+@api_router.put("/settings/compliance")
+async def put_compliance_config(payload: ComplianceConfigPayload, p: Dict[str, Any] = Depends(require_owner)):
+    await mongo_db.settings.update_one(
+        {"_id": "compliance_config"},
+        {"$set": {"block_depart_on_critical": bool(payload.block_depart_on_critical),
+                  "updated_at": now_iso(), "updated_by": p.get("name")}}, upsert=True)
+    await audit(p, "updated compliance enforcement", "compliance_config",
+                {"block_depart_on_critical": bool(payload.block_depart_on_critical)})
+    return await _compliance_config()
+
+
+async def _compliance_depart_verdict(a: Dict[str, Any]) -> Dict[str, Any]:
+    """Prompt 7 Part B — the Depart compliance gate verdict.
+      {"block": False}                                          -> clear to depart
+      {"block": True, "kind": "gate", "failed_labels": [...]}   -> failing CRITICAL gates
+      {"block": True, "kind": "unverifiable", "reason": "..."}  -> compliance cannot be verified
+    Enforcement off -> never blocks. An owner compliance override on the job -> never blocks.
+    A missing canonical Project link or an unreadable Project does NOT fail open: the compliance
+    state is UNKNOWN, so Depart is blocked and the owner is alerted to repair/verify it. We never
+    guess which Project a Dispatch record belongs to."""
+    cfg = await _compliance_config()
+    if not cfg.get("block_depart_on_critical", True):
+        return {"block": False}
+    pid = a.get("project_id")
+    if not pid:
+        return {"block": True, "kind": "unverifiable",
+                "reason": "this job isn't linked to a canonical Project, so compliance can't be verified."}
+    comp = await mongo_db.job_compliance.find_one({"_id": pid}) or {}
+    if comp.get("override"):
+        return {"block": False}  # owner already recorded a compliance override (NC opened)
+    try:
+        record = await _fetch_project(pid)
+        ctx = await _compliance_context([record])
+        gates = evaluate_gates(record, ctx)
+    except Exception as exc:
+        logger.warning("compliance depart check could not read project %s: %s", pid, _safe_airtable_error(exc))
+        return {"block": True, "kind": "unverifiable",
+                "reason": "the compliance record couldn't be read right now, so departure can't be verified."}
+    failed = [g["label"] for g in gates
+              if not g.get("passed") and not g.get("exempt") and g.get("key") in CRITICAL_GATE_KEYS]
+    if failed:
+        return {"block": True, "kind": "gate", "failed_labels": failed}
+    return {"block": False}
+
+
+
 
 
 # =====================================================================================
@@ -6432,7 +6603,7 @@ async def cron_monthly_metrics(request: Request):
         except Exception as exc:
             logger.warning("Monthly metrics snapshot failed for %s: %s", target, exc)
 
-    asyncio.create_task(_work())
+    asyncio.create_task(_tracked_cron("monthly-metrics", _work))
     return {"ok": True, "month": target}
 
 
@@ -8136,6 +8307,30 @@ async def _apply_exec_status(a: Dict[str, Any], status: str, p: Dict[str, Any],
     if payload.status == "Complete":
         await queue_timelog_sync(assignment_id)
         await _queue_outcome_rebuild_for_assignment(assignment_id, "crew_status", p.get("name", ""))
+        await _mark_project_completed(a)
+
+
+async def _mark_project_completed(a: Dict[str, Any]) -> None:
+    """Crew-Lead Complete updates the canonical Project to Completed so Final Revenue lookup,
+    review requests, compliance and reporting all key off the one canonical record. Best-effort:
+    the Mongo assignment is already Complete; an Airtable outage never blocks the crew."""
+    pid = a.get("project_id")
+    if not pid:
+        return
+    try:
+        rec = await airtable_request("GET", TABLES["projects"], path=f"/{pid}",
+                                     params={"returnFieldsByFieldId": "true"})
+        if (rec.get("fields") or {}).get(PROJECT_STATUS_FIELD) == PROJECT_COMPLETED_STATUS:
+            return
+        await airtable_request("PATCH", TABLES["projects"], json_body={
+            "records": [{"id": pid, "fields": {PROJECT_STATUS_FIELD: PROJECT_COMPLETED_STATUS}}],
+            "typecast": True, "returnFieldsByFieldId": True})
+        await _mark_review_requested(pid, source="observed")
+        await log_canonical_link("job", a["_id"], pid, "completed", "crew_lead_complete")
+    except HTTPException as exc:
+        logger.warning("Project complete sync skipped for %s: %s", pid, exc.detail)
+    except Exception as exc:
+        logger.warning("Project complete sync failed for %s: %s", pid, exc)
 
 
 @api_router.post("/crew/jobs/{assignment_id}/status")
@@ -9238,7 +9433,7 @@ async def cron_nightly_open_punch(request: Request) -> Dict[str, Any]:
     token = auth[7:] if auth.startswith("Bearer ") else ""
     if not secret or not token or not hmac.compare_digest(token, secret):
         raise HTTPException(status_code=401, detail="Unauthorized")
-    asyncio.create_task(_run_nightly_open_punch())
+    asyncio.create_task(_tracked_cron("nightly-open-punch", _run_nightly_open_punch))
     return {"ok": True}
 
 
@@ -9465,6 +9660,41 @@ async def crew_lead_tap(assignment_id: str, tap_key: str, payload: TapPayload, p
                     "error": "critical_defect", "failed": insp["critical_labels"],
                     "message": "Critical truck defect — departure needs an owner override."})
             rec["inspection"] = {"passed": insp["passed"], "failed": insp["failed_labels"]}
+        # Prompt 7 Part B — critical compliance gates block Depart (owner override clears it).
+        # Unknown compliance state (no Project link / unreadable) is NOT treated as valid: it blocks
+        # too, with an owner alert, so the crew never departs on an unverifiable job.
+        if not cl.get("depart_override"):
+            verdict = await _compliance_depart_verdict(a)
+            if verdict["block"] and verdict["kind"] == "unverifiable":
+                reason = verdict["reason"]
+                blocker = {"kind": "compliance_unverifiable", "reason": reason,
+                           "at": now_iso(), "by": p["name"]}
+                await mongo_db.assignments.update_one(
+                    {"_id": assignment_id}, {"$set": {"crew_lead.depart_blocker": blocker}})
+                await _owner_alert_ping(
+                    a, "Departure blocked — compliance can't be verified",
+                    f"{p['name']} tried to leave on \"{a.get('job_name')}\" but {reason} "
+                    "Repair the Project link (or record an override) so the crew can depart.")
+                await log_job_event(assignment_id, "crew_lead",
+                                    "Departure blocked — compliance unverifiable: " + reason, by=p["name"])
+                raise HTTPException(status_code=409, detail={
+                    "error": "compliance_unverifiable",
+                    "message": "Compliance can't be verified — " + reason})
+            if verdict["block"]:
+                comp_failed = verdict["failed_labels"]
+                blocker = {"kind": "compliance", "failed_labels": comp_failed,
+                           "at": now_iso(), "by": p["name"]}
+                await mongo_db.assignments.update_one(
+                    {"_id": assignment_id}, {"$set": {"crew_lead.depart_blocker": blocker}})
+                await _owner_alert_ping(
+                    a, "Departure blocked — compliance gate",
+                    f"{p['name']} can't leave on \"{a.get('job_name')}\": "
+                    + ", ".join(comp_failed) + ". Clear it with an owner compliance override or reschedule.")
+                await log_job_event(assignment_id, "crew_lead",
+                                    "Departure blocked — compliance: " + ", ".join(comp_failed), by=p["name"])
+                raise HTTPException(status_code=409, detail={
+                    "error": "compliance_block", "failed": comp_failed,
+                    "message": "Compliance gate not met — departure needs an owner override."})
         if cl.get("depart_override"):
             rec["override"] = cl["depart_override"]
         set_ops["crew_lead.depart_blocker"] = None
@@ -13287,6 +13517,33 @@ def _gps_window_for(a: Dict[str, Any], pings: List[Dict[str, Any]]) -> Tuple[Opt
     return inside[0], inside[-1]
 
 
+# --- Prompt 7 Part A: outcome DATA-QUALITY sanity floors (NOT prices/business rules) ---
+# An Arrived→Complete window this short, while the crew was actually clocked for a real
+# multi-hour day, is operationally impossible and must never train the optimizer.
+OUTCOME_MIN_ONSITE_HOURS = 0.25           # 15 min — below this with real activity = implausible
+OUTCOME_MIN_DAY_HOURS_FOR_CONTRA = 1.0    # crew clocked at least this long = "a real job happened"
+
+
+def _outcome_validity_flags(assignments: List[Dict[str, Any]], on_site_hours: Optional[float],
+                            total_day_hours: Optional[float]) -> List[str]:
+    """Impossible/implausible operational data (Prompt 7 Part A). Returns reason flags; empty = plausible.
+    Detects negative/zero duration and Arrived≈Complete while the crew clocked a real multi-hour day."""
+    flags: List[str] = []
+    raw_arr = next((t for t in (_tap_at(a, TAP_ARRIVED) for a in assignments) if t), None)
+    raw_comp = next((t for t in (_tap_at(a, TAP_COMPLETE) for a in assignments) if t), None)
+    if raw_arr and raw_comp:
+        delta_h = (raw_comp - raw_arr).total_seconds() / 3600
+        if delta_h < 0:
+            flags.append("negative_duration")
+        elif delta_h == 0:
+            flags.append("zero_duration")
+        elif delta_h < OUTCOME_MIN_ONSITE_HOURS and (total_day_hours or 0) >= OUTCOME_MIN_DAY_HOURS_FOR_CONTRA:
+            flags.append("implausible_short_onsite")
+    if on_site_hours is not None and on_site_hours <= 0 and (total_day_hours or 0) > 0:
+        flags.append("zero_duration_with_activity")
+    return sorted(set(flags))
+
+
 async def compute_job_actuals(assignments: List[Dict[str, Any]], quoted_crew: Optional[int]) -> Dict[str, Any]:
     """THE shared actual-hours definition (spec A3). Window = Arrived→Complete from taps, else valid GPS,
     else clock_only + incomplete (never first-yard-in→last-out as on-site time). Aggregates multi-truck
@@ -13408,6 +13665,11 @@ async def compute_job_actuals(assignments: List[Dict[str, Any]], quoted_crew: Op
         confidence = GPS_LEARN_WEIGHT
     if any(u["estimated"] for u in workers):
         confidence = min(confidence, GPS_LEARN_WEIGHT)
+    # Prompt 7 Part A — impossible/implausible outcomes are kept but NEVER learning-eligible.
+    invalid_reasons = _outcome_validity_flags(assignments, on_site_hours, total_day_hours)
+    if invalid_reasons:
+        data_quality = "invalid"
+        confidence = 0.0
 
     return {
         "window_source": window_source, "drive_source": drive_source,
@@ -13427,6 +13689,7 @@ async def compute_job_actuals(assignments: List[Dict[str, Any]], quoted_crew: Op
         "delay_factors": sorted({d for a in assignments for d in (a.get("delay_factors") or [])}),
         "completion_notes": next((a.get("completion_notes") for a in assignments if a.get("completion_notes")), None),
         "data_quality": data_quality, "confidence": confidence, "incomplete_reasons": incomplete,
+        "invalid_reasons": invalid_reasons,
         "learning_eligible": data_quality == "complete",
     }
 
@@ -13615,6 +13878,9 @@ async def build_outcome(job_key: str, source: str, actor: str = "", reason: str 
         reasons.append(ts)
     if actuals.get("data_quality") == "incomplete":
         reasons.append("incomplete")
+    if actuals.get("data_quality") == "invalid":
+        reasons.append("invalid_outcome")
+        reasons.extend(actuals.get("invalid_reasons") or [])
     if actuals.get("data_quality") == "unmatched" or sel.get("rule") in ("no_lead", "no_scope", "ambiguous"):
         reasons.append("unmatched_quote")
     if not any(a.get("truck_id") for a in assignments):
@@ -13730,7 +13996,7 @@ async def cron_nightly_outcome_reconcile(request: Request) -> Dict[str, Any]:
     token = auth[7:] if auth.startswith("Bearer ") else ""
     if not secret or not token or not hmac.compare_digest(token, secret):
         raise HTTPException(status_code=401, detail="Bad cron secret.")
-    asyncio.create_task(_run_nightly_outcome_reconcile())
+    asyncio.create_task(_tracked_cron("nightly-outcome-reconcile", _run_nightly_outcome_reconcile))
     return {"ok": True}
 
 
@@ -14487,7 +14753,8 @@ async def cron_nightly_optimizer(request: Request) -> Dict[str, Any]:
     run_id = f"nightly:{et_date}"
     if await mongo_db.optimizer_runs.find_one({"_id": run_id}):
         return {"ok": True, "skipped": "already_ran_today"}
-    asyncio.create_task(_reconcile_then_optimize("nightly", run_id))
+    asyncio.create_task(_tracked_cron(
+        "nightly-optimizer", lambda: _reconcile_then_optimize("nightly", run_id)))
     return {"ok": True}
 
 

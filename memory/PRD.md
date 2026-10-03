@@ -529,3 +529,55 @@ LEFT in place for backward compat until coverage is proven.
   (canonical ledger keyed by project_record_id, server-calculated remaining balance, Square
   idempotency #55, refunds, cash/Zelle/ACH manual entry, one money engine). Then Prompts 4 → 5 → 6.
   PRICING RULE for Prompts 4 & 6: if a new dollar amount/rate is needed, STOP and ask the Owner.
+
+## 2026-06 — Prompt 7 (OUTCOMES · QUALITY · COMPLIANCE · BACKGROUND JOBS) ✅ tested (pytest 27/27)
+Strict-sequence 56-problem audit. ONLY Prompt 7 built this session, per user mandate; Prompts
+3/4/5/6/8/9 NOT started (stop-and-await-approval). No real SMS/Square/Meta fired (all tests in-process,
+Airtable + httpx mocked). All four areas were implemented by the previous fork but had been left with a
+duplicate-stray `compute_job_actuals` header (file wouldn't import — backend was down); fixed first.
+- **A. Outcome data quality** (`_outcome_validity_flags` + `compute_job_actuals`): Arrived→Complete
+  windows that are negative / zero / implausibly short (<15 min while the crew clocked ≥1 real hour),
+  and zero on-site with real activity, set `data_quality="invalid"` + `confidence=0` + `learning_eligible=False`.
+  Invalid outcomes are PRESERVED in job_outcomes (exclusion.reasons records `invalid_outcome` + the flags)
+  but `_optimizer_training_data` skips any outcome where `learning_eligible` is falsy — bad operational
+  data can never move calibration.
+- **B. Compliance Depart gate** (`_compliance_depart_verdict`, wired into the crew Depart tap): a failing
+  CRITICAL gate (the 11 Liability-risk/Regulatory gates, unchanged) blocks Depart (409). **CHANGE from
+  prior fork per owner's explicit instruction:** a missing canonical Project link OR an unreadable Project
+  no longer FAILS OPEN — it blocks as `kind="unverifiable"` (409 "compliance can't be verified") and pings
+  the owner to repair the link; we never guess the Project. Enforcement off (`block_depart_on_critical=False`)
+  → never blocks. An owner compliance override on the job (job_compliance.override) → allowed. Owner depart-
+  override (`/assignments/{id}/depart-override`, reason≥10) clears the block and records who/when/reason +
+  the cleared failed-gate labels (audit + job_event). The compliance-PANEL override
+  (`/jobs/{id}/compliance/override`, reason≥20 + type OVERRIDE) opens an NC (existing Quality rule) — the
+  depart-override does NOT create an NC (override-audit and NC-creation kept separate, per owner).
+- **C. Customer acknowledgment** (`POST /track/{token}/acknowledge-paperwork`): refuses to acknowledge a
+  document that isn't really there. No brochure on file → 422; brochure link resolves to broken/404/empty
+  content → 422; **temporary fetch failure / host 5xx → 503** (state unknown, not invalid). Owner paperwork
+  alert is NEVER cleared on any failure path; only a verified real document (sha256 recorded) clears it.
+- **D. Crons / observability** (`_tracked_cron` + `_record_job_health` + `/api/cron/health`): every tracked
+  cron (customer-reminders, owner-paperwork-alerts, monthly-metrics, nightly-open-punch,
+  nightly-outcome-reconcile, nightly-optimizer) records start/success/failure with last_started/success/
+  failure_at + last_error + runs/failures + last_result and never raises (2xx already acked). 7 background
+  loops heartbeat the same way. `/api/cron/health` is owner-only (401 unauth, require_owner). Reschedule
+  (patch_job job_date change) clears `reminder_sent_at` + resets `paperwork_alert.active=False` so the T-48h
+  reminder + paperwork alert recompute off the NEW move date, while PRESERVING real completion (gates
+  brochure_sent_at / estimate_delivered_at kept, acks untouched) for re-evaluation.
+- **Tests**: `/app/backend/tests/test_prompt7_quality_compliance.py` — 27/27 pass (validity flags ×5,
+  optimizer exclusion ×2, depart verdict ×6, compliance override+NC ×3, depart-override audit ×1,
+  acknowledgment ×5, cron health/tracked ×4, reschedule ×1). Live e2e: /cron/health 13 jobs owner-only
+  (401 unauth), /settings/compliance reads.
+- **⚠ OPERATIONAL FLAG (owner was told the behavior; call out before prod):** with enforcement ON (the
+  DEFAULT) and a job NOT linked to a canonical Project, the Depart tap now 409-blocks as "unverifiable".
+  In preview NONE of the demo assignments are Project-linked yet (project_id=None), so their Depart tap
+  will block until (a) the Prompt 2 backfill links jobs on prod, (b) an owner override is recorded, or
+  (c) enforcement is toggled off in Settings. Run the Prompt 2 /migration backfill on prod so jobs are
+  linked before relying on crew Depart.
+- **Pre-existing (NOT Prompt 7, NOT fixed — out of scope):** `test_stage7_optimizer.py::
+  test_rates_write_requires_reason_and_versions` is state/order-sensitive (hardcodes writing base rate
+  2.4; if a prior test left the shared estimating_params at 2.4 the no-reason write is a correct no-op →
+  200 not 422). Resetting estimating_params.manHoursPer100CuFt to 2.10 makes it pass. Touches /settings/rates
+  reason-gating, which Prompt 7 never modified. (Restored the preview base rate to 2.10 after diagnosing.)
+- **NEXT (await explicit user go-ahead — STRICT ORDER):** Prompt 3 → 4 → 5 → 6 → 8 → 9. Prompt 3 =
+  canonical payment ledger + Square + one money engine. PRICING RULE: if a new dollar amount/rate is
+  needed in any future prompt, STOP and ask the Owner — never invent pricing.
