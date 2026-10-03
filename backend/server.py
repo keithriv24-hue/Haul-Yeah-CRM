@@ -331,6 +331,14 @@ def clean_write_fields(fields: Dict[str, Any], role: str, table_key: str) -> Dic
     return fields
 
 
+def _airtable_write_body(records: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Canonical Airtable write envelope. `returnFieldsByFieldId` makes the SAVED record
+    come back keyed by field ID — matching every read (which also passes it) — so the
+    record we role-filter, return to the client, and feed to automation is always in the
+    one canonical representation. `typecast` lets name/value coercion work on write."""
+    return {"records": records, "typecast": True, "returnFieldsByFieldId": True}
+
+
 class RateLimiter:
     """Keeps outgoing Airtable calls under 5 requests per second."""
 
@@ -2321,49 +2329,252 @@ def _project_fields_for_job(job: Dict[str, Any]) -> Dict[str, Any]:
     return fields
 
 
-async def sync_project_for_job(job: Dict[str, Any]) -> None:
-    """Upsert the Airtable Projects record for a deposit-paid job so it lands on the Day Sheet."""
+# ======== CANONICAL JOB / PROJECT identity (Prompt 2 of the 56-problem audit) ========
+# ONE authoritative Project-creation service. Every caller (deposit sync, "Book as job",
+# owner override, migration) routes through ensure_project_for_lead(). The Airtable
+# Project record id is the canonical `project_record_id` for a job; the Mongo job,
+# Dispatch/crew assignment, payment, quote, portal, outcome, Quality + compliance records
+# all reference it. project_links (Mongo, _id = lead_id) is the data-layer guard that
+# stops one lead ever owning two Projects, and keeps the mapping idempotent/retry-safe.
+
+_project_locks: Dict[str, asyncio.Lock] = {}
+
+
+def _lead_lock(lead_id: str) -> asyncio.Lock:
+    """Per-lead in-process lock so two near-simultaneous requests can't create two Projects."""
+    lock = _project_locks.get(lead_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _project_locks[lead_id] = lock
+    return lock
+
+
+async def log_canonical_link(kind: str, ref_id: Optional[str], project_record_id: Optional[str],
+                             action: str, via: str, actor: Optional[Dict[str, Any]] = None,
+                             extra: Optional[Dict[str, Any]] = None) -> None:
+    """Append-only trace of how a record became associated with a Project (audit/debug)."""
+    try:
+        await mongo_db.canonical_link_events.insert_one({
+            "_id": str(uuid4()), "at": now_iso(), "kind": kind, "ref_id": ref_id,
+            "project_record_id": project_record_id, "action": action, "via": via,
+            "actor": (actor or {}).get("name") or (actor or {}).get("role") or "system",
+            "actor_id": (actor or {}).get("user_id"), "extra": extra or {}})
+    except Exception as exc:
+        logger.warning("canonical link log failed: %s", exc)
+
+
+def _candidate_summary(rec: Dict[str, Any]) -> Dict[str, Any]:
+    f = rec.get("fields") or {}
+    return {"project_record_id": rec.get("id"),
+            "name": f.get(PROJECT_NAME_FIELD),
+            "date": str(f.get(PROJECT_DATE_FIELD) or "")[:10] or None,
+            "status": f.get(PROJECT_STATUS_FIELD)}
+
+
+async def _queue_migration_item(item_id: str, kind: str, ref_id: str, lead_id: Optional[str],
+                                label: str, candidates: List[Dict[str, Any]], reason: str) -> None:
+    await mongo_db.project_migration_queue.update_one(
+        {"_id": item_id},
+        {"$setOnInsert": {"created_at": now_iso()},
+         "$set": {"kind": kind, "ref_id": ref_id, "lead_id": lead_id, "label": label,
+                  "candidates": candidates, "reason": reason, "status": "pending",
+                  "updated_at": now_iso()}},
+        upsert=True)
+
+
+async def _find_projects_for_lead(lead_id: str) -> List[Dict[str, Any]]:
+    """Every Airtable Project deterministically linked to this lead (via the lead-link field)."""
+    out: List[Dict[str, Any]] = []
+    data = await airtable_request("GET", TABLES["projects"],
+                                  params={"returnFieldsByFieldId": "true", "pageSize": 100})
+    for rec in data.get("records", []):
+        if lead_id in ((rec.get("fields") or {}).get(PROJECT_LEAD_LINK_FIELD) or []):
+            out.append(rec)
+    return out
+
+
+async def _bind_lead_project(lead_id: str, rec_id: str, source: str,
+                             actor: Optional[Dict[str, Any]], via: str) -> str:
+    """Record the canonical lead -> Project mapping. project_record_id is IMMUTABLE once set:
+    an auto path will NEVER silently repoint an existing link (owner relink endpoint does that)."""
+    existing = await mongo_db.project_links.find_one({"_id": lead_id})
+    if existing and existing.get("project_record_id") and existing["project_record_id"] != rec_id:
+        logger.warning("lead %s already canonically linked to %s; refusing auto-relink to %s (source=%s)",
+                       lead_id, existing["project_record_id"], rec_id, source)
+        return existing["project_record_id"]
+    await mongo_db.project_links.update_one(
+        {"_id": lead_id},
+        {"$setOnInsert": {"created_at": now_iso(), "first_source": source},
+         "$set": {"project_record_id": rec_id, "locked": True, "updated_at": now_iso()}},
+        upsert=True)
+    await log_canonical_link("lead", lead_id, rec_id, "linked", via, actor)
+    return rec_id
+
+
+async def ensure_project_for_lead(lead_id: Optional[str], seed_fields: Dict[str, Any], source: str,
+                                  actor: Optional[Dict[str, Any]] = None,
+                                  allow_create: bool = True) -> Tuple[Optional[Dict[str, Any]], bool]:
+    """Authoritative get-or-create for a job's canonical Project.
+    Concurrency-safe per lead, idempotent and retry-safe. Returns (record, created).
+    Returns (None, False) when the lead is ambiguous (>1 existing Project — never guessed;
+    an Owner review item is queued) or when no Project exists and allow_create is False."""
+    if not lead_id:
+        if not allow_create:
+            return None, False
+        body = {"records": [{"fields": seed_fields}], "typecast": True, "returnFieldsByFieldId": True}
+        data = await airtable_request("POST", TABLES["projects"], json_body=body)
+        rec = (data.get("records") or [{}])[0]
+        await log_canonical_link("project", rec.get("id"), rec.get("id"), "created", source, actor)
+        return rec, True
+    async with _lead_lock(lead_id):
+        link = await mongo_db.project_links.find_one({"_id": lead_id})
+        rec_id = link.get("project_record_id") if link else None
+        if rec_id:
+            try:
+                rec = await airtable_request("GET", TABLES["projects"], path=f"/{rec_id}",
+                                             params={"returnFieldsByFieldId": "true"})
+                return rec, False
+            except HTTPException as exc:
+                if exc.status_code != 404:
+                    raise
+                rec_id = None  # stored Project vanished -> re-resolve below
+        matches = await _find_projects_for_lead(lead_id)
+        if len(matches) == 1:
+            rec = matches[0]
+            await _bind_lead_project(lead_id, rec["id"], source, actor, via="lead_link")
+            return rec, False
+        if len(matches) > 1:
+            await _queue_migration_item(
+                f"lead:{lead_id}", "lead", lead_id, lead_id, "(lead linked to multiple jobs)",
+                [_candidate_summary(m) for m in matches], "multiple projects linked to one lead")
+            await log_canonical_link("lead", lead_id, None, "ambiguous", source, actor)
+            return None, False
+        if not allow_create:
+            return None, False
+        body = {"records": [{"fields": seed_fields}], "typecast": True, "returnFieldsByFieldId": True}
+        data = await airtable_request("POST", TABLES["projects"], json_body=body)
+        rec = (data.get("records") or [{}])[0]
+        await _bind_lead_project(lead_id, rec["id"], source, actor, via="created")
+        await log_canonical_link("project", rec.get("id"), rec.get("id"), "created", source, actor)
+        return rec, True
+
+
+async def sync_project_for_job(job: Dict[str, Any], actor: Optional[Dict[str, Any]] = None) -> None:
+    """Upsert the Airtable Projects record for a deposit-paid job so it lands on the Day Sheet.
+    Routes through the one authoritative ensure_project_for_lead() service."""
     if not job:
         return
     try:
-        rec_id = job.get("project_record_id")
-        existing = None
-        if rec_id:
-            try:
-                existing = await airtable_request("GET", TABLES["projects"], path=f"/{rec_id}",
-                                                  params={"returnFieldsByFieldId": "true"})
-            except HTTPException as exc:
-                if exc.status_code == 404:
-                    rec_id, existing = None, None
-                else:
-                    raise
-        if not rec_id and job.get("lead_id"):
-            data = await airtable_request("GET", TABLES["projects"],
-                                          params={"returnFieldsByFieldId": "true", "pageSize": 100})
-            for rec in data.get("records", []):
-                if job["lead_id"] in ((rec.get("fields") or {}).get(PROJECT_LEAD_LINK_FIELD) or []):
-                    rec_id, existing = rec["id"], rec
-                    break
-        fields = _project_fields_for_job(job)
-        if rec_id:
-            cur = (existing or {}).get("fields") or {}
+        # if the job already carries a canonical id, seed the mapping first (restartable/idempotent)
+        if job.get("project_record_id") and job.get("lead_id"):
+            await mongo_db.project_links.update_one(
+                {"_id": job["lead_id"]},
+                {"$setOnInsert": {"created_at": now_iso(), "first_source": "job"},
+                 "$set": {"project_record_id": job["project_record_id"], "locked": True}},
+                upsert=True)
+        rec, created = await ensure_project_for_lead(
+            job.get("lead_id"), _project_fields_for_job(job), source="deposit_job", actor=actor)
+        if not rec:
+            return  # ambiguous / unresolved — legacy fuzzy fallbacks still match this job for now
+        rec_id = rec["id"]
+        if not created:
+            cur = rec.get("fields") or {}
+            upd = _project_fields_for_job(job)
             cur_status = cur.get(PROJECT_STATUS_FIELD)
             if cur_status and cur_status not in ("Pending Deposit", "Scheduled"):
-                fields.pop(PROJECT_STATUS_FIELD, None)  # never downgrade an in-progress/completed job
-            fields.pop(PROJECT_NAME_FIELD, None)  # never rename an existing project
-            body = {"records": [{"id": rec_id, "fields": fields}], "typecast": True}
+                upd.pop(PROJECT_STATUS_FIELD, None)  # never downgrade an in-progress/completed job
+            if cur.get(PROJECT_NAME_FIELD):
+                upd.pop(PROJECT_NAME_FIELD, None)  # never rename an existing project
+            body = {"records": [{"id": rec_id, "fields": upd}], "typecast": True,
+                    "returnFieldsByFieldId": True}
             await airtable_request("PATCH", TABLES["projects"], json_body=body)
-        else:
-            body = {"records": [{"fields": fields}], "typecast": True}
-            data = await airtable_request("POST", TABLES["projects"], json_body=body)
-            rec_id = ((data.get("records") or [{}])[0]).get("id")
-        if rec_id:
-            await mongo_db.jobs.update_one({"_id": job["_id"]}, {"$set": {
-                "project_record_id": rec_id, "project_synced_date": job.get("job_date")}})
+        await mongo_db.jobs.update_one({"_id": job["_id"]}, {"$set": {
+            "project_record_id": rec_id, "project_synced_date": job.get("job_date")}})
+        await log_canonical_link("job", job.get("_id"), rec_id,
+                                 "created" if created else "synced", "deposit_job", actor)
     except HTTPException as exc:
         logger.warning("Projects sync skipped for job %s: %s", job.get("invoice_number"), exc.detail)
     except Exception as exc:
         logger.warning("Projects sync failed for job %s: %s", job.get("invoice_number"), exc)
+
+
+# ------- Canonical booking state (Booked = deposit received OR authorized Owner override)
+BOOKING_STATES = ("pending_deposit", "booked", "owner_override", "cancelled")
+
+
+async def set_booking_state(lead_id: Optional[str], project_record_id: Optional[str], state: str,
+                            actor: Optional[Dict[str, Any]] = None,
+                            override: Optional[Dict[str, Any]] = None) -> None:
+    key = lead_id or project_record_id
+    if not key or state not in BOOKING_STATES:
+        return
+    entry = {"state": state, "at": now_iso(), "by": (actor or {}).get("name") or "system"}
+    updates: Dict[str, Any] = {"booking_state": state, "lead_id": lead_id,
+                               "project_record_id": project_record_id, "updated_at": now_iso()}
+    if override is not None:
+        updates["override"] = override
+    await mongo_db.job_booking.update_one(
+        {"_id": key},
+        {"$setOnInsert": {"created_at": now_iso()}, "$set": updates, "$push": {"history": entry}},
+        upsert=True)
+
+
+async def get_booking_state(lead_id: Optional[str] = None,
+                            project_record_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    key = lead_id or project_record_id
+    if not key:
+        return None
+    doc = await mongo_db.job_booking.find_one({"_id": key})
+    if not doc and project_record_id:
+        doc = await mongo_db.job_booking.find_one({"project_record_id": project_record_id})
+    return doc
+
+
+def _project_seed_for_booking(lead: Dict[str, Any], lead_id: str, status: str) -> Dict[str, Any]:
+    name = (lead.get("name") or "").strip() or "Job"
+    date = str(lead.get("move_date") or "")
+    fields: Dict[str, Any] = {
+        PROJECT_NAME_FIELD: f"{name} — {date[:10] or 'date TBD'}",
+        PROJECT_STATUS_FIELD: status,
+        PROJECT_LEAD_LINK_FIELD: [lead_id],
+    }
+    if date:
+        fields[PROJECT_DATE_FIELD] = date
+    try:
+        if lead.get("quote"):
+            fields[PROJECT_QUOTE_FIELD] = float(lead["quote"])
+    except (TypeError, ValueError):
+        pass
+    if lead.get("from"):
+        fields[PROJECT_FROM_FIELD] = lead["from"]
+    if lead.get("to"):
+        fields[PROJECT_TO_FIELD] = lead["to"]
+    return fields
+
+
+async def _mark_lead_booked(lead_id: str) -> bool:
+    """Funnel update on a real booking — set the Airtable lead Status to Booked. Best-effort."""
+    try:
+        await airtable_request("PATCH", TABLES["leads"], json_body={
+            "records": [{"id": lead_id, "fields": {LEAD_STATUS_F: "Booked"}}],
+            "typecast": True, "returnFieldsByFieldId": True})
+        return True
+    except HTTPException:
+        return False
+
+
+async def _book_on_deposit(job: Dict[str, Any]) -> None:
+    """A real deposit satisfies the booking requirement: flip booking state to booked and
+    update the funnel (lead Status -> Booked). Only promotes, never downgrades an override."""
+    if not job:
+        return
+    cur = await get_booking_state(job.get("lead_id"), job.get("project_record_id"))
+    if cur and cur.get("booking_state") in ("booked", "owner_override"):
+        return
+    await set_booking_state(job.get("lead_id"), job.get("project_record_id"), "booked")
+    if job.get("lead_id"):
+        await _mark_lead_booked(job["lead_id"])
+
 
 
 async def ensure_job_for_deposit(inv: Dict[str, Any], mark_full: bool = False, notify_owner: bool = True) -> None:
@@ -2374,6 +2585,7 @@ async def ensure_job_for_deposit(inv: Dict[str, Any], mark_full: bool = False, n
         if not existing.get("project_record_id") or existing.get("project_synced_date") != existing.get("job_date"):
             await sync_project_for_job(existing)
         fresh = await mongo_db.jobs.find_one({"_id": existing["_id"]}) or existing
+        await _book_on_deposit(fresh)
         await _check_owner_paperwork_alert(fresh, "booking")
         return
     lead = await fetch_lead_details(inv.get("lead_id"))
@@ -2381,6 +2593,7 @@ async def ensure_job_for_deposit(inv: Dict[str, Any], mark_full: bool = False, n
     job = _job_doc_from_invoice(inv, lead, integrations, paid_at, mark_full)
     await mongo_db.jobs.insert_one(job)
     await sync_project_for_job(job)
+    await _book_on_deposit(job)
     if notify_owner:
         who = job["customer"]["name"] or "the customer"
         await notify(None, "owner", "New job — deposit paid",
@@ -2706,6 +2919,39 @@ class JobPatchPayload(BaseModel):
     truck_pickup_location: Optional[str] = None
     customer_phone: Optional[str] = None
     customer_email: Optional[str] = None
+    edit_reason: Optional[str] = None
+
+
+def _job_is_closed(job: Dict[str, Any]) -> bool:
+    """Completed or financially closed — edits then require a reason + before/after audit."""
+    if (job.get("paid_in_full") or {}).get("status") == "paid":
+        return True
+    if job.get("cancelled_at") or job.get("completed_at"):
+        return True
+    return (job.get("status") or "").lower() in ("completed", "complete", "cancelled")
+
+
+_JOB_MATERIAL_FIELDS = ("job_date", "pickup_address", "dropoff_address")
+
+
+async def _propagate_job_addresses(job: Dict[str, Any], updates: Dict[str, Any],
+                                   actor: Dict[str, Any]) -> None:
+    """Address change fans out to the job's Dispatch/crew assignments (re-geocode the site)."""
+    if "pickup_address" not in updates and "dropoff_address" not in updates:
+        return
+    for aid in await _job_assignment_ids(job):
+        a = await mongo_db.assignments.find_one({"_id": aid})
+        if not a:
+            continue
+        asn_upd: Dict[str, Any] = {"updated_at": now_iso()}
+        if "pickup_address" in updates:
+            asn_upd["start_address"] = job.get("pickup_address") or ""
+            asn_upd["site_coords"] = await geocode(job.get("pickup_address") or "")
+        if "dropoff_address" in updates:
+            asn_upd["end_address"] = job.get("dropoff_address") or ""
+        await mongo_db.assignments.update_one({"_id": aid}, {"$set": asn_upd})
+        await log_job_event(aid, "address", "Job address updated from the Jobs board",
+                            by=actor.get("name") or "Owner")
 
 
 async def _resolve_job_crew(slots: List[JobCrewSlot]) -> List[Dict[str, Any]]:
@@ -2771,14 +3017,313 @@ async def patch_job(job_id: str, payload: JobPatchPayload,
         raise HTTPException(status_code=404, detail="Job not found.")
     updates, new_crew_ids = await _job_updates_from_payload(payload, job)
     if updates:
+        closed = _job_is_closed(job)
+        material = [k for k in _JOB_MATERIAL_FIELDS if k in updates]
+        reason = (payload.edit_reason or "").strip()
+        if closed and material and len(reason) < 5:
+            raise HTTPException(status_code=422, detail=(
+                "This job is completed/closed — add a short reason (5+ chars) to edit its date or address."))
+        before = {k: job.get(k) for k in updates}
         updates["assigned_at"] = now_iso()
         await mongo_db.jobs.update_one({"_id": job_id}, {"$set": updates})
         job.update(updates)
         await _notify_new_crew_members(job, job_id, new_crew_ids)
-        await audit(p, "updated job assignment", f"job {job.get('invoice_number')}", {"fields": list(updates.keys())})
-        if "job_date" in updates:
-            await sync_project_for_job(job)
+        await audit(p, "updated job assignment", f"job {job.get('invoice_number')}",
+                    {"fields": list(updates.keys())})
+        if closed and material:
+            await mongo_db.job_edit_audit.insert_one({
+                "_id": str(uuid4()), "job_id": job_id, "invoice_number": job.get("invoice_number"),
+                "at": now_iso(), "by": p.get("name"), "by_id": p.get("user_id"),
+                "reason": reason, "before": before,
+                "after": {k: updates.get(k) for k in before}})
+        if "job_date" in updates or "pickup_address" in updates or "dropoff_address" in updates:
+            await sync_project_for_job(job, actor=p)
+        await _propagate_job_addresses(job, updates, p)
     return _job_out(job)
+
+
+# ======== Canonical booking + job-lifecycle endpoints (Prompt 2) ========
+
+class BookOverridePayload(BaseModel):
+    reason: str
+
+
+class JobCancelPayload(BaseModel):
+    reason: str
+
+
+@api_router.post("/leads/{lead_id}/book")
+async def book_lead_as_job(lead_id: str, request: Request):
+    """Server-authoritative "Book as job". Owner + sales. Creates/links the canonical Project
+    as Pending Deposit WITHOUT marking the lead financially Booked — booking requires a real
+    deposit (or an owner override). One lead can never spawn a second Project."""
+    p = await current_principal(request)
+    if p["role"] not in ("owner", "sales"):
+        raise HTTPException(status_code=403, detail="Only owner or sales can book a lead.")
+    lead = await fetch_lead_details(lead_id)
+    seed = _project_seed_for_booking(lead, lead_id, status="Pending Deposit")
+    q = await mongo_db.lead_quotes.find_one({"_id": lead_id}) or {}
+    b = q.get("breakdown") or {}
+    try:
+        if b.get("crew"):
+            seed[PROJECT_CREW_FIELD] = int(b["crew"])
+        if b.get("hours"):
+            seed[PROJECT_HOURS_FIELD] = float(b["hours"])
+    except (TypeError, ValueError):
+        pass
+    rec, created = await ensure_project_for_lead(lead_id, seed, source="book_as_job", actor=p)
+    if not rec:
+        raise HTTPException(status_code=409, detail=(
+            "This lead is linked to more than one job. Open Migration Review to resolve it first."))
+    existing_state = await get_booking_state(lead_id, rec["id"])
+    if not (existing_state and existing_state.get("booking_state") in ("booked", "owner_override")):
+        await set_booking_state(lead_id, rec["id"], "pending_deposit", actor=p)
+    await audit(p, "booked lead as job (pending deposit)", lead.get("name") or lead_id,
+                {"lead_id": lead_id, "project_record_id": rec["id"], "created": created})
+    state = (await get_booking_state(lead_id, rec["id"]) or {}).get("booking_state", "pending_deposit")
+    return {"project_record_id": rec["id"], "created": created,
+            "booking_state": state, "booked": state in ("booked", "owner_override")}
+
+
+@api_router.post("/leads/{lead_id}/mark-booked-override")
+async def mark_booked_override(lead_id: str, payload: BookOverridePayload,
+                               p: Dict[str, Any] = Depends(require_owner)):
+    """Owner-only: mark a lead Booked WITHOUT a deposit. Requires a reason; logs who/when/why
+    and the prior booking state."""
+    reason = (payload.reason or "").strip()
+    if len(reason) < 5:
+        raise HTTPException(status_code=422, detail="Add a short reason (5+ characters) for the override.")
+    lead = await fetch_lead_details(lead_id)
+    seed = _project_seed_for_booking(lead, lead_id, status="Scheduled")
+    rec, created = await ensure_project_for_lead(lead_id, seed, source="owner_override", actor=p)
+    if not rec:
+        raise HTTPException(status_code=409, detail=(
+            "This lead is linked to more than one job. Open Migration Review to resolve it first."))
+    prior = await get_booking_state(lead_id, rec["id"])
+    prior_state = (prior or {}).get("booking_state", "none")
+    await _mark_lead_booked(lead_id)
+    await set_booking_state(lead_id, rec["id"], "owner_override", actor=p, override={
+        "by": p.get("name"), "by_id": p.get("user_id"), "at": now_iso(),
+        "reason": reason, "prior_state": prior_state})
+    await audit(p, "owner override — marked booked without deposit", lead.get("name") or lead_id,
+                {"lead_id": lead_id, "project_record_id": rec["id"], "reason": reason,
+                 "prior_state": prior_state})
+    await notify(None, "owner", "Job marked booked (override)",
+                 f"{lead.get('name') or 'A lead'} was marked booked without a deposit. Reason: {reason}",
+                 "warning", {"lead_id": lead_id})
+    return {"project_record_id": rec["id"], "booking_state": "owner_override", "booked": True}
+
+
+@api_router.get("/leads/{lead_id}/booking-state")
+async def read_booking_state(lead_id: str, request: Request):
+    p = await current_principal(request)
+    if p["role"] not in ("owner", "sales"):
+        raise HTTPException(status_code=403, detail="Your role can't see booking state.")
+    doc = await get_booking_state(lead_id)
+    if not doc:
+        return {"booking_state": "none", "booked": False, "project_record_id": None}
+    return {"booking_state": doc.get("booking_state"),
+            "booked": doc.get("booking_state") in ("booked", "owner_override"),
+            "project_record_id": doc.get("project_record_id"),
+            "override": doc.get("override")}
+
+
+@api_router.post("/jobs/{job_id}/cancel")
+async def cancel_job(job_id: str, payload: JobCancelPayload,
+                     p: Dict[str, Any] = Depends(require_owner)):
+    """Cancel a job: stop Dispatch/upcoming crew/reminders/portal. Financial + audit history
+    is preserved (the job doc + payments are never deleted)."""
+    job = await mongo_db.jobs.find_one({"_id": job_id})
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    reason = (payload.reason or "").strip()
+    if len(reason) < 5:
+        raise HTTPException(status_code=422, detail="Add a short reason (5+ characters) to cancel.")
+    prior_status = job.get("status")
+    await mongo_db.jobs.update_one({"_id": job_id}, {"$set": {
+        "status": "cancelled", "cancelled_at": now_iso(),
+        "cancellation": {"by": p.get("name"), "by_id": p.get("user_id"),
+                         "at": now_iso(), "reason": reason, "prior_status": prior_status}}})
+    today = _et_today()
+    stopped = 0
+    for aid in await _job_assignment_ids(job):
+        a = await mongo_db.assignments.find_one({"_id": aid})
+        if not a or a.get("cancelled") or a.get("exec_status") == "Complete":
+            continue
+        if (a.get("job_date") or "") < today:
+            continue  # leave past/completed dispatch rows intact for history
+        await mongo_db.assignments.update_one({"_id": aid}, {"$set": {
+            "cancelled": True, "cancelled_at": now_iso(), "updated_at": now_iso()}})
+        await log_job_event(aid, "cancelled", f"Job cancelled — {reason}", by=p.get("name") or "Owner")
+        for c in a.get("crew", []):
+            await notify(c["user_id"], None, "Job cancelled",
+                         f"\"{a.get('job_name')}\" on {a.get('job_date')} was cancelled.",
+                         "warning", {"assignment_id": aid})
+        stopped += 1
+    await set_booking_state(job.get("lead_id"), job.get("project_record_id"), "cancelled", actor=p)
+    await audit(p, "cancelled job", f"job {job.get('invoice_number')}",
+                {"reason": reason, "prior_status": prior_status, "assignments_stopped": stopped})
+    await notify(None, "owner", "Job cancelled",
+                 f"Job #{job.get('invoice_number')} was cancelled. Reason: {reason}",
+                 "warning", {"job_id": job_id})
+    return {"ok": True, "cancelled": True, "assignments_stopped": stopped}
+
+
+# ======== Safe migration / backfill of project_record_id (Prompt 2) ========
+# Deterministic matches are backfilled; ambiguous legacy records go to an Owner review
+# queue (never guessed). The scan is read-only; the run is idempotent/restartable.
+
+async def _migrate_project_ids(dry_run: bool, actor: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    counts = {"scanned": 0, "already_linked": 0, "deterministically_linked": 0,
+              "ambiguous": 0, "failed": 0, "skipped": 0}
+    ambiguous: List[Dict[str, Any]] = []
+    jobs = await mongo_db.jobs.find({}).to_list(5000)
+    for job in jobs:
+        counts["scanned"] += 1
+        lead_id = job.get("lead_id")
+        if job.get("project_record_id"):
+            counts["already_linked"] += 1
+            if not dry_run and lead_id:
+                await mongo_db.project_links.update_one(
+                    {"_id": lead_id},
+                    {"$setOnInsert": {"created_at": now_iso(), "first_source": "migration"},
+                     "$set": {"project_record_id": job["project_record_id"], "locked": True}},
+                    upsert=True)
+            continue
+        if not lead_id:
+            counts["skipped"] += 1
+            continue
+        try:
+            matches = await _find_projects_for_lead(lead_id)
+        except HTTPException:
+            counts["failed"] += 1
+            continue
+        if len(matches) == 1:
+            counts["deterministically_linked"] += 1
+            if not dry_run:
+                rec_id = matches[0]["id"]
+                await mongo_db.jobs.update_one({"_id": job["_id"]},
+                                               {"$set": {"project_record_id": rec_id}})
+                await _bind_lead_project(lead_id, rec_id, "migration", actor, "migration_backfill")
+                await log_canonical_link("job", job["_id"], rec_id, "backfilled", "migration", actor)
+        elif len(matches) > 1:
+            counts["ambiguous"] += 1
+            cand = [_candidate_summary(m) for m in matches]
+            label = (job.get("customer") or {}).get("name") or job.get("invoice_number") or job["_id"]
+            ambiguous.append({"item_id": f"job:{job['_id']}", "kind": "job",
+                              "ref_id": job["_id"], "lead_id": lead_id,
+                              "label": label, "candidates": cand})
+            if not dry_run:
+                await _queue_migration_item(f"job:{job['_id']}", "job", job["_id"], lead_id,
+                                            label, cand, "multiple projects linked to one lead")
+        else:
+            counts["skipped"] += 1  # a lead with no Project yet — nothing to link (not an error)
+    return {"counts": counts, "ambiguous": ambiguous[:200], "dry_run": dry_run, "at": now_iso()}
+
+
+@api_router.post("/migration/project-ids/scan")
+async def migration_scan(p: Dict[str, Any] = Depends(require_owner)):
+    report = await _migrate_project_ids(dry_run=True, actor=p)
+    await mongo_db.settings.update_one({"_id": "migration_project_ids"},
+                                       {"$set": {"last_scan": report}}, upsert=True)
+    return report
+
+
+@api_router.post("/migration/project-ids/run")
+async def migration_run(p: Dict[str, Any] = Depends(require_owner)):
+    report = await _migrate_project_ids(dry_run=False, actor=p)
+    await mongo_db.settings.update_one({"_id": "migration_project_ids"},
+                                       {"$set": {"last_run": report}}, upsert=True)
+    await audit(p, "ran project_record_id backfill", "migration", report["counts"])
+    return report
+
+
+@api_router.get("/migration/status")
+async def migration_status(p: Dict[str, Any] = Depends(require_owner)):
+    doc = await mongo_db.settings.find_one({"_id": "migration_project_ids"}) or {}
+    pending = await mongo_db.project_migration_queue.count_documents({"status": "pending"})
+    return {"last_scan": doc.get("last_scan"), "last_run": doc.get("last_run"),
+            "pending_review": pending}
+
+
+@api_router.get("/migration/review")
+async def migration_review_list(p: Dict[str, Any] = Depends(require_owner)):
+    items = await mongo_db.project_migration_queue.find(
+        {"status": "pending"}).sort("created_at", 1).to_list(500)
+    out = [{"item_id": it["_id"], "kind": it.get("kind"), "ref_id": it.get("ref_id"),
+            "label": it.get("label"), "reason": it.get("reason"),
+            "candidates": it.get("candidates", []), "created_at": it.get("created_at")}
+           for it in items]
+    return {"items": out}
+
+
+class ReviewResolvePayload(BaseModel):
+    action: str  # "link" | "skip" | "resolved"
+    project_record_id: Optional[str] = None
+
+
+@api_router.post("/migration/review/{item_id}/resolve")
+async def migration_review_resolve(item_id: str, payload: ReviewResolvePayload,
+                                   p: Dict[str, Any] = Depends(require_owner)):
+    item = await mongo_db.project_migration_queue.find_one({"_id": item_id})
+    if not item:
+        raise HTTPException(status_code=404, detail="Review item not found.")
+    prev = item.get("status")
+    action = (payload.action or "").strip()
+    resolution: Dict[str, Any] = {"by": p.get("name"), "by_id": p.get("user_id"),
+                                  "at": now_iso(), "prev_status": prev, "action": action}
+    if action == "link":
+        rec_id = payload.project_record_id
+        valid = {c["project_record_id"] for c in item.get("candidates", [])}
+        if not rec_id or rec_id not in valid:
+            raise HTTPException(status_code=422, detail="Pick one of the candidate projects.")
+        if item.get("kind") == "job":
+            await mongo_db.jobs.update_one({"_id": item["ref_id"]},
+                                           {"$set": {"project_record_id": rec_id}})
+            await log_canonical_link("job", item["ref_id"], rec_id, "review-linked", "owner_review", p)
+        if item.get("lead_id"):
+            await _bind_lead_project(item["lead_id"], rec_id, "owner_review", p, "owner_review")
+        resolution["project_record_id"] = rec_id
+        new_status = "resolved"
+    elif action in ("skip", "resolved"):
+        new_status = "skipped" if action == "skip" else "resolved"
+    else:
+        raise HTTPException(status_code=422, detail="action must be link, skip, or resolved.")
+    await mongo_db.project_migration_queue.update_one(
+        {"_id": item_id}, {"$set": {"status": new_status, "resolution": resolution}})
+    await audit(p, "resolved migration review", item_id, resolution)
+    return {"ok": True, "status": new_status}
+
+
+class RelinkPayload(BaseModel):
+    lead_id: str
+    project_record_id: str
+    reason: str
+
+
+@api_router.post("/migration/relink")
+async def migration_relink(payload: RelinkPayload, p: Dict[str, Any] = Depends(require_owner)):
+    """Owner-authorized correction of an established (immutable) canonical link."""
+    reason = (payload.reason or "").strip()
+    if len(reason) < 5:
+        raise HTTPException(status_code=422, detail="Add a short reason (5+ characters) to relink.")
+    existing = await mongo_db.project_links.find_one({"_id": payload.lead_id})
+    prev = existing.get("project_record_id") if existing else None
+    await mongo_db.project_links.update_one(
+        {"_id": payload.lead_id},
+        {"$setOnInsert": {"created_at": now_iso(), "first_source": "owner_relink"},
+         "$set": {"project_record_id": payload.project_record_id, "locked": True,
+                  "updated_at": now_iso()}}, upsert=True)
+    await mongo_db.jobs.update_many({"lead_id": payload.lead_id},
+                                    {"$set": {"project_record_id": payload.project_record_id}})
+    await log_canonical_link("lead", payload.lead_id, payload.project_record_id, "relinked",
+                             "owner_relink", p, {"prev": prev, "reason": reason})
+    await audit(p, "relinked canonical project", payload.lead_id,
+                {"prev": prev, "new": payload.project_record_id, "reason": reason})
+    return {"ok": True, "lead_id": payload.lead_id,
+            "project_record_id": payload.project_record_id, "prev": prev}
+
+
 
 
 # ------- Crew: active job, tracking link, review requests
@@ -4244,35 +4789,79 @@ async def verify_connection(role: str = Depends(require_auth)):
 _schema_cache: Dict[str, Dict[str, Any]] = {}
 
 
-@api_router.get("/schema/{table_key}")
-async def get_table_schema(table_key: str, role: str = Depends(require_auth)):
-    table_id = resolve_table(table_key)
-    await check_table_access(role, table_key)
+async def _schema_fields(table_key: str) -> List[Dict[str, Any]]:
+    """Field layout [{id,name,type}] for a table, cached 10 min. Single source used by
+    both the /schema endpoint and the write-normalization layer. Raises 503 when the
+    Airtable key is missing, 403/404/502 on schema problems."""
+    resolve_table(table_key)
     cached = _schema_cache.get(table_key)
     if cached and time.time() - cached["at"] < 600:
-        fields = cached["fields"]
-    else:
-        key = get_api_key()
-        if not key:
-            raise HTTPException(status_code=503, detail={
-                "error": "missing_key",
-                "message": "Airtable key is not set. Add AIRTABLE_API_KEY in the secrets panel, then press Refresh."})
-        url = f"{AIRTABLE_API_URL}/meta/bases/{get_base_id()}/tables"
-        await limiter.wait()
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.get(url, headers={"Authorization": f"Bearer {key}"})
-        except httpx.HTTPError:
-            raise HTTPException(status_code=502, detail="Could not reach Airtable. Check your internet and try again.")
-        if resp.status_code == 403:
-            raise HTTPException(status_code=403, detail="The Airtable token can't read the table layout. Recreate it with the schema.bases:read scope added.")
-        if resp.status_code != 200:
-            raise HTTPException(status_code=resp.status_code, detail="Airtable could not send the table layout.")
-        table = next((t for t in resp.json().get("tables", []) if t.get("id") == table_id), None)
-        if not table:
-            raise HTTPException(status_code=404, detail="Table not found in the base.")
-        fields = [{"id": fl["id"], "name": fl["name"], "type": fl.get("type", "")} for fl in table.get("fields", [])]
-        _schema_cache[table_key] = {"fields": fields, "at": time.time()}
+        return cached["fields"]
+    key = get_api_key()
+    if not key:
+        raise HTTPException(status_code=503, detail={
+            "error": "missing_key",
+            "message": "Airtable key is not set. Add AIRTABLE_API_KEY in the secrets panel, then press Refresh."})
+    url = f"{AIRTABLE_API_URL}/meta/bases/{get_base_id()}/tables"
+    await limiter.wait()
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(url, headers={"Authorization": f"Bearer {key}"})
+    except httpx.HTTPError:
+        raise HTTPException(status_code=502, detail="Could not reach Airtable. Check your internet and try again.")
+    if resp.status_code == 403:
+        raise HTTPException(status_code=403, detail="The Airtable token can't read the table layout. Recreate it with the schema.bases:read scope added.")
+    if resp.status_code != 200:
+        raise HTTPException(status_code=resp.status_code, detail="Airtable could not send the table layout.")
+    table_id = TABLES[table_key]
+    table = next((t for t in resp.json().get("tables", []) if t.get("id") == table_id), None)
+    if not table:
+        raise HTTPException(status_code=404, detail="Table not found in the base.")
+    fields = [{"id": fl["id"], "name": fl["name"], "type": fl.get("type", "")} for fl in table.get("fields", [])]
+    _schema_cache[table_key] = {"fields": fields, "at": time.time()}
+    return fields
+
+
+async def _table_field_index(table_key: str) -> Dict[str, Any]:
+    """{'ids': set(field_id), 'name_to_id': {name: id}} for a table; best-effort — returns
+    empty maps when the schema can't be read so callers fall back to pass-through."""
+    try:
+        fields = await _schema_fields(table_key)
+    except HTTPException:
+        return {"ids": set(), "name_to_id": {}}
+    return {"ids": {f["id"] for f in fields},
+            "name_to_id": {f["name"]: f["id"] for f in fields}}
+
+
+async def normalize_write_fields(table_key: str, fields: Dict[str, Any]) -> Dict[str, Any]:
+    """Canonicalize an incoming write payload to field-ID keys.
+
+    This is the ONE place Airtable field representation is reconciled. Whether the client
+    sent field IDs (the app's default) or field names, the result is field-ID-keyed so
+    that permission stripping (clean_write_fields / BLOCKED_FIELDS, keyed by field ID) and
+    any id-keyed validation behave identically. Unknown keys pass through unchanged
+    (logged). When the schema can't be read, the payload is returned as-is."""
+    idx = await _table_field_index(table_key)
+    ids, name_to_id = idx["ids"], idx["name_to_id"]
+    if not ids and not name_to_id:
+        return dict(fields)
+    out: Dict[str, Any] = {}
+    for k, v in fields.items():
+        if k in ids:
+            out[k] = v
+        elif k in name_to_id:
+            out[name_to_id[k]] = v
+        else:
+            logger.warning("Unknown Airtable field %r on %s write — passing through", k, table_key)
+            out[k] = v
+    return out
+
+
+@api_router.get("/schema/{table_key}")
+async def get_table_schema(table_key: str, role: str = Depends(require_auth)):
+    resolve_table(table_key)
+    await check_table_access(role, table_key)
+    fields = await _schema_fields(table_key)
     blocked = BLOCKED_FIELDS.get((role, table_key), set())
     return {"fields": [fl for fl in fields if fl["id"] not in blocked]}
 
@@ -4312,12 +4901,13 @@ async def create_record(table_key: str, request: Request, payload: RecordPayload
         raise HTTPException(status_code=403, detail="Only the owner can add these.")
     if table_key == "projects" and role in ("sales", "quality"):
         raise HTTPException(status_code=403, detail="Create jobs from a booked lead — your role can't add projects directly.")
-    body = {"records": [{"fields": clean_write_fields(payload.fields, role, table_key)}], "typecast": True}
+    nfields = await normalize_write_fields(table_key, payload.fields)
+    body = _airtable_write_body([{"fields": clean_write_fields(nfields, role, table_key)}])
     data = await airtable_request("POST", table_id, json_body=body)
     rec = filter_record(data["records"][0], role, table_key)
     if table_key == "tasks":
         rec["audience"] = []
-    if table_key == "blog" and payload.fields.get(BLOG_STATUS_F) == "Published":
+    if table_key == "blog" and nfields.get(BLOG_STATUS_F) == "Published":
         await notify_blog_published(data["records"][0])
     if table_key == "job_audits":
         await _maybe_open_audit_nc(data["records"][0], request)
@@ -4334,32 +4924,33 @@ async def update_record(table_key: str, record_id: str, request: Request, payloa
         raise HTTPException(status_code=403, detail=msg)
     if table_key == "blog" and role != "owner":
         raise HTTPException(status_code=403, detail="Only the owner can edit blog posts.")
+    nfields = await normalize_write_fields(table_key, payload.fields)
     if table_key == "tasks" and role != "owner":
-        if any(k != TASK_STATUS_F for k in payload.fields):
+        if any(k != TASK_STATUS_F for k in nfields):
             raise HTTPException(status_code=403, detail="You can only move a task between columns.")
         grp = TASK_GROUP_FOR_ROLE.get(role)
         meta = await mongo_db.task_meta.find_one({"_id": record_id})
         if not meta or grp not in (meta.get("audience") or []):
             raise HTTPException(status_code=403, detail="That task isn't shared with your team.")
-    if table_key == "nonconformances" and payload.fields.get(NC_STATUS_F) == "Closed":
-        await _guard_nc_close(record_id, payload.fields)
+    if table_key == "nonconformances" and nfields.get(NC_STATUS_F) == "Closed":
+        await _guard_nc_close(record_id, nfields)
     prev_lead_status: Optional[str] = None
-    if table_key == "leads" and payload.fields.get(LEAD_STATUS_F) == "Booked":
+    if table_key == "leads" and nfields.get(LEAD_STATUS_F) == "Booked":
         try:
             prev = await airtable_request("GET", table_id, path=f"/{record_id}",
                                           params={"returnFieldsByFieldId": "true"})
             prev_lead_status = (prev.get("fields") or {}).get(LEAD_STATUS_F)
         except HTTPException:
             prev_lead_status = None
-    body = {"records": [{"id": record_id, "fields": clean_write_fields(payload.fields, role, table_key)}], "typecast": True}
+    body = _airtable_write_body([{"id": record_id, "fields": clean_write_fields(nfields, role, table_key)}])
     data = await airtable_request("PATCH", table_id, json_body=body)
-    if table_key == "projects" and payload.fields.get(PROJECT_STATUS_FIELD) == PROJECT_COMPLETED_STATUS:
+    if table_key == "projects" and nfields.get(PROJECT_STATUS_FIELD) == PROJECT_COMPLETED_STATUS:
         await _mark_review_requested(record_id, source="observed")
-    if table_key == "leads" and payload.fields.get(LEAD_STATUS_F) in ("Contacted", "Quoted", "Booked", "Completed"):
+    if table_key == "leads" and nfields.get(LEAD_STATUS_F) in ("Contacted", "Quoted", "Booked", "Completed"):
         existing = await mongo_db.lead_meta.find_one({"_id": record_id})
         if not existing or not existing.get("contacted_at"):
             await mongo_db.lead_meta.update_one({"_id": record_id}, {"$set": {"contacted_at": now_iso()}}, upsert=True)
-    if table_key == "leads" and payload.fields.get(LEAD_STATUS_F) == "Booked":
+    if table_key == "leads" and nfields.get(LEAD_STATUS_F) == "Booked":
         if prev_lead_status != "Booked":
             rec_full = await fetch_lead_record(record_id)
             capi_lead = lead_dict_from_airtable(rec_full) if rec_full else {"id": record_id}
@@ -4388,7 +4979,7 @@ async def update_record(table_key: str, record_id: str, request: Request, payloa
     if table_key == "tasks" and role == "owner":
         meta = await mongo_db.task_meta.find_one({"_id": record_id}) or {}
         rec["audience"] = meta.get("audience", [])
-    if table_key == "blog" and payload.fields.get(BLOG_STATUS_F) == "Published":
+    if table_key == "blog" and nfields.get(BLOG_STATUS_F) == "Published":
         await notify_blog_published(data["records"][0])
     return rec
 
@@ -13904,6 +14495,10 @@ async def cron_nightly_optimizer(request: Request) -> Dict[str, Any]:
 async def seed_on_startup():
     try:
         await mongo_db.users.create_index("email", unique=True)
+        await mongo_db.project_links.create_index("project_record_id")
+        await mongo_db.project_migration_queue.create_index("status")
+        await mongo_db.canonical_link_events.create_index("project_record_id")
+        await mongo_db.job_booking.create_index("project_record_id")
         owner_email = os.environ.get("OWNER_EMAIL", "haulyeahadmin").strip().lower()
         owner_pw = os.environ.get("APP_PASSWORD", "")
         for legacy in ("keithriv24@gmail.com", "haulyeahowner"):

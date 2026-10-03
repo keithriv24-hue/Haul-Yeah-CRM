@@ -329,6 +329,27 @@ export const outcomeCandidateScopesApi = (jobKey) =>
 export const backfillOutcomesApi = (days = 180) =>
   axios.post(`${API}/outcomes-backfill?days=${days}`).then((r) => r.data);
 
+// Prompt 2 — canonical job, booking rules, safe migration
+export const bookLeadApi = (leadId) =>
+  axios.post(`${API}/leads/${encodeURIComponent(leadId)}/book`).then((r) => r.data);
+export const markBookedOverrideApi = (leadId, reason) =>
+  axios.post(`${API}/leads/${encodeURIComponent(leadId)}/mark-booked-override`, { reason }).then((r) => r.data);
+export const bookingStateApi = (leadId) =>
+  axios.get(`${API}/leads/${encodeURIComponent(leadId)}/booking-state`).then((r) => r.data);
+export const cancelJobApi = (jobId, reason) =>
+  axios.post(`${API}/jobs/${encodeURIComponent(jobId)}/cancel`, { reason }).then((r) => r.data);
+export const migrationScanApi = () =>
+  axios.post(`${API}/migration/project-ids/scan`).then((r) => r.data);
+export const migrationRunApi = () =>
+  axios.post(`${API}/migration/project-ids/run`).then((r) => r.data);
+export const migrationStatusApi = () =>
+  axios.get(`${API}/migration/status`).then((r) => r.data);
+export const migrationReviewApi = () =>
+  axios.get(`${API}/migration/review`).then((r) => r.data.items);
+export const resolveMigrationItemApi = (itemId, action, projectRecordId) =>
+  axios.post(`${API}/migration/review/${encodeURIComponent(itemId)}/resolve`,
+    { action, project_record_id: projectRecordId }).then((r) => r.data);
+
 
 export const apiErrorMessage = (e) => {
   const detail = e?.response?.data?.detail;

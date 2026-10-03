@@ -22,17 +22,16 @@ export const ScopeLeadPicker = ({ open, onOpenChange, onPick, title = "Who is th
 
   React.useEffect(() => { if (open) loadTable("leads"); }, [open, loadTable]);
 
-  const leads = records("leads") || [];
   const matches = useMemo(() => {
     const term = q.trim().toLowerCase();
-    const rows = leads.filter((l) => f(l, LF.status) !== "Lost");
+    const rows = (records("leads") || []).filter((l) => f(l, LF.status) !== "Lost");
     if (!term) return rows.slice(0, 8);
     return rows.filter((l) => {
       const hay = [LF.name, LF.phone, LF.email, LF.from, LF.to, LF.moveDate]
         .map((id) => String(f(l, id) || "").toLowerCase()).join(" ");
       return hay.includes(term);
     }).slice(0, 20);
-  }, [leads, q]);
+  }, [records, q]);
 
   const create = async () => {
     if (form.name.trim().length < 2) { toast.error("Add a name for the new lead."); return; }

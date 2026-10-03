@@ -24,7 +24,9 @@ import { fmtDate, gmailCompose, gmailSearch, calendarTemplate, smsLink, winBackS
 import { quoteSmsBody } from "@/lib/quote";
 import { depositFromQuote } from "@/lib/pricing";
 import { bookLeadAsJob } from "@/lib/leadActions";
-import { listJobsApi } from "@/lib/api";
+import { listJobsApi, markBookedOverrideApi, apiErrorMessage } from "@/lib/api";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
 import CustomerPageDialog from "@/components/portal/CustomerPageDialog";
 
 const InfoRow = ({ icon: Icon, label, children, isPrivate = true, testId }) => (
@@ -52,6 +54,9 @@ export default function LeadDetail() {
   const [savingEdit, setSavingEdit] = useState(false);
   const [jobForLead, setJobForLead] = useState(null);
   const [portalOpen, setPortalOpen] = useState(false);
+  const [overrideOpen, setOverrideOpen] = useState(false);
+  const [overrideReason, setOverrideReason] = useState("");
+  const [overriding, setOverriding] = useState(false);
 
   useEffect(() => {
     loadTable("leads");
@@ -142,10 +147,32 @@ export default function LeadDetail() {
   const bookAsJob = async () => {
     setBooking(true);
     try {
-      await bookLeadAsJob({ createRecord, updateRecord }, lead);
-      toast.success("Job created. Find it on the Projects page.");
-    } catch {}
+      const r = await bookLeadAsJob({ createRecord, updateRecord }, lead);
+      toast.success(r?.booked
+        ? "Booked — job is live on the Projects page."
+        : "Job started (pending deposit). It books automatically once the deposit lands.");
+    } catch (e) {
+      toast.error(apiErrorMessage(e));
+    }
     setBooking(false);
+  };
+
+  const markBookedOverride = async () => {
+    if (overrideReason.trim().length < 5) {
+      toast.error("Add a short reason (5+ characters).");
+      return;
+    }
+    setOverriding(true);
+    try {
+      await markBookedOverrideApi(lead.id, overrideReason.trim());
+      toast.success("Marked booked (owner override). Reason logged.");
+      setStatus("Booked");
+      setOverrideOpen(false);
+      setOverrideReason("");
+    } catch (e) {
+      toast.error(apiErrorMessage(e));
+    }
+    setOverriding(false);
   };
 
   return (
@@ -376,6 +403,17 @@ export default function LeadDetail() {
                   >
                     <Truck className="w-3.5 h-3.5" /> {status === "Booked" ? "Booked" : booking ? "Booking…" : "Book as job"}
                   </Button>
+                  {isOwner && status !== "Booked" && (
+                    <Button
+                      data-testid="lead-detail-mark-booked-override-btn"
+                      variant="outline"
+                      size="sm"
+                      className="gap-1 text-xs border-warning/40 text-warning hover:bg-warning/10 hover:text-warning"
+                      onClick={() => setOverrideOpen(true)}
+                    >
+                      <Truck className="w-3.5 h-3.5" /> Mark booked (override)
+                    </Button>
+                  )}
                 </>
               )}
               {isOwner && (
@@ -416,6 +454,39 @@ export default function LeadDetail() {
       {depositOpen && <DepositModal lead={lead} open={depositOpen} onOpenChange={setDepositOpen} />}
       {noteOpen && <AddNoteDialog lead={lead} open={noteOpen} onOpenChange={setNoteOpen} />}
       {invoiceOpen && <SquareInvoiceModal lead={lead} open={invoiceOpen} onOpenChange={setInvoiceOpen} />}
+      <Dialog open={overrideOpen} onOpenChange={setOverrideOpen}>
+        <DialogContent data-testid="mark-booked-override-dialog">
+          <DialogHeader>
+            <DialogTitle>Mark booked without a deposit</DialogTitle>
+            <DialogDescription>
+              Booking normally requires a received deposit. This owner override marks the job booked anyway and
+              logs who did it, when, and why.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="override-reason">Reason (required)</Label>
+            <Textarea
+              id="override-reason"
+              data-testid="mark-booked-override-reason"
+              value={overrideReason}
+              onChange={(e) => setOverrideReason(e.target.value)}
+              placeholder="e.g. Repeat customer, paying cash on move day"
+              rows={3}
+            />
+          </div>
+          <div className="flex justify-end gap-2 mt-2">
+            <Button variant="outline" onClick={() => setOverrideOpen(false)}>Cancel</Button>
+            <Button
+              data-testid="mark-booked-override-confirm"
+              className="bg-primary hover:bg-[#26395f]"
+              onClick={markBookedOverride}
+              disabled={overriding || overrideReason.trim().length < 5}
+            >
+              {overriding ? "Saving…" : "Mark booked"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

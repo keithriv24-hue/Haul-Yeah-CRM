@@ -47,6 +47,7 @@ import QualityDashboard from "@/pages/QualityDashboard";
 import QualityClaims from "@/pages/QualityClaims";
 import QualityMonthly from "@/pages/QualityMonthly";
 import { UpdateOverlay } from "@/components/UpdateOverlay";
+import MigrationReview from "@/pages/MigrationReview";
 
 function RoleRoutes() {
   const { role } = useAuth();
@@ -179,6 +180,7 @@ function RoleRoutes() {
         <Route path="/subscriptions" element={<Subscriptions />} />
         <Route path="/partner" element={<Partner />} />
         <Route path="/settings" element={<Settings />} />
+        <Route path="/migration-review" element={<MigrationReview />} />
         <Route path="/scope-calculator" element={<ScopeCalculator />} />
         <Route path="/help" element={<Help />} />
         <Route path="/quality" element={<QualityDashboard />} />

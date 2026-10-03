@@ -19,6 +19,7 @@ import { fmtDate, gmailCompose, gmailSearch, calendarTemplate, smsLink, winBackS
 import { quoteSmsBody } from "@/lib/quote";
 import { depositFromQuote } from "@/lib/pricing";
 import { bookLeadAsJob } from "@/lib/leadActions";
+import { apiErrorMessage } from "@/lib/api";
 
 export const AddNoteDialog = ({ lead, open, onOpenChange }) => {
   const { updateRecord } = useApp();
@@ -96,9 +97,13 @@ const LeadCard = ({ lead, onQuote, onDeposit, onNote, onInvoice, onPdf }) => {
   const bookAsJob = async () => {
     setBooking(true);
     try {
-      await bookLeadAsJob({ createRecord, updateRecord }, lead);
-      toast.success("Job created. Find it on the Projects page.");
-    } catch {}
+      const r = await bookLeadAsJob({ createRecord, updateRecord }, lead);
+      toast.success(r?.booked
+        ? "Booked — job is live on the Projects page."
+        : "Job started (pending deposit). It books automatically once the deposit lands.");
+    } catch (e) {
+      toast.error(apiErrorMessage(e));
+    }
     setBooking(false);
   };
 
