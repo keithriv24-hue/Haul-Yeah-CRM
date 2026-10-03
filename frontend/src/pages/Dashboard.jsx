@@ -94,8 +94,8 @@ export default function Dashboard() {
         : ["- No jobs on the books last weekend."]),
       `Weekend revenue: ${fmtMoney(weekendRev)}`,
       "",
-      "MONEY (from Square):",
-      `- Collected (paid Square invoices): ${fmtMoney(collected)}`,
+      "MONEY (from the payment ledger):",
+      `- Collected (payments received): ${fmtMoney(collected)}`,
       `- Still owed to us: ${fmtMoney(outstanding)}`,
       "",
       "LEADS:",
@@ -177,7 +177,7 @@ export default function Dashboard() {
       </SectionTitle>
       <div className="surface mb-7 grid grid-cols-2 gap-y-6 gap-x-4 p-4 sm:p-5 lg:grid-cols-4" data-testid="money-card">
         <Figure testId="kpi-booked" size="lg" label="Booked revenue" value={$(booked)} sub="Deposit-backed jobs (Square)" isPrivate />
-        <Figure testId="kpi-collected" size="lg" label="Collected" value={$(collected)} sub="Paid Square invoices" isPrivate />
+        <Figure testId="kpi-collected" size="lg" label="Collected" value={$(collected)} sub="Payments received (ledger)" isPrivate />
         <Figure
           testId="kpi-outstanding"
           size="lg"

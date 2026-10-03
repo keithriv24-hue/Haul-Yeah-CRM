@@ -90,7 +90,7 @@ const RatesEditor = ({ onSaved }) => {
     <div className="surface p-4" data-testid="commission-rates-editor">
       <h2 className="font-bold text-primary mb-1">Rate table <span className="text-xs font-normal text-faint">(only you see this)</span></h2>
       <p className="text-xs text-faint mb-3">
-        Small moves (under {fmtMoneyCents(rates.medium_min)}) pay a flat amount by move type. Medium pays {rates.medium_pct}% of the quote. Big ({fmtMoneyCents(rates.big_min)}+) pays {rates.big_pct}%.
+        Small moves (under {fmtMoneyCents(rates.medium_min)}) pay a flat amount by move type. Medium pays {rates.medium_pct}% of net collected. Big ({fmtMoneyCents(rates.big_min)}+) pays {rates.big_pct}%. The base is the money actually collected on the job — refunds reduce it.
       </p>
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         {Object.keys(rates.small_flat).map((k) => (
@@ -206,7 +206,7 @@ export default function Commissions() {
                       <span className={`font-semibold text-primary flex-1 min-w-[120px] truncate ${r.status === "voided" ? "line-through" : ""}`}>{r.lead_name || "Unnamed lead"}</span>
                       {isOwner && <span className="text-xs text-faint w-28 truncate">{r.closed_by_name}</span>}
                       <span className="text-xs text-faint w-24">{r.move_type || "—"}</span>
-                      <span className="text-xs text-faint w-20 text-right">{fmtMoneyCents(r.quote_amount)}</span>
+                      <span className="text-xs text-faint w-20 text-right" title="net collected (commission base)">{fmtMoneyCents(r.collected)}</span>
                       <span className={`font-display font-bold w-20 text-right ${r.status === "voided" ? "line-through text-faint" : "text-primary"}`}>{fmtMoneyCents(r.commission)}</span>
                       <span className={`border rounded-full px-2 py-0.5 text-[10px] font-bold capitalize ${STATUS_CHIP[r.status]}`}>
                         {r.status === "voided" ? <Ban className="w-3 h-3 inline mr-0.5 -mt-0.5" /> : null}{r.status}

@@ -6,20 +6,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { attributionApi, saveAttributionApi, commissionRatesApi, teamMembersApi, apiErrorMessage } from "@/lib/api";
+import { attributionApi, saveAttributionApi, teamMembersApi, apiErrorMessage } from "@/lib/api";
 import { LF, f } from "@/lib/fields";
-import { fmtMoneyCents, fmtDate } from "@/lib/format";
+import { fmtMoneyCents } from "@/lib/format";
 
 const SIZE_TO_MOVE_TYPE = {
   "Studio/1BR": "1-bedroom", "2BR": "2-bedroom", "3BR": "3-bedroom", "4BR+": "4+", "Labor-only (no truck)": "Labor-only",
-};
-
-export const commissionFor = (quote, moveType, rates) => {
-  const q = Number(quote) || 0;
-  if (!rates || q <= 0) return 0;
-  if (q >= rates.big_min) return Math.round(q * rates.big_pct) / 100;
-  if (q >= rates.medium_min) return Math.round(q * rates.medium_pct) / 100;
-  return Number(rates.small_flat?.[moveType]) || 0;
 };
 
 const STATUS_CHIP = {
@@ -37,55 +29,61 @@ const STATUS_TEXT = {
 
 export const CommissionCard = ({ lead, isOwner }) => {
   const [form, setForm] = useState(null);
+  const [calc, setCalc] = useState({ base: 0, commission: 0, status: null, job_total: 0 });
+  const [origClosedBy, setOrigClosedBy] = useState("");
   const [reps, setReps] = useState([]);
-  const [rates, setRates] = useState(null);
   const [busy, setBusy] = useState(false);
 
-  const load = useCallback(() => {
-    attributionApi(lead.id)
-      .then((d) => {
-        const a = d.attribution;
-        setForm({
-          ...a,
-          move_type: a.move_type || SIZE_TO_MOVE_TYPE[f(lead, LF.homeSize)] || "",
-          quote_amount: a.quote_amount ?? (Number(f(lead, LF.quote)) || ""),
-          job_date: a.job_date || (f(lead, LF.moveDate) || "").slice(0, 10),
-        });
-      })
-      .catch(() => {});
+  const apply = useCallback((d) => {
+    const a = d.attribution;
+    setForm((prev) => ({
+      ...(prev || {}),
+      ...a,
+      move_type: a.move_type || (prev?.move_type) || SIZE_TO_MOVE_TYPE[f(lead, LF.homeSize)] || "",
+      job_date: a.job_date || (f(lead, LF.moveDate) || "").slice(0, 10),
+    }));
+    setOrigClosedBy(a.closed_by || "");
+    setCalc({ base: d.base ?? 0, commission: d.commission ?? 0, status: d.status, job_total: d.job_total ?? 0 });
   }, [lead]);
+
+  const load = useCallback(() => {
+    attributionApi(lead.id).then(apply).catch(() => {});
+  }, [lead, apply]);
 
   useEffect(() => {
     load();
-    commissionRatesApi().then((d) => setRates(d.rates)).catch(() => {});
     teamMembersApi().then((d) => setReps(d.members.filter((m) => m.teams.includes("sales")))).catch(() => {});
   }, [load]);
 
   if (!form) return null;
 
-  const status = !form.closed_by ? null : form.refunded ? "voided" : form.fully_paid ? "locked" : form.deposit_paid ? "pending" : "none";
-  const amount = commissionFor(form.quote_amount, form.move_type, rates);
+  const status = calc.status;
+  const amount = calc.commission;
   const set = (k, v) => setForm((s) => ({ ...s, [k]: v }));
 
   const save = async () => {
+    // reassigning an already-credited commission to a different person needs the owner + a reason
+    const reassigning = origClosedBy && (form.closed_by || "") !== origClosedBy;
+    let reason;
+    if (reassigning) {
+      if (!isOwner) { toast.error("This commission is already credited — only the owner can reassign it."); return; }
+      reason = window.prompt("Why are you reassigning this commission credit? (required, logged)");
+      if (!reason || !reason.trim()) { toast.error("A reason is required to reassign credit."); return; }
+    }
     setBusy(true);
     const payload = {
       lead_name: f(lead, LF.name) || "",
       quote_sent_by: form.quote_sent_by || "",
       closed_by: form.closed_by || "",
       move_type: form.move_type || "",
-      quote_amount: form.quote_amount === "" ? 0 : Number(form.quote_amount),
       job_date: form.job_date || "",
     };
-    if (isOwner) {
-      payload.deposit_paid = !!form.deposit_paid;
-      payload.fully_paid = !!form.fully_paid;
-      payload.refunded = !!form.refunded;
-    }
+    if (reason) payload.reason = reason.trim();
+    if (isOwner) payload.refunded = !!form.refunded;
     try {
-      await saveAttributionApi(lead.id, payload);
+      const d = await saveAttributionApi(lead.id, payload);
       toast.success("Commission info saved.");
-      load();
+      apply(d);
     } catch (e) {
       toast.error(apiErrorMessage(e));
     }
@@ -129,8 +127,11 @@ export const CommissionCard = ({ lead, isOwner }) => {
           </Select>
         </div>
         <div>
-          <Label>Quote amount ($)</Label>
-          <Input data-testid="commission-quote-amount" type="number" min="0" value={form.quote_amount} onChange={(e) => set("quote_amount", e.target.value)} />
+          <Label>Commission base <span className="text-faint font-normal">(net collected)</span></Label>
+          <div data-testid="commission-base" className="h-9 flex items-center px-3 rounded-md border border-border bg-surface-sunk text-sm font-semibold text-primary">
+            {fmtMoneyCents(calc.base)}
+            {calc.job_total > 0 && <span className="text-faint font-normal ml-1.5">of {fmtMoneyCents(calc.job_total)}</span>}
+          </div>
         </div>
         <div className="col-span-2">
           <Label>Job date</Label>
@@ -140,20 +141,11 @@ export const CommissionCard = ({ lead, isOwner }) => {
 
       {isOwner && (
         <div className="mt-3 space-y-2 border-t border-border pt-3" data-testid="commission-owner-flags">
-          {[
-            { k: "deposit_paid", label: "Deposit paid", date: form.deposit_paid_at },
-            { k: "fully_paid", label: "Fully paid", date: form.fully_paid_at },
-            { k: "refunded", label: "Refunded (voids commission)", date: null },
-          ].map(({ k, label, date }) => (
-            <div key={k} className="flex items-center justify-between text-sm">
-              <span className={k === "refunded" ? "text-destructive font-semibold" : "text-ink-2"}>
-                {label}
-                {date && form[k] && <span className="text-xs text-faint ml-1.5">({fmtDate(date)})</span>}
-              </span>
-              <Switch data-testid={`commission-${k}-switch`} checked={!!form[k]} onCheckedChange={(v) => set(k, v)} />
-            </div>
-          ))}
-          <p className="text-[11px] text-faint">Deposit and full payment flip on automatically when a Square invoice for this lead gets paid.</p>
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-destructive font-semibold">Void this commission (manual override)</span>
+            <Switch data-testid="commission-refunded-switch" checked={!!form.refunded} onCheckedChange={(v) => set("refunded", v)} />
+          </div>
+          <p className="text-[11px] text-faint">Pending/locked status and the dollar base now come straight from the payment ledger — refunds shrink the base automatically. Use this toggle only to force-void a credit.</p>
         </div>
       )}
 

@@ -2682,30 +2682,33 @@ async def _mark_job_payment_pending(inv: Dict[str, Any]) -> None:
             "invoice_number": inv.get("invoice_number")}}})
 
 
-def _capi_lead_and_quote(inv: Dict[str, Any], rec_full: Optional[Dict[str, Any]]) -> Tuple[Dict[str, Any], Any]:
-    if rec_full:
-        return lead_dict_from_airtable(rec_full), (rec_full.get("fields") or {}).get(LEAD_F["quote"])
-    cust = inv.get("customer") or {}
-    first, _, last = (cust.get("name") or "").strip().partition(" ")
-    lead = {"id": inv.get("lead_id") or inv["invoice_id"],
-            "email": cust.get("email"), "phone": cust.get("phone"),
-            "first_name": first or None, "last_name": last or None}
-    return lead, inv.get("quote_total")
-
-
-async def _maybe_fire_capi_purchase(inv: Dict[str, Any]) -> None:
-    if not meta_capi.capi_enabled() or inv.get("capi_purchase_sent"):
+async def _fire_ledger_purchase(entry: Dict[str, Any]) -> None:
+    """ONE authoritative Meta Purchase per REAL payment, fired from the canonical ledger (Problem #5).
+    Covers Square AND manual cash/Zelle/ACH. Stable event_id per ledger row (order_id = row id) so a
+    retry dedupes; refunds/adjustments/backfill never fire. A deposit and a later balance payment each
+    send their own Purchase for the actual amount — the same dollars are never counted twice."""
+    if not meta_capi.capi_enabled() or entry.get("capi_purchase_sent"):
         return
-    rec_full = await fetch_lead_record(inv.get("lead_id"))
-    capi_lead, quote_amt = _capi_lead_and_quote(inv, rec_full)
-    value = inv.get("amount") or quote_amt or 0
-    await mongo_db.square_invoices.update_one(
-        {"invoice_id": inv["invoice_id"]}, {"$set": {"capi_purchase_sent": True}})
-    inv["capi_purchase_sent"] = True
-    logger.info("CAPI Purchase firing for invoice %s (lead %s, value %s)",
-                inv["invoice_id"], inv.get("lead_id"), value)
+    if entry.get("kind") != "payment" or entry.get("source") not in ("manual", "square_invoice", "square_webhook"):
+        return
+    amount = float(entry.get("amount") or 0)
+    if amount <= 0:
+        return
+    lead_id = entry.get("lead_id")
+    rec_full = await fetch_lead_record(lead_id) if lead_id else None
+    if rec_full:
+        capi_lead = lead_dict_from_airtable(rec_full)
+    else:
+        job = await mongo_db.jobs.find_one({"_id": entry.get("job_id")}) if entry.get("job_id") else None
+        cust = (job or {}).get("customer") or {}
+        first, _, last = (cust.get("name") or "").strip().partition(" ")
+        capi_lead = {"id": lead_id or entry.get("_id"), "email": cust.get("email"),
+                     "phone": cust.get("phone"), "first_name": first or None, "last_name": last or None}
+    await mongo_db.payments.update_one({"_id": entry["_id"]}, {"$set": {"capi_purchase_sent": True}})
+    entry["capi_purchase_sent"] = True
+    logger.info("CAPI Purchase firing for ledger row %s (lead %s, $%.2f)", entry["_id"], lead_id, amount)
     asyncio.create_task(_capi_log("purchase", meta_capi.fire_purchase(
-        capi_lead, value=float(value), order_id=inv["invoice_id"])))
+        capi_lead, value=amount, order_id=entry["_id"])))
 
 
 async def apply_invoice_to_jobs(inv: Dict[str, Any], notify_owner: bool = True) -> None:
@@ -2722,7 +2725,6 @@ async def apply_invoice_to_jobs(inv: Dict[str, Any], notify_owner: bool = True) 
     if status != "PAID":
         return
     await _alert_payment_landed(inv, purpose)
-    await _maybe_fire_capi_purchase(inv)
     if inv.get("lead_id") and purpose != "deposit":
         await mark_lead_commission_payment(inv["lead_id"], "fully")
     # Deposit/full invoices still create the job container; mark_full is no longer inferred from the
@@ -2730,6 +2732,7 @@ async def apply_invoice_to_jobs(inv: Dict[str, Any], notify_owner: bool = True) 
     if purpose in ("deposit", "full"):
         await ensure_job_for_deposit(inv, mark_full=False, notify_owner=notify_owner)
     # Record the actual money received into the ONE canonical ledger (deduped per invoice).
+    # The ledger — not this invoice path — is now the single Meta Purchase sender (Problem #5).
     await _sync_square_invoice_payment_to_ledger(inv)
 
 
@@ -3135,6 +3138,11 @@ async def record_ledger_entry(*, kind: str, method: str, amount: float, type_: s
         raise
     if job:
         await _recompute_job_money(job, notify_full=(kind == "payment"))
+    if kind == "payment":
+        try:
+            await _fire_ledger_purchase(doc)   # single authoritative Meta Purchase per real payment
+        except Exception as exc:
+            logger.warning("ledger Purchase fire failed for %s: %s", doc.get("_id"), exc)
     return doc, True
 
 
@@ -3224,6 +3232,70 @@ async def _backfill_payments_ledger() -> int:
     if created:
         logger.info("payments ledger backfill: %s opening entries created", created)
     return created
+
+
+# ---- PROMPT 4 PART A: one money service — every report derives from this ledger pass ----
+def _iso_to_et_date(iso: Any) -> Optional[str]:
+    """ISO timestamp -> Eastern business date (YYYY-MM-DD), or None if unparseable."""
+    if not iso:
+        return None
+    try:
+        return datetime.fromisoformat(str(iso).replace("Z", "+00:00")).astimezone(
+            ZoneInfo("America/New_York")).date().isoformat()
+    except (ValueError, TypeError):
+        return None
+
+
+async def _ledger_money_index() -> Dict[str, Any]:
+    """ONE pass over the canonical `payments` ledger. Every money screen derives from this so the
+    Dashboard, Partner View, Marketing, Job Detail and reports can never disagree. Includes manual
+    cash/Zelle/ACH — not just Square. collected = net completed (payments − refunds)."""
+    today = _et_today()
+    out = {
+        "collected_total": 0.0, "revenue_today": 0.0,
+        "by_jobid": {},          # job_id -> net collected
+        "by_pid_only": {},       # project_record_id -> net collected for rows with NO job_id
+        "by_lead_net": {},       # lead_id -> net collected
+        "by_lead_gross": {},     # lead_id -> gross payments (refunds ignored) — for voided detection
+    }
+    async for e in mongo_db.payments.find(
+            {"status": "completed"},
+            {"_id": 0, "amount": 1, "kind": 1, "job_id": 1, "project_record_id": 1,
+             "lead_id": 1, "occurred_at": 1}):
+        signed = _signed_amount(e)
+        out["collected_total"] += signed
+        if _iso_to_et_date(e.get("occurred_at")) == today:
+            out["revenue_today"] += signed
+        jid, pid, lid = e.get("job_id"), e.get("project_record_id"), e.get("lead_id")
+        if jid:
+            out["by_jobid"][jid] = out["by_jobid"].get(jid, 0.0) + signed
+        elif pid:
+            out["by_pid_only"][pid] = out["by_pid_only"].get(pid, 0.0) + signed
+        if lid:
+            out["by_lead_net"][lid] = out["by_lead_net"].get(lid, 0.0) + signed
+            if e.get("kind") != "refund":
+                out["by_lead_gross"][lid] = out["by_lead_gross"].get(lid, 0.0) + abs(float(e.get("amount") or 0))
+    out["collected_total"] = round(out["collected_total"], 2)
+    out["revenue_today"] = round(out["revenue_today"], 2)
+    return out
+
+
+def _job_collected_from_index(job: Dict[str, Any], idx: Dict[str, Any]) -> float:
+    """Net collected for one job, resolved like _ledger_entries_for_job but from the pre-fetched
+    index (job_id rows + project-linked rows that carry no job_id), with no double counting."""
+    collected = idx["by_jobid"].get(job.get("_id"), 0.0)
+    pid = job.get("project_record_id")
+    if pid:
+        collected += idx["by_pid_only"].get(pid, 0.0)
+    return round(collected, 2)
+
+
+async def _collected_by_lead() -> Dict[str, float]:
+    """Net money actually collected per lead (Square + cash + Zelle + ACH − refunds) from the
+    canonical ledger. Replaces the old Square-invoice-only _paid_by_lead."""
+    idx = await _ledger_money_index()
+    return {k: round(v, 2) for k, v in idx["by_lead_net"].items()}
+
 
 
 # ---- finance permission: owner + users the owner grants finance_access ----
@@ -3318,6 +3390,8 @@ async def record_manual_payment(ident: str, payload: ManualPaymentPayload,
         note=(payload.note or None), occurred_at=payload.occurred_at, dedupe_key=f"manual:{uuid4()}")
     await audit(p, f"recorded a {method} payment", f"job {job.get('invoice_number')}",
                 {"amount": payload.amount, "method": method})
+    if job.get("lead_id"):
+        await mark_lead_commission_payment(job["lead_id"], "deposit")  # cash/Zelle/ACH feed commissions too
     fresh = await mongo_db.jobs.find_one({"_id": job["_id"]})
     return {"entry": _ledger_out(entry), **(await _job_ledger_block(fresh))}
 
@@ -4008,7 +4082,7 @@ async def track_job(token: str, request: Request) -> Dict[str, Any]:
                     minutes_ago = None
                 if minutes_ago is not None and minutes_ago <= 10:
                     position = {"lat": pings[0]["lat"], "lng": pings[0]["lng"]}
-    money = _track_money(job)
+    money = await _track_money(job)
     portal = await _track_portal_bits(job)
     timeline = await _customer_timeline(job, status, stage)
     confirm = _move_confirmation_state(job)
@@ -4042,20 +4116,15 @@ async def _track_status(job: Dict[str, Any], crew_ids: List[str]) -> str:
     return "Crew assigned" if job.get("crew") else "Scheduled"
 
 
-def _track_money(job: Dict[str, Any]) -> Dict[str, Any]:
-    paid_full = (job.get("paid_in_full") or {}).get("status") == "paid"
-    quote = job.get("quote_total")
+async def _track_money(job: Dict[str, Any]) -> Dict[str, Any]:
+    """Customer-facing money, derived from the canonical ledger so the portal agrees with Job Detail
+    (all payments counted — deposit, balance, cash/Zelle/ACH — net of refunds)."""
+    m = await compute_job_money(job)
     deposit = (job.get("deposit_paid") or {}).get("amount") or job.get("deposit_amount")
-    remaining = None
-    if paid_full:
-        remaining = 0.0
-    elif quote is not None:
-        try:
-            remaining = max(0.0, round(float(quote) - float(deposit or 0), 2))
-        except (TypeError, ValueError):
-            remaining = None
-    return {"quote_total": quote, "deposit_amount": deposit, "paid_in_full": paid_full,
-            "remaining_balance": remaining}
+    remaining = max(0.0, m["balance_due"]) if m["job_total"] else None
+    return {"quote_total": m["job_total"] or job.get("quote_total"),
+            "deposit_amount": deposit, "collected": m["collected"],
+            "paid_in_full": m["paid_in_full"], "remaining_balance": remaining}
 
 
 async def _track_portal_bits(job: Dict[str, Any]) -> Dict[str, Any]:
@@ -5157,12 +5226,9 @@ async def _marketing_lead_rows(start: str, end: str) -> Optional[List[Dict[str, 
 
 
 async def _paid_by_lead() -> Dict[str, float]:
-    docs = await mongo_db.square_invoices.find(
-        {"status": "PAID", "lead_id": {"$ne": None}}, {"_id": 0, "lead_id": 1, "amount": 1}).to_list(3000)
-    out: Dict[str, float] = {}
-    for d in docs:
-        out[d["lead_id"]] = out.get(d["lead_id"], 0) + (d.get("amount") or 0)
-    return out
+    """Net money collected per lead from the canonical ledger (Square + cash/Zelle/ACH − refunds).
+    Single source so Marketing revenue agrees with the Dashboard/Partner money cards."""
+    return await _collected_by_lead()
 
 
 def _agg_rows(rows: List[Dict[str, Any]], paid: Dict[str, float], keyfn) -> List[Dict[str, Any]]:
@@ -5302,7 +5368,7 @@ async def marketing_margin(start: str, end: str, p: Dict[str, Any] = Depends(req
     if rows is None:
         return {"airtable_available": False, "sources": []}
     src_by_lead = {r["id"]: r["source"] for r in rows}
-    paid = await _paid_by_lead()
+    paid = await _collected_by_lead()
     revenue: Dict[str, float] = {}
     for r in rows:
         revenue[r["source"]] = revenue.get(r["source"], 0) + paid.get(r["id"], 0)
@@ -12627,16 +12693,44 @@ def commission_amount(quote: Any, move_type: Optional[str], rates: Dict[str, Any
     return float(rates["small_flat"].get(move_type or "", 0) or 0)
 
 
-def _commission_status(d: Dict[str, Any]) -> Optional[str]:
+def _commission_status_from_ledger(d: Dict[str, Any], collected: float, gross: float,
+                                   job_total: float) -> Optional[str]:
+    """Commission status derived from the canonical ledger (Problem #4). Refunds flow through
+    `collected` automatically. The owner `refunded` flag is still honored as a manual override."""
     if not d.get("closed_by"):
         return None
     if d.get("refunded"):
         return "voided"
-    if d.get("fully_paid"):
+    eps = MONEY_EPSILON
+    if collected <= eps:
+        return "voided" if gross > eps else "none"   # money came in then fully refunded vs never paid
+    if job_total > 0 and collected >= job_total - eps:
         return "locked"
-    if d.get("deposit_paid"):
-        return "pending"
-    return "none"
+    return "pending"
+
+
+async def _commission_money_maps() -> Tuple[Dict[str, float], Dict[str, float], Dict[str, float]]:
+    """(net collected by lead, gross payments by lead, authoritative job total by lead) — the
+    ledger-derived inputs every commission number is built from."""
+    idx = await _ledger_money_index()
+    job_totals: Dict[str, float] = {}
+    async for j in mongo_db.jobs.find(
+            {"lead_id": {"$ne": None}}, {"_id": 0, "lead_id": 1, "quote_total": 1, "final_revenue": 1}):
+        job_totals[j["lead_id"]] = job_totals.get(j["lead_id"], 0.0) + _job_total_for_money(j)
+    return idx["by_lead_net"], idx["by_lead_gross"], job_totals
+
+
+def _commission_facts(d: Dict[str, Any], net: Dict[str, float], gross: Dict[str, float],
+                      totals: Dict[str, float], rates: Dict[str, Any]) -> Dict[str, Any]:
+    """System-derived commission for one attribution doc: base = NET money collected from the ledger
+    (never a sales-typed amount); tier/rate unchanged; refunds already netted into `base`."""
+    lead_id = d.get("_id")
+    base = round(max(0.0, net.get(lead_id, 0.0)), 2)
+    g = gross.get(lead_id, 0.0)
+    job_total = round(totals.get(lead_id, 0.0), 2)
+    return {"base": base, "job_total": job_total,
+            "commission": commission_amount(base, d.get("move_type"), rates),
+            "status": _commission_status_from_ledger(d, base, g, job_total)}
 
 
 def _require_comm_role(p: Dict[str, Any]):
@@ -12647,7 +12741,7 @@ def _require_comm_role(p: Dict[str, Any]):
 def _attr_out(d: Dict[str, Any]) -> Dict[str, Any]:
     return {"lead_name": d.get("lead_name", ""), "quote_sent_by": d.get("quote_sent_by") or "",
             "closed_by": d.get("closed_by") or "", "move_type": d.get("move_type") or "",
-            "quote_amount": d.get("quote_amount"), "job_date": d.get("job_date") or "",
+            "job_date": d.get("job_date") or "",
             "deposit_paid": bool(d.get("deposit_paid")), "deposit_paid_at": d.get("deposit_paid_at") or "",
             "fully_paid": bool(d.get("fully_paid")), "fully_paid_at": d.get("fully_paid_at") or "",
             "refunded": bool(d.get("refunded"))}
@@ -12658,69 +12752,79 @@ class AttributionPayload(BaseModel):
     quote_sent_by: Optional[str] = None
     closed_by: Optional[str] = None
     move_type: Optional[str] = None
-    quote_amount: Optional[float] = None
     job_date: Optional[str] = None
-    deposit_paid: Optional[bool] = None
-    deposit_paid_at: Optional[str] = None
-    fully_paid: Optional[bool] = None
-    fully_paid_at: Optional[str] = None
-    refunded: Optional[bool] = None
+    reason: Optional[str] = None          # required when the OWNER reassigns an existing credit
+    refunded: Optional[bool] = None       # owner-only manual void override
+
+
+async def _attribution_response(lead_id: str, p: Dict[str, Any]) -> Dict[str, Any]:
+    d = await mongo_db.lead_commissions.find_one({"_id": lead_id}) or {"_id": lead_id}
+    rates = await get_commission_rates()
+    net, gross, totals = await _commission_money_maps()
+    facts = _commission_facts(d, net, gross, totals, rates)
+    return {"attribution": _attr_out(d), "status": facts["status"], "commission": facts["commission"],
+            "base": facts["base"], "job_total": facts["job_total"],
+            "base_label": "net collected"}
 
 
 @api_router.get("/commissions/attribution/{lead_id}")
 async def get_attribution(lead_id: str, request: Request):
     p = await current_principal(request)
     _require_comm_role(p)
-    d = await mongo_db.lead_commissions.find_one({"_id": lead_id}) or {}
-    rates = await get_commission_rates()
-    return {"attribution": _attr_out(d), "status": _commission_status(d),
-            "commission": commission_amount(d.get("quote_amount"), d.get("move_type"), rates)}
+    return await _attribution_response(lead_id, p)
 
 
 @api_router.put("/commissions/attribution/{lead_id}")
 async def save_attribution(lead_id: str, payload: AttributionPayload, request: Request):
     p = await current_principal(request)
     _require_comm_role(p)
-    payment_fields = ("deposit_paid", "deposit_paid_at", "fully_paid", "fully_paid_at", "refunded")
-    if p["role"] != "owner" and any(getattr(payload, k) is not None for k in payment_fields):
-        raise HTTPException(status_code=403, detail="Only the owner can change payment flags.")
+    is_owner = p["role"] == "owner"
+    d0 = await mongo_db.lead_commissions.find_one({"_id": lead_id}) or {}
+    # payment flags are system-derived from the ledger now; only the owner may force a manual void
+    if not is_owner and payload.refunded is not None:
+        raise HTTPException(status_code=403, detail="Only the owner can void a commission.")
     updates: Dict[str, Any] = {}
     if payload.lead_name is not None:
         updates["lead_name"] = payload.lead_name.strip()[:200]
-    for k in ("quote_sent_by", "closed_by"):
-        v = getattr(payload, k)
-        if v is not None:
-            if v and not await mongo_db.users.find_one({"_id": v}):
-                raise HTTPException(status_code=404, detail="That team member doesn't exist.")
-            updates[k] = v or None
+    # quote_sent_by is stat-only — sales may set/clear it
+    if payload.quote_sent_by is not None:
+        v = payload.quote_sent_by or None
+        if v and not await mongo_db.users.find_one({"_id": v}):
+            raise HTTPException(status_code=404, detail="That team member doesn't exist.")
+        updates["quote_sent_by"] = v
+    # closed_by EARNS the commission — once set, reassigning to a different person is owner-only + logged
+    if payload.closed_by is not None:
+        new_cb = payload.closed_by or None
+        cur_cb = d0.get("closed_by") or None
+        if new_cb and not await mongo_db.users.find_one({"_id": new_cb}):
+            raise HTTPException(status_code=404, detail="That team member doesn't exist.")
+        if cur_cb and cur_cb != new_cb:
+            if not is_owner:
+                raise HTTPException(status_code=403,
+                                    detail="This commission is already credited. Only the owner can reassign it.")
+            if not (payload.reason or "").strip():
+                raise HTTPException(status_code=422, detail="Give a reason for reassigning this commission credit.")
+            await mongo_db.commission_audit.insert_one({
+                "_id": str(uuid4()), "lead_id": lead_id, "field": "closed_by",
+                "old": cur_cb, "new": new_cb, "by": p.get("name"), "by_id": p.get("user_id"),
+                "reason": payload.reason.strip(), "at": now_iso()})
+            await audit(p, "reassigned commission credit",
+                        d0.get("lead_name") or lead_id, {"old": cur_cb, "new": new_cb, "reason": payload.reason.strip()})
+        updates["closed_by"] = new_cb
     if payload.move_type is not None:
         if payload.move_type and payload.move_type not in MOVE_TYPES:
             raise HTTPException(status_code=422, detail="Pick a real move type.")
         updates["move_type"] = payload.move_type or None
-    if payload.quote_amount is not None:
-        if payload.quote_amount < 0:
-            raise HTTPException(status_code=422, detail="Quote amount can't be negative.")
-        updates["quote_amount"] = round(float(payload.quote_amount), 2)
     if payload.job_date is not None:
         updates["job_date"] = payload.job_date
-    if p["role"] == "owner":
-        d0 = await mongo_db.lead_commissions.find_one({"_id": lead_id}) or {}
-        if payload.deposit_paid is not None:
-            updates["deposit_paid"] = payload.deposit_paid
-            updates["deposit_paid_at"] = (payload.deposit_paid_at or d0.get("deposit_paid_at") or _et_today()) if payload.deposit_paid else None
-        if payload.fully_paid is not None:
-            updates["fully_paid"] = payload.fully_paid
-            updates["fully_paid_at"] = (payload.fully_paid_at or d0.get("fully_paid_at") or _et_today()) if payload.fully_paid else None
-        if payload.refunded is not None:
-            updates["refunded"] = payload.refunded
+    if is_owner and payload.refunded is not None:
+        updates["refunded"] = payload.refunded
     updates["updated_at"] = now_iso()
     updates["updated_by"] = p.get("name")
     await mongo_db.lead_commissions.update_one({"_id": lead_id}, {"$set": updates}, upsert=True)
     d = await mongo_db.lead_commissions.find_one({"_id": lead_id})
     await audit(p, "updated commission info", d.get("lead_name") or lead_id)
-    rates = await get_commission_rates()
-    return {"attribution": _attr_out(d), "status": _commission_status(d),
-            "commission": commission_amount(d.get("quote_amount"), d.get("move_type"), rates)}
+    return await _attribution_response(lead_id, p)
 
 
 @api_router.get("/commissions/rates")
@@ -12766,9 +12870,11 @@ async def commissions_report(request: Request, start: Optional[str] = None, end:
         q["closed_by"] = p["user_id"]
     docs = await mongo_db.lead_commissions.find(q).to_list(3000)
     names = {u["_id"]: u.get("name", "") for u in await mongo_db.users.find({}, {"name": 1}).to_list(300)}
+    net, gross, totals = await _commission_money_maps()
     rows = []
     for d in docs:
-        status = _commission_status(d)
+        facts = _commission_facts(d, net, gross, totals, rates)
+        status = facts["status"]
         if status in (None, "none"):
             continue
         earn_date = (d.get("deposit_paid_at") or d.get("job_date") or (d.get("updated_at") or "")[:10])[:10]
@@ -12778,8 +12884,8 @@ async def commissions_report(request: Request, start: Optional[str] = None, end:
             continue
         rows.append({"lead_id": d["_id"], "lead_name": d.get("lead_name", ""), "closed_by": d.get("closed_by"),
                      "closed_by_name": names.get(d.get("closed_by"), ""), "move_type": d.get("move_type") or "",
-                     "quote_amount": d.get("quote_amount") or 0,
-                     "commission": commission_amount(d.get("quote_amount"), d.get("move_type"), rates),
+                     "collected": facts["base"], "job_total": facts["job_total"],
+                     "commission": facts["commission"],
                      "status": status, "earn_date": earn_date, "job_date": d.get("job_date") or "",
                      "fully_paid_at": d.get("fully_paid_at") or ""})
     rows.sort(key=lambda r: r["earn_date"], reverse=True)
@@ -13627,30 +13733,23 @@ SQUARE_OPEN_INVOICE_STATUSES = ("UNPAID", "PARTIALLY_PAID", "SCHEDULED", "PAYMEN
 
 
 async def _money_summary() -> Dict[str, Any]:
-    """ONE source of truth for money: Square. Every money card reads this."""
-    today = _et_today()
-    collected_total = revenue_today = open_invoices_total = 0.0
-    paid_by_lead: Dict[str, float] = {}
+    """ONE source of truth for money: the canonical payment ledger + money engine. Every money card
+    reads this. collected/revenue include manual cash/Zelle/ACH and net out refunds — so this agrees
+    exactly with each Job Detail panel."""
+    idx = await _ledger_money_index()
+    collected_total = idx["collected_total"]
+    revenue_today = idx["revenue_today"]
+    # open Square invoices still feed "outstanding" for leads with no job container yet
     open_by_lead: Dict[str, float] = {}
+    open_no_lead = 0.0
     async for inv in mongo_db.square_invoices.find(
-            {}, {"_id": 0, "amount": 1, "status": 1, "lead_id": 1, "paid_at": 1}):
+            {"status": {"$in": list(SQUARE_OPEN_INVOICE_STATUSES)}},
+            {"_id": 0, "amount": 1, "lead_id": 1}):
         amt = float(inv.get("amount") or 0)
-        if inv.get("status") == "PAID":
-            collected_total += amt
-            if inv.get("lead_id"):
-                paid_by_lead[inv["lead_id"]] = paid_by_lead.get(inv["lead_id"], 0.0) + amt
-            if inv.get("paid_at"):
-                try:
-                    d_et = datetime.fromisoformat(str(inv["paid_at"]).replace("Z", "+00:00")).astimezone(
-                        ZoneInfo("America/New_York")).date().isoformat()
-                    if d_et == today:
-                        revenue_today += amt
-                except ValueError:
-                    pass
-        elif inv.get("status") in SQUARE_OPEN_INVOICE_STATUSES:
-            open_invoices_total += amt
-            if inv.get("lead_id"):
-                open_by_lead[inv["lead_id"]] = open_by_lead.get(inv["lead_id"], 0.0) + amt
+        if inv.get("lead_id"):
+            open_by_lead[inv["lead_id"]] = open_by_lead.get(inv["lead_id"], 0.0) + amt
+        else:
+            open_no_lead += amt
     booked_total = outstanding_total = 0.0
     jobs_count = 0
     unpaid_jobs: List[str] = []
@@ -13659,33 +13758,21 @@ async def _money_summary() -> Dict[str, Any]:
         jobs_count += 1
         if j.get("lead_id"):
             job_leads.add(j["lead_id"])
-        try:
-            quote = float(j.get("quote_total") or 0)
-        except (TypeError, ValueError):
-            quote = 0.0
-        try:
-            deposit = float((j.get("deposit_paid") or {}).get("amount") or 0)
-        except (TypeError, ValueError):
-            deposit = 0.0
-        booked_total += quote or deposit
-        if (j.get("paid_in_full") or {}).get("status") == "paid" or not quote:
-            continue
-        paid_against = paid_by_lead.get(j.get("lead_id") or "", 0.0) or deposit
-        rem = max(0.0, quote - paid_against)
-        if rem > 0:
+        job_total = _job_total_for_money(j)
+        collected = _job_collected_from_index(j, idx)
+        booked_total += job_total or collected
+        rem = round(job_total - collected, 2)
+        if job_total > 0 and rem > MONEY_EPSILON:
             outstanding_total += rem
             unpaid_jobs.append(
                 f"Job #{j.get('invoice_number')} ({(j.get('customer') or {}).get('name', '?')}): ${rem:,.0f} due")
-    # open Square invoices for leads with no job yet (not double-counted above)
+    # open Square invoices for leads with no job yet (not double-counted against jobs above)
     for lead_id, amt in open_by_lead.items():
         if lead_id not in job_leads:
             outstanding_total += amt
-    async for i in mongo_db.square_invoices.find(
-            {"status": {"$in": list(SQUARE_OPEN_INVOICE_STATUSES)}, "lead_id": None},
-            {"_id": 0, "amount": 1}):
-        outstanding_total += float(i.get("amount") or 0)
+    outstanding_total += open_no_lead
     return {
-        "source": "square",
+        "source": "ledger",
         "booked_total": round(booked_total, 2),
         "jobs_count": jobs_count,
         "collected_total": round(collected_total, 2),

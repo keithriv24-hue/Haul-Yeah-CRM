@@ -228,140 +228,117 @@ class TestMetaCapiRegression:
 # ---------------- Invoice-to-jobs regression (apply_invoice_to_jobs + helpers) ----------------
 
 class TestInvoiceToJobsRegression:
+    """Prompt 4 rewired apply_invoice_to_jobs onto the canonical ledger: the single Meta Purchase
+    sender + the paid-in-full decision moved into the ledger (_sync_square_invoice_payment_to_ledger),
+    so _maybe_fire_capi_purchase is gone, _mark_job_paid_in_full is no longer called from this path,
+    and ensure_job_for_deposit is always invoked with mark_full=False (the money engine decides full
+    from the ACTUAL dollars collected). These regression tests assert that new wiring."""
+
+    # names apply_invoice_to_jobs may touch — stub them all and record which ones fire
+    _SIDE_EFFECTS = ("_mark_job_payment_pending", "ensure_job_for_deposit", "_mark_job_paid_in_full",
+                     "_alert_payment_landed", "_sync_square_invoice_payment_to_ledger",
+                     "_sync_square_invoice_refund_to_ledger", "mark_lead_commission_payment")
+
+    def _wire(self, srv, monkeypatch, calls):
+        async def _rec_pending(inv): calls.append(("pending",))
+        async def _rec_ensure(inv, mark_full=False, notify_owner=True): calls.append(("ensure", mark_full))
+        async def _rec_paid(inv, notify_owner): calls.append(("paid_full",))
+        async def _rec_alert(inv, purpose): calls.append(("alert", purpose))
+        async def _rec_ledger(inv): calls.append(("ledger",))
+        async def _rec_refund(inv): calls.append(("refund",))
+        async def _rec_commission(lid, tag): calls.append(("commission", tag))
+        monkeypatch.setattr(srv, "_mark_job_payment_pending", _rec_pending)
+        monkeypatch.setattr(srv, "ensure_job_for_deposit", _rec_ensure)
+        monkeypatch.setattr(srv, "_mark_job_paid_in_full", _rec_paid)
+        monkeypatch.setattr(srv, "_alert_payment_landed", _rec_alert)
+        monkeypatch.setattr(srv, "_sync_square_invoice_payment_to_ledger", _rec_ledger)
+        monkeypatch.setattr(srv, "_sync_square_invoice_refund_to_ledger", _rec_refund)
+        monkeypatch.setattr(srv, "mark_lead_commission_payment", _rec_commission)
+
     def test_payment_pending_non_deposit_marks_pending_only(self, monkeypatch):
-        """PAYMENT_PENDING + non-deposit purpose -> early return after _mark_job_payment_pending.
-        No CAPI, no ensure_job_for_deposit, no _mark_job_paid_in_full."""
+        """PAYMENT_PENDING + non-deposit purpose -> _mark_job_payment_pending then return.
+        No ledger, no ensure_job_for_deposit, no paid_full."""
         import server as srv  # type: ignore
         calls = []
-
-        async def _fake_mark_pending(inv):
-            calls.append(("pending", inv["invoice_id"]))
-
-        async def _fake_capi(inv):
-            calls.append(("capi", inv["invoice_id"]))
-
-        async def _fake_ensure(inv, mark_full=False, notify_owner=True):
-            calls.append(("ensure", inv["invoice_id"]))
-
-        async def _fake_paid_full(inv, notify_owner):
-            calls.append(("paid_full", inv["invoice_id"]))
-
-        async def _fake_alert(inv, purpose):
-            calls.append(("alert", inv["invoice_id"]))
-
-        monkeypatch.setattr(srv, "_mark_job_payment_pending", _fake_mark_pending)
-        monkeypatch.setattr(srv, "_maybe_fire_capi_purchase", _fake_capi)
-        monkeypatch.setattr(srv, "ensure_job_for_deposit", _fake_ensure)
-        monkeypatch.setattr(srv, "_mark_job_paid_in_full", _fake_paid_full)
-        monkeypatch.setattr(srv, "_alert_payment_landed", _fake_alert)
-        # _infer_purpose for a non-deposit final invoice returns "full" or "final";
-        # force it to non-deposit for this test:
+        self._wire(srv, monkeypatch, calls)
         monkeypatch.setattr(srv, "_infer_purpose", lambda inv: "final")
 
         inv = {"invoice_id": "TEST_pending_final", "status": "PAYMENT_PENDING", "amount": 500, "lead_id": None}
         asyncio.run(srv.apply_invoice_to_jobs(inv, notify_owner=False))
-        kinds = [c[0] for c in calls]
-        assert kinds == ["pending"], f"unexpected side-effects on PAYMENT_PENDING non-deposit: {calls}"
+        assert [c[0] for c in calls] == ["pending"], f"unexpected side-effects: {calls}"
 
     def test_payment_pending_deposit_no_op(self, monkeypatch):
         """PAYMENT_PENDING + deposit -> pure early return, no calls at all."""
         import server as srv  # type: ignore
         calls = []
-        for name in ("_mark_job_payment_pending", "_maybe_fire_capi_purchase",
-                     "ensure_job_for_deposit", "_mark_job_paid_in_full", "_alert_payment_landed"):
-            async def _rec(*a, __n=name, **kw):
-                calls.append(__n)
-            monkeypatch.setattr(srv, name, _rec)
+        self._wire(srv, monkeypatch, calls)
         monkeypatch.setattr(srv, "_infer_purpose", lambda inv: "deposit")
 
         inv = {"invoice_id": "TEST_pending_deposit", "status": "PAYMENT_PENDING", "amount": 200, "lead_id": None}
         asyncio.run(srv.apply_invoice_to_jobs(inv, notify_owner=False))
         assert calls == [], f"PAYMENT_PENDING deposit must be a no-op, got {calls}"
 
-    def test_paid_deposit_calls_ensure_job(self, monkeypatch):
-        """PAID + deposit -> alert, capi, ensure_job_for_deposit(mark_full=False)."""
+    def test_refunded_syncs_refund_to_ledger(self, monkeypatch):
+        """REFUNDED -> reverses the dollars via the canonical ledger, nothing else."""
         import server as srv  # type: ignore
         calls = []
+        self._wire(srv, monkeypatch, calls)
+        monkeypatch.setattr(srv, "_infer_purpose", lambda inv: "full")
 
-        async def _rec_alert(inv, purpose): calls.append(("alert", purpose))
-        async def _rec_capi(inv): calls.append(("capi",))
-        async def _rec_ensure(inv, mark_full=False, notify_owner=True):
-            calls.append(("ensure", mark_full))
-        async def _rec_paid(inv, notify_owner): calls.append(("paid_full",))
-        async def _rec_pending(inv): calls.append(("pending",))
+        inv = {"invoice_id": "TEST_refunded", "status": "REFUNDED", "amount": 300, "lead_id": "LEAD-R"}
+        asyncio.run(srv.apply_invoice_to_jobs(inv, notify_owner=False))
+        assert [c[0] for c in calls] == ["refund"], f"REFUNDED must only sync the refund, got {calls}"
 
-        monkeypatch.setattr(srv, "_alert_payment_landed", _rec_alert)
-        monkeypatch.setattr(srv, "_maybe_fire_capi_purchase", _rec_capi)
-        monkeypatch.setattr(srv, "ensure_job_for_deposit", _rec_ensure)
-        monkeypatch.setattr(srv, "_mark_job_paid_in_full", _rec_paid)
-        monkeypatch.setattr(srv, "_mark_job_payment_pending", _rec_pending)
+    def test_paid_deposit_records_ledger_no_commission(self, monkeypatch):
+        """PAID + deposit -> alert, ensure_job_for_deposit(mark_full=False), ledger sync.
+        No commission flip on a deposit; no paid_full (the ledger decides full)."""
+        import server as srv  # type: ignore
+        calls = []
+        self._wire(srv, monkeypatch, calls)
         monkeypatch.setattr(srv, "_infer_purpose", lambda inv: "deposit")
 
-        inv = {"invoice_id": "TEST_paid_deposit", "status": "PAID", "amount": 200, "lead_id": None}
+        inv = {"invoice_id": "TEST_paid_deposit", "status": "PAID", "amount": 200, "lead_id": "LEAD-D"}
         asyncio.run(srv.apply_invoice_to_jobs(inv, notify_owner=False))
         assert ("alert", "deposit") in calls
-        assert ("capi",) in calls
         assert ("ensure", False) in calls
-        assert ("paid_full",) not in calls  # deposit returns early before paid_full
+        assert ("ledger",) in calls
+        assert ("paid_full",) not in calls
+        assert not any(c[0] == "commission" for c in calls)  # deposit never flips commission
 
-    def test_paid_full_calls_ensure_with_mark_full(self, monkeypatch):
-        """PAID + full -> ensure_job_for_deposit(mark_full=True), returns before _mark_job_paid_in_full."""
+    def test_paid_full_ensures_false_and_records_ledger(self, monkeypatch):
+        """PAID + full -> ensure_job_for_deposit(mark_full=False) + ledger sync + commission 'fully'.
+        mark_full is no longer inferred from the invoice; _mark_job_paid_in_full is not called."""
         import server as srv  # type: ignore
         calls = []
-        async def _rec_alert(inv, purpose): calls.append("alert")
-        async def _rec_capi(inv): calls.append("capi")
-        async def _rec_ensure(inv, mark_full=False, notify_owner=True):
-            calls.append(("ensure", mark_full))
-        async def _rec_paid(inv, notify_owner): calls.append("paid_full")
-        async def _rec_pending(inv): calls.append("pending")
-        async def _rec_commission(lid, tag): calls.append(("commission", lid, tag))
-
-        monkeypatch.setattr(srv, "_alert_payment_landed", _rec_alert)
-        monkeypatch.setattr(srv, "_maybe_fire_capi_purchase", _rec_capi)
-        monkeypatch.setattr(srv, "ensure_job_for_deposit", _rec_ensure)
-        monkeypatch.setattr(srv, "_mark_job_paid_in_full", _rec_paid)
-        monkeypatch.setattr(srv, "_mark_job_payment_pending", _rec_pending)
-        monkeypatch.setattr(srv, "mark_lead_commission_payment", _rec_commission)
+        self._wire(srv, monkeypatch, calls)
         monkeypatch.setattr(srv, "_infer_purpose", lambda inv: "full")
 
         inv = {"invoice_id": "TEST_paid_full", "status": "PAID", "amount": 800, "lead_id": "LEAD-X"}
         asyncio.run(srv.apply_invoice_to_jobs(inv, notify_owner=False))
-        assert ("ensure", True) in calls
-        assert "paid_full" not in calls  # 'full' path returns after ensure_job_for_deposit
+        assert ("ensure", False) in calls       # mark_full no longer forced True
+        assert ("ledger",) in calls
+        assert ("commission", "fully") in calls
+        assert ("paid_full",) not in calls
 
-    def test_paid_non_deposit_non_full_calls_mark_paid_in_full(self, monkeypatch):
-        """PAID + purpose='final' (non-deposit/non-full) -> falls through to _mark_job_paid_in_full."""
+    def test_paid_final_records_ledger_no_ensure(self, monkeypatch):
+        """PAID + purpose='final' (non-deposit/non-full) -> no ensure_job, ledger sync, commission 'fully'."""
         import server as srv  # type: ignore
         calls = []
-        async def _rec_alert(inv, purpose): calls.append("alert")
-        async def _rec_capi(inv): calls.append("capi")
-        async def _rec_ensure(inv, mark_full=False, notify_owner=True): calls.append("ensure")
-        async def _rec_paid(inv, notify_owner): calls.append("paid_full")
-        async def _rec_pending(inv): calls.append("pending")
-        async def _rec_commission(lid, tag): calls.append(("commission", tag))
-
-        monkeypatch.setattr(srv, "_alert_payment_landed", _rec_alert)
-        monkeypatch.setattr(srv, "_maybe_fire_capi_purchase", _rec_capi)
-        monkeypatch.setattr(srv, "ensure_job_for_deposit", _rec_ensure)
-        monkeypatch.setattr(srv, "_mark_job_paid_in_full", _rec_paid)
-        monkeypatch.setattr(srv, "_mark_job_payment_pending", _rec_pending)
-        monkeypatch.setattr(srv, "mark_lead_commission_payment", _rec_commission)
+        self._wire(srv, monkeypatch, calls)
         monkeypatch.setattr(srv, "_infer_purpose", lambda inv: "final")
 
         inv = {"invoice_id": "TEST_paid_final", "status": "PAID", "amount": 800, "lead_id": "LEAD-Y"}
         asyncio.run(srv.apply_invoice_to_jobs(inv, notify_owner=False))
-        assert "ensure" not in calls
-        assert "paid_full" in calls
+        assert not any(c[0] == "ensure" for c in calls)   # final is not deposit/full
+        assert ("ledger",) in calls
         assert ("commission", "fully") in calls
+        assert ("paid_full",) not in calls
 
     def test_status_draft_is_no_op(self, monkeypatch):
-        """Any status != PAID/PAYMENT_PENDING should short-circuit."""
+        """Any status != PAID/PAYMENT_PENDING/REFUNDED should short-circuit."""
         import server as srv  # type: ignore
         calls = []
-        for name in ("_mark_job_payment_pending", "_maybe_fire_capi_purchase",
-                     "ensure_job_for_deposit", "_mark_job_paid_in_full", "_alert_payment_landed"):
-            async def _rec(*a, __n=name, **kw): calls.append(__n)
-            monkeypatch.setattr(srv, name, _rec)
+        self._wire(srv, monkeypatch, calls)
         monkeypatch.setattr(srv, "_infer_purpose", lambda inv: "deposit")
 
         for status in ("DRAFT", "UNPAID", "CANCELED", "SCHEDULED"):

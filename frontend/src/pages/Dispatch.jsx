@@ -205,7 +205,7 @@ export default function Dispatch() {
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-5">
-        <KpiCard testId="dispatch-kpi-revenue" label="Revenue today" value={fmtMoney(board?.revenue_today || 0)} sub="Paid Square invoices" />
+        <KpiCard testId="dispatch-kpi-revenue" label="Revenue today" value={fmtMoney(board?.revenue_today || 0)} sub="Payments received (ledger)" />
         <KpiCard testId="dispatch-kpi-jobs" label="Jobs" value={counts.total ?? "—"} sub={`${counts.needs_crew || 0} need crew`} isPrivate={false} />
         <KpiCard testId="dispatch-kpi-active" label="Active now" value={counts.active ?? "—"} sub="En route / on site" isPrivate={false} />
         <KpiCard testId="dispatch-kpi-complete" label="Complete" value={counts.complete ?? "—"} sub="Done today" isPrivate={false} />

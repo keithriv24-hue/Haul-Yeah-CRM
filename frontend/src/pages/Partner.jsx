@@ -32,12 +32,12 @@ export default function Partner() {
   return (
     <div data-testid="partner-page">
       <PageTitle title="Partner View" subtitle="The money picture, nothing personal." />
-      <InstructionBanner>A money summary you can share with our capital partner. Every dollar comes straight from Square — the same numbers the owner dashboard shows.</InstructionBanner>
+      <InstructionBanner>A money summary you can share with our capital partner. Every dollar comes straight from the payment ledger — the same numbers the owner dashboard shows.</InstructionBanner>
 
       <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
-        <KpiCard testId="partner-booked" label="Booked revenue" value={m(money?.booked_total)} sub="Deposit-backed jobs (Square)" />
-        <KpiCard testId="partner-collected" label="Collected" value={m(money?.collected_total)} sub="Paid Square invoices" />
-        <KpiCard testId="partner-receivables" label="Receivables" value={m(money?.outstanding_total)} sub="Balances still due (Square)" />
+        <KpiCard testId="partner-booked" label="Booked revenue" value={m(money?.booked_total)} sub="Deposit-backed jobs" />
+        <KpiCard testId="partner-collected" label="Collected" value={m(money?.collected_total)} sub="Payments received (ledger)" />
+        <KpiCard testId="partner-receivables" label="Receivables" value={m(money?.outstanding_total)} sub="Balances still due" />
         <KpiCard testId="partner-opex" label="Monthly opex" value={subsLoading ? "—" : fmtMoney(opex)} sub="Active subscriptions" />
         <KpiCard testId="partner-pipeline" label="Pipeline" value={fmtMoney(pipeline)} sub="Open quotes" />
         <KpiCard testId="partner-avg-job" label="Average job value" value={money ? fmtMoney(avgJob) : "—"} sub={`${money?.jobs_count || 0} booked jobs`} />
@@ -48,7 +48,7 @@ export default function Partner() {
         <div className="text-sm text-ink-2">
           <p className="font-semibold text-primary mb-1">How to read this page</p>
           <p>
-            Booked revenue is deposit-backed work we've won. Collected is cash that actually landed in Square.
+            Booked revenue is deposit-backed work we've won. Collected is cash that actually landed — Square, plus any manual cash, Zelle or ACH.
             Receivables is money still on the way. Pipeline is what we're still chasing.
             This page is read-only — nothing here can change the books.
           </p>

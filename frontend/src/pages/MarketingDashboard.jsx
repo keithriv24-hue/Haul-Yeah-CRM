@@ -126,7 +126,7 @@ const OverviewTab = ({ overview, blur, query }) => {
         <KpiCard icon={Users} label="Leads" value={t.leads} testid="kpi-mkt-leads" />
         <KpiCard icon={TrendingUp} label="Booked" value={t.booked} testid="kpi-mkt-booked" />
         <KpiCard icon={TrendingUp} label="Booking rate" value={pct(t.booked, t.leads) == null ? "—" : `${pct(t.booked, t.leads)}%`} testid="kpi-mkt-booking-rate" />
-        <KpiCard icon={DollarSign} label="Revenue (paid)" value={fmtMoney(t.revenue)} sub="Paid Square invoices only" testid="kpi-mkt-revenue" blur={blur} />
+        <KpiCard icon={DollarSign} label="Revenue (paid)" value={fmtMoney(t.revenue)} sub="Payments received (ledger)" testid="kpi-mkt-revenue" blur={blur} />
         <KpiCard icon={Timer} label="Speed to lead" value={speedLabel(t.avg_speed_minutes)} sub={t.speed_tracked ? `Tracked on ${t.speed_tracked} lead${t.speed_tracked === 1 ? "" : "s"}` : "No status changes tracked yet"} testid="kpi-mkt-speed" />
       </div>
       <div className="grid lg:grid-cols-2 gap-4">

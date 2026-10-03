@@ -332,7 +332,8 @@ def test_invoice_webhook_books_money_once(monkeypatch):
     Airtable / job-creation / alert side-effects are stubbed so only the money ledger is exercised."""
     monkeypatch.setattr(S, "ensure_job_for_deposit", lambda *a, **k: _async(None))
     monkeypatch.setattr(S, "_alert_payment_landed", lambda *a, **k: _async(None))
-    monkeypatch.setattr(S, "_maybe_fire_capi_purchase", lambda *a, **k: _async(None))
+    # Prompt 4: the single authoritative Meta Purchase sender moved into the canonical ledger.
+    monkeypatch.setattr(S, "_fire_ledger_purchase", lambda *a, **k: _async(None))
 
     job = _make_job(quote_total=1500)
     inv_id = f"inv_{uuid.uuid4().hex[:8]}"

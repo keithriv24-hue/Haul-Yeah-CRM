@@ -67,7 +67,8 @@ def test_money_summary_owner(owner_token):
     data = r.json()
     for k in ["source", "booked_total", "jobs_count", "collected_total", "outstanding_total", "unpaid_jobs", "revenue_today"]:
         assert k in data, f"missing {k} in {data.keys()}"
-    assert data["source"] == "square"
+    # Prompt 4: every money screen now derives from the ONE canonical payment ledger.
+    assert data["source"] == "ledger"
 
 
 def test_money_summary_sales_forbidden(sales_token):

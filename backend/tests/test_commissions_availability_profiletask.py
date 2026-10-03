@@ -1,14 +1,24 @@
 """
-Iteration 11 backend tests:
-- Sales commissions math + lifecycle + role gates + rep scoping
+Backend tests (originally iteration 11, rewritten for Prompt 4):
+- Sales commissions are now driven by the CANONICAL PAYMENT LEDGER: the commission base is the NET
+  money actually collected (payments minus refunds), never a sales-typed quote amount. Status
+  (pending/locked/voided) is ledger-derived; only the owner can force a manual void or reassign an
+  already-credited rep.
 - Owner availability overview
 - Profile task (open/done/auto-complete)
 - Owner login renaming (HaulYeahAdmin) + old HaulYeahOwner fails
+
+Each commission test class seeds its OWN unique lead/job ids in the canonical ledger and tears them
+down, so classes stay isolated under the repo's `-n 2 --dist loadscope` xdist config.
 """
 import os
 import time
+import uuid as _uuid
+
+import pymongo as _pymongo
 import pytest
 import requests
+
 from test_config import CREW1_PASSWORD, CREW2_PASSWORD, OWNER_PASSWORD, STARTING_PASSWORD
 
 BASE = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
@@ -20,11 +30,6 @@ CREW2_CREDS = {"email": "qa.crew2@haulyeah.test", "password": CREW2_PASSWORD}
 GHOST_CREW = {"email": "TestCrewAdmin", "password": OWNER_PASSWORD}
 GHOST_SALES = {"email": "TestSalesAdmin", "password": OWNER_PASSWORD}
 GHOST_MKT = {"email": "TestMarketingAdmin", "password": OWNER_PASSWORD}
-
-TEST_LEAD_A = "recQATEST1"
-TEST_LEAD_B = "recQATEST2"
-TEST_LEAD_C = "recQATEST3"
-TEST_LEAD_D = "recQATEST4"
 
 
 def _login(creds):
@@ -92,6 +97,47 @@ def crew2_id(users_map):
     return u["id"]
 
 
+# ---- canonical-ledger seeding (Prompt 4: commission base = NET collected from the ledger) --------
+_DB = _pymongo.MongoClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
+
+
+def _seed_job(job_id, lead_id, quote):
+    """A Mongo job so the canonical ledger + commission job_total have something to tie to."""
+    _DB.jobs.update_one(
+        {"_id": job_id},
+        {"$set": {"_id": job_id, "invoice_number": f"QA-{job_id}", "lead_id": lead_id,
+                  "quote_total": float(quote), "deposit_paid": {"status": "paid", "amount": 1.0},
+                  "status": "Scheduled"}},
+        upsert=True)
+
+
+def _set_collected(job_id, lead_id, amount):
+    """Force a lead's NET collected by replacing its ledger payment rows (test-only)."""
+    _DB.payments.delete_many({"job_id": job_id})
+    if amount:
+        _DB.payments.insert_one({
+            "_id": str(_uuid.uuid4()), "job_id": job_id, "project_record_id": None, "lead_id": lead_id,
+            "kind": "payment", "method": "square", "amount": float(amount), "type": "payment",
+            "status": "completed", "source": "square_invoice",
+            "dedupe_key": f"qacomm:{_uuid.uuid4()}", "occurred_at": "2026-07-25T12:00:00+00:00"})
+
+
+def _add_refund(job_id, lead_id, amount):
+    """Append a refund row — reduces net collected without deleting the payment rows."""
+    _DB.payments.insert_one({
+        "_id": str(_uuid.uuid4()), "job_id": job_id, "project_record_id": None, "lead_id": lead_id,
+        "kind": "refund", "method": "square", "amount": float(amount), "type": "refund",
+        "status": "completed", "source": "square_webhook",
+        "dedupe_key": f"qacommr:{_uuid.uuid4()}", "occurred_at": "2026-07-26T12:00:00+00:00"})
+
+
+def _cleanup_comm(job_id, lead_id):
+    _DB.payments.delete_many({"job_id": job_id})
+    _DB.jobs.delete_one({"_id": job_id})
+    _DB.lead_commissions.delete_one({"_id": lead_id})
+    _DB.commission_audit.delete_many({"lead_id": lead_id})
+
+
 # ================================ Login rename check
 
 class TestLoginRename:
@@ -107,118 +153,167 @@ class TestLoginRename:
         assert r.json().get("role") == "owner"
 
 
-# ================================ Commission math
+# ================================ Commission math — base = NET collected from the ledger
 
 class TestCommissionMath:
-    def test_big_move_3500_pct12_returns_420(self, owner_tok, crew1_id):
-        payload = {"lead_name": "QA A", "closed_by": crew1_id,
-                   "move_type": "4+", "quote_amount": 3500, "job_date": "2026-07-25"}
-        r = requests.put(f"{API}/commissions/attribution/{TEST_LEAD_A}",
-                         json=payload, headers=_hdr(owner_tok), timeout=30)
-        assert r.status_code == 200, r.text
-        body = r.json()
-        assert body["commission"] == 420.0
-        assert body["status"] == "none"
+    """Tiers are unchanged; the base is strictly the net money collected from the canonical ledger
+    (not a sales-typed quote). Fully collected => locked."""
+    # lead_id -> (job_id, quote/collected, move_type, expected commission)
+    JOBS = {
+        "recQATESTM_A": ("qa-commM-A", 3500.0, "4+", 420.0),          # 12% big tier
+        "recQATESTM_B": ("qa-commM-B", 2000.0, "2-bedroom", 200.0),   # 10% medium tier
+        "recQATESTM_C": ("qa-commM-C", 900.0, "Studio", 40.0),        # <1500 flat studio
+        "recQATESTM_D": ("qa-commM-D", 900.0, "Labor-only", 25.0),    # <1500 flat labor-only
+    }
 
-    def test_medium_2000_2bedroom_returns_200(self, owner_tok, crew1_id):
-        payload = {"lead_name": "QA B", "closed_by": crew1_id,
-                   "move_type": "2-bedroom", "quote_amount": 2000, "job_date": "2026-07-25"}
-        r = requests.put(f"{API}/commissions/attribution/{TEST_LEAD_B}",
-                         json=payload, headers=_hdr(owner_tok), timeout=30)
-        assert r.status_code == 200, r.text
-        assert r.json()["commission"] == 200.0
+    @pytest.fixture(scope="class", autouse=True)
+    def _seed(self):
+        for lead, (jid, amt, _mt, _c) in self.JOBS.items():
+            _seed_job(jid, lead, amt)
+            _set_collected(jid, lead, amt)   # fully collected => base == quote
+        yield
+        for lead, (jid, *_rest) in self.JOBS.items():
+            _cleanup_comm(jid, lead)
 
-    def test_small_studio_900_returns_flat_40(self, owner_tok, crew1_id):
-        payload = {"lead_name": "QA C", "closed_by": crew1_id,
-                   "move_type": "Studio", "quote_amount": 900, "job_date": "2026-07-25"}
-        r = requests.put(f"{API}/commissions/attribution/{TEST_LEAD_C}",
-                         json=payload, headers=_hdr(owner_tok), timeout=30)
-        assert r.status_code == 200, r.text
-        assert r.json()["commission"] == 40.0
-
-    def test_small_labor_only_900_returns_flat_25(self, owner_tok, crew1_id):
-        payload = {"lead_name": "QA D", "closed_by": crew1_id,
-                   "move_type": "Labor-only", "quote_amount": 900, "job_date": "2026-07-25"}
-        r = requests.put(f"{API}/commissions/attribution/{TEST_LEAD_D}",
-                         json=payload, headers=_hdr(owner_tok), timeout=30)
-        assert r.status_code == 200, r.text
-        assert r.json()["commission"] == 25.0
-
-
-# ================================ Lifecycle
-
-class TestCommissionLifecycle:
-    def test_deposit_paid_pending(self, owner_tok):
-        r = requests.put(f"{API}/commissions/attribution/{TEST_LEAD_A}",
-                         json={"deposit_paid": True},
+    def _check(self, owner_tok, crew1_id, lead):
+        _jid, amt, mt, expected = self.JOBS[lead]
+        r = requests.put(f"{API}/commissions/attribution/{lead}",
+                         json={"lead_name": f"QA {lead}", "closed_by": crew1_id,
+                               "move_type": mt, "job_date": "2026-07-25"},
                          headers=_hdr(owner_tok), timeout=30)
         assert r.status_code == 200, r.text
         body = r.json()
-        assert body["status"] == "pending"
-        assert body["attribution"]["deposit_paid_at"], "deposit_paid_at should be auto-set"
+        assert body["base"] == amt, body                     # base = net collected, not a quote
+        assert body["base_label"] == "net collected", body
+        assert body["commission"] == expected, body
+        assert body["status"] == "locked", body              # fully collected => locked
+
+    def test_big_move_3500_pct12_returns_420(self, owner_tok, crew1_id):
+        self._check(owner_tok, crew1_id, "recQATESTM_A")
+
+    def test_medium_2000_2bedroom_returns_200(self, owner_tok, crew1_id):
+        self._check(owner_tok, crew1_id, "recQATESTM_B")
+
+    def test_small_studio_900_returns_flat_40(self, owner_tok, crew1_id):
+        self._check(owner_tok, crew1_id, "recQATESTM_C")
+
+    def test_small_labor_only_900_returns_flat_25(self, owner_tok, crew1_id):
+        self._check(owner_tok, crew1_id, "recQATESTM_D")
+
+
+# ================================ Lifecycle — status is ledger-derived
+
+class TestCommissionLifecycle:
+    """Partial collection => pending; full collection => locked; owner-authorized refund => voided.
+    All driven by ledger activity, never by legacy deposit_paid/fully_paid payload flags."""
+    LEAD = "recQATESTLIFE"
+    JOB = "qa-comm-LIFE"
+    QUOTE = 4000.0
+
+    @pytest.fixture(scope="class", autouse=True)
+    def _seed(self, owner_tok, crew1_id):
+        _seed_job(self.JOB, self.LEAD, self.QUOTE)
+        _set_collected(self.JOB, self.LEAD, 0)   # nothing collected yet
+        r = requests.put(f"{API}/commissions/attribution/{self.LEAD}",
+                         json={"lead_name": "QA Lifecycle", "closed_by": crew1_id,
+                               "move_type": "4+", "job_date": "2026-07-25"},
+                         headers=_hdr(owner_tok), timeout=30)
+        assert r.status_code == 200, r.text
+        yield
+        _cleanup_comm(self.JOB, self.LEAD)
+
+    def test_partial_collection_pending(self, owner_tok):
+        _set_collected(self.JOB, self.LEAD, 3500)   # < 4000 total, lands in big tier
+        r = requests.get(f"{API}/commissions/attribution/{self.LEAD}",
+                         headers=_hdr(owner_tok), timeout=30)
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["base"] == 3500.0, body
+        assert body["commission"] == 420.0, body      # 12% of collected 3500
+        assert body["status"] == "pending", body
 
     def test_report_shows_pending_total(self, owner_tok, crew1_id):
         r = requests.get(f"{API}/commissions/report", headers=_hdr(owner_tok), timeout=30)
         assert r.status_code == 200
         body = r.json()
-        assert body["is_owner"] == True
+        assert body["is_owner"] is True
         rep = next((x for x in body["reps"] if x["user_id"] == crew1_id), None)
         assert rep is not None, "crew1 should have a rep row"
         assert rep["pending"] >= 420.0
 
-    def test_fully_paid_locks(self, owner_tok):
-        r = requests.put(f"{API}/commissions/attribution/{TEST_LEAD_A}",
-                         json={"fully_paid": True},
+    def test_full_collection_locks(self, owner_tok):
+        _set_collected(self.JOB, self.LEAD, self.QUOTE)   # == total => locked
+        r = requests.get(f"{API}/commissions/attribution/{self.LEAD}",
                          headers=_hdr(owner_tok), timeout=30)
         assert r.status_code == 200, r.text
-        assert r.json()["status"] == "locked"
+        body = r.json()
+        assert body["base"] == self.QUOTE, body
+        assert body["commission"] == 480.0, body          # 12% of 4000
+        assert body["status"] == "locked", body
 
-    def test_refunded_voids(self, owner_tok, crew1_id):
-        r = requests.put(f"{API}/commissions/attribution/{TEST_LEAD_A}",
-                         json={"refunded": True},
-                         headers=_hdr(owner_tok), timeout=30)
+    def test_owner_refund_voids(self, owner_tok):
+        r = requests.put(f"{API}/commissions/attribution/{self.LEAD}",
+                         json={"refunded": True}, headers=_hdr(owner_tok), timeout=30)
         assert r.status_code == 200, r.text
         assert r.json()["status"] == "voided"
 
-        # verify report excludes voided from pending/locked
         r2 = requests.get(f"{API}/commissions/report", headers=_hdr(owner_tok), timeout=30)
         assert r2.status_code == 200
-        body = r2.json()
-        rep = next((x for x in body["reps"] if x["user_id"] == crew1_id), None)
-        assert rep is not None
-        # There should also be TEST_LEAD_B/C/D pending (they still have closed_by but no deposit)
-        # But TEST_LEAD_A voided => shouldn't add to pending/locked
-        # find the row for lead A
-        row_a = next((r for r in body["rows"] if r["lead_id"] == TEST_LEAD_A), None)
-        assert row_a is not None and row_a["status"] == "voided"
-        # rep.voided should include 420 from the voided lead
-        assert rep["voided"] >= 420.0
+        row = next((x for x in r2.json()["rows"] if x["lead_id"] == self.LEAD), None)
+        assert row is not None and row["status"] == "voided", r2.json()
+        # restore so the report/teardown stays clean for anything reusing this rep
+        requests.put(f"{API}/commissions/attribution/{self.LEAD}",
+                     json={"refunded": False}, headers=_hdr(owner_tok), timeout=30)
 
 
 # ================================ Role gates
 
 class TestCommissionRoleGates:
-    def test_sales_cannot_flip_payment_flags(self, sales_ghost_tok, crew1_id):
-        r = requests.put(f"{API}/commissions/attribution/{TEST_LEAD_B}",
-                         json={"deposit_paid": True},
+    GATE_LEAD = "recQATESTGATE"      # already credited to crew1 (owner-set) in the fixture
+    SETTABLE_LEAD = "recQATESTGSET"  # fresh lead for the "sales may set first attribution" case
+
+    @pytest.fixture(scope="class", autouse=True)
+    def _gate_data(self, owner_tok, crew1_id):
+        r = requests.put(f"{API}/commissions/attribution/{self.GATE_LEAD}",
+                         json={"lead_name": "QA Gate", "closed_by": crew1_id, "move_type": "2-bedroom"},
+                         headers=_hdr(owner_tok), timeout=30)
+        assert r.status_code == 200, r.text
+        yield
+        for lid in (self.GATE_LEAD, self.SETTABLE_LEAD):
+            _DB.lead_commissions.delete_one({"_id": lid})
+            _DB.commission_audit.delete_many({"lead_id": lid})
+
+    def test_sales_cannot_set_refunded(self, sales_ghost_tok):
+        # financial state (void/refund) is owner-only now — sales cannot set it directly
+        r = requests.put(f"{API}/commissions/attribution/{self.GATE_LEAD}",
+                         json={"refunded": True},
                          headers=_hdr(sales_ghost_tok), timeout=30)
         assert r.status_code == 403
         assert "owner" in (r.json().get("detail") or "").lower()
 
-    def test_sales_can_set_attribution_fields(self, sales_ghost_tok, crew1_id):
-        # sales sets non-flag fields
-        r = requests.put(f"{API}/commissions/attribution/{TEST_LEAD_B}",
-                         json={"closed_by": crew1_id, "move_type": "2-bedroom", "quote_amount": 2000},
+    def test_sales_cannot_reassign_credited_closed_by(self, sales_ghost_tok, crew2_id):
+        # GATE_LEAD is already credited to crew1 — sales cannot reassign it to someone else
+        r = requests.put(f"{API}/commissions/attribution/{self.GATE_LEAD}",
+                         json={"closed_by": crew2_id},
+                         headers=_hdr(sales_ghost_tok), timeout=30)
+        assert r.status_code == 403
+        assert "owner" in (r.json().get("detail") or "").lower()
+
+    def test_sales_can_set_initial_attribution_fields(self, sales_ghost_tok, crew1_id):
+        # first-time attribution on a fresh lead is allowed for sales (no quote base involved)
+        r = requests.put(f"{API}/commissions/attribution/{self.SETTABLE_LEAD}",
+                         json={"closed_by": crew1_id, "move_type": "2-bedroom"},
                          headers=_hdr(sales_ghost_tok), timeout=30)
         assert r.status_code == 200, r.text
+        assert r.json()["attribution"]["closed_by"] == crew1_id
 
     def test_crew_ghost_403_on_attribution_get(self, crew_ghost_tok):
-        r = requests.get(f"{API}/commissions/attribution/{TEST_LEAD_A}",
+        r = requests.get(f"{API}/commissions/attribution/{self.GATE_LEAD}",
                          headers=_hdr(crew_ghost_tok), timeout=30)
         assert r.status_code == 403
 
     def test_crew_ghost_403_on_attribution_put(self, crew_ghost_tok):
-        r = requests.put(f"{API}/commissions/attribution/{TEST_LEAD_A}",
+        r = requests.put(f"{API}/commissions/attribution/{self.GATE_LEAD}",
                          json={"lead_name": "hack"},
                          headers=_hdr(crew_ghost_tok), timeout=30)
         assert r.status_code == 403
@@ -233,12 +328,11 @@ class TestCommissionRoleGates:
 
     def test_marketing_ghost_403_on_all_commission_endpoints(self, mkt_ghost_tok):
         for path in ("/commissions/report", "/commissions/rates",
-                     f"/commissions/attribution/{TEST_LEAD_A}"):
+                     f"/commissions/attribution/{self.GATE_LEAD}"):
             r = requests.get(f"{API}{path}", headers=_hdr(mkt_ghost_tok), timeout=30)
             assert r.status_code == 403, f"{path}: expected 403 got {r.status_code}"
 
     def test_sales_cannot_put_rates(self, sales_ghost_tok):
-        # first get current rates from owner would be nice but sales get 200 too
         r = requests.get(f"{API}/commissions/rates", headers=_hdr(sales_ghost_tok), timeout=30)
         assert r.status_code == 200  # sales CAN view rates
         rates = r.json()["rates"]
@@ -250,40 +344,85 @@ class TestCommissionRoleGates:
         assert r2.status_code == 403
 
 
-# ================================ Rates editing math change
+# ================================ Owner reassignment of an already-credited commission
+
+class TestCommissionReassign:
+    LEAD = "recQATESTREASSIGN"
+
+    @pytest.fixture(scope="class", autouse=True)
+    def _seed(self, owner_tok, crew1_id):
+        r = requests.put(f"{API}/commissions/attribution/{self.LEAD}",
+                         json={"lead_name": "QA Reassign", "closed_by": crew1_id, "move_type": "2-bedroom"},
+                         headers=_hdr(owner_tok), timeout=30)
+        assert r.status_code == 200, r.text
+        yield
+        _DB.lead_commissions.delete_one({"_id": self.LEAD})
+        _DB.commission_audit.delete_many({"lead_id": self.LEAD})
+
+    def test_owner_reassign_without_reason_422(self, owner_tok, crew2_id):
+        r = requests.put(f"{API}/commissions/attribution/{self.LEAD}",
+                         json={"closed_by": crew2_id},
+                         headers=_hdr(owner_tok), timeout=30)
+        assert r.status_code == 422, r.text
+
+    def test_owner_reassign_with_reason_audits(self, owner_tok, crew1_id, crew2_id):
+        r = requests.put(f"{API}/commissions/attribution/{self.LEAD}",
+                         json={"closed_by": crew2_id, "reason": "crew1 left; crew2 closed it"},
+                         headers=_hdr(owner_tok), timeout=30)
+        assert r.status_code == 200, r.text
+        assert r.json()["attribution"]["closed_by"] == crew2_id
+        log = _DB.commission_audit.find_one({"lead_id": self.LEAD, "field": "closed_by"})
+        assert log is not None
+        assert log["old"] == crew1_id and log["new"] == crew2_id
+        assert log["reason"].startswith("crew1 left")
+
+
+# ================================ Rates editing changes the math (on net collected)
 
 class TestCommissionRates:
-    def test_owner_edit_big_pct_15_changes_math(self, owner_tok, crew1_id):
+    LEAD = "recQATESTRATE"
+    JOB = "qa-comm-RATE"
+
+    @pytest.fixture(scope="class", autouse=True)
+    def _seed(self, owner_tok, crew1_id):
+        _seed_job(self.JOB, self.LEAD, 3500.0)
+        _set_collected(self.JOB, self.LEAD, 3500.0)   # net collected 3500 (big tier)
+        r = requests.put(f"{API}/commissions/attribution/{self.LEAD}",
+                         json={"lead_name": "QA Rate", "closed_by": crew1_id, "move_type": "4+"},
+                         headers=_hdr(owner_tok), timeout=30)
+        assert r.status_code == 200, r.text
+        yield
+        _cleanup_comm(self.JOB, self.LEAD)
+
+    def test_owner_edit_big_pct_15_changes_math(self, owner_tok):
         r = requests.get(f"{API}/commissions/rates", headers=_hdr(owner_tok), timeout=30)
         assert r.status_code == 200
         original = r.json()["rates"]
-
-        # bump big_pct to 15
-        r2 = requests.put(f"{API}/commissions/rates",
-                          json={"small_flat": original["small_flat"],
-                                "medium_min": original["medium_min"],
-                                "medium_pct": original["medium_pct"],
-                                "big_min": original["big_min"],
-                                "big_pct": 15.0},
-                          headers=_hdr(owner_tok), timeout=30)
-        assert r2.status_code == 200, r2.text
-
-        # now check a $3500 4+ quote → should be 525
-        r3 = requests.put(f"{API}/commissions/attribution/{TEST_LEAD_A}",
-                          json={"quote_amount": 3500, "move_type": "4+"},
-                          headers=_hdr(owner_tok), timeout=30)
-        assert r3.status_code == 200
-        assert r3.json()["commission"] == 525.0, r3.json()
-
-        # RESTORE big_pct to 12
-        r4 = requests.put(f"{API}/commissions/rates",
-                          json={"small_flat": original["small_flat"],
-                                "medium_min": original["medium_min"],
-                                "medium_pct": original["medium_pct"],
-                                "big_min": original["big_min"],
-                                "big_pct": 12.0},
-                          headers=_hdr(owner_tok), timeout=30)
-        assert r4.status_code == 200
+        try:
+            r2 = requests.put(f"{API}/commissions/rates",
+                              json={"small_flat": original["small_flat"],
+                                    "medium_min": original["medium_min"],
+                                    "medium_pct": original["medium_pct"],
+                                    "big_min": original["big_min"],
+                                    "big_pct": 15.0},
+                              headers=_hdr(owner_tok), timeout=30)
+            assert r2.status_code == 200, r2.text
+            # commission recomputes live from NET collected 3500 at the new 15% => 525
+            r3 = requests.get(f"{API}/commissions/attribution/{self.LEAD}",
+                              headers=_hdr(owner_tok), timeout=30)
+            assert r3.status_code == 200
+            body = r3.json()
+            assert body["base"] == 3500.0, body
+            assert body["commission"] == 525.0, body
+        finally:
+            # RESTORE the original rate so this test can't contaminate others
+            requests.put(f"{API}/commissions/rates",
+                         json={"small_flat": original["small_flat"],
+                               "medium_min": original["medium_min"],
+                               "medium_pct": original["medium_pct"],
+                               "big_min": original["big_min"],
+                               "big_pct": original["big_pct"]},
+                         headers=_hdr(owner_tok), timeout=30)
 
 
 # ================================ Rep scoping (Crew1)
@@ -452,20 +591,3 @@ class TestProfileTask:
                            headers=_hdr(owner_tok), timeout=30)
             requests.delete(f"{API}/users/{temp_id}",
                             headers=_hdr(owner_tok), timeout=30)
-
-
-# ================================ FINAL cleanup — clear closed_by on all TEST leads
-
-def test_zzz_cleanup_test_attributions(request, owner_tok):
-    """Runs last — resets closed_by="" on all fake QA leads so report stays clean."""
-    for lead_id in (TEST_LEAD_A, TEST_LEAD_B, TEST_LEAD_C, TEST_LEAD_D):
-        requests.put(f"{API}/commissions/attribution/{lead_id}",
-                     json={"closed_by": "", "refunded": False, "deposit_paid": False,
-                           "fully_paid": False},
-                     headers=_hdr(owner_tok), timeout=30)
-    # verify: report should have no rows for our fake IDs
-    r = requests.get(f"{API}/commissions/report", headers=_hdr(owner_tok), timeout=30)
-    assert r.status_code == 200
-    row_ids = {row["lead_id"] for row in r.json()["rows"]}
-    for lid in (TEST_LEAD_A, TEST_LEAD_B, TEST_LEAD_C, TEST_LEAD_D):
-        assert lid not in row_ids, f"leftover row for {lid}"
