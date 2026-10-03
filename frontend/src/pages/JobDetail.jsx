@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { InstructionBanner } from "@/components/Bits";
 import { ComplianceSection } from "@/components/ComplianceSection";
 import { JobEditDialog } from "@/components/job/JobEditDialog";
+import { JobPaymentsPanel } from "@/components/job/JobPaymentsPanel";
 import { CrewLeadDoc } from "@/components/crew/CrewLeadDoc";
 import { JobOutcomePanel } from "@/components/JobOutcomePanel";
 import { useAuth } from "@/components/AuthGate";
@@ -266,7 +267,10 @@ export default function JobDetail() {
           <TabsContent value="financial" className="mt-4">
             <div className="surface p-4 space-y-4">
               <h3 className="font-bold text-primary flex items-center gap-2"><DollarSign className="w-4 h-4 text-accent-ink" /> Money</h3>
-              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {data.money_ledger && (
+                <JobPaymentsPanel ident={id} initial={data.money_ledger} canRecord={!!data.can_record_money} />
+              )}
+              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 border-t border-border pt-3">
                 <Field label="Quote" value={g(f, PF.quote) != null ? fmtMoney(g(f, PF.quote)) : "—"} testId="job-fin-quote" />
                 <Field label="Final revenue" value={g(f, PF.finalRevenue) != null ? fmtMoney(g(f, PF.finalRevenue)) : "—"} testId="job-fin-final" />
                 <Field label="Deposit collected on Airtable" value={g(f, PF.depositCollected) ? "Yes" : "No"} />

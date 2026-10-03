@@ -51,6 +51,16 @@ export const listCalcAccessApi = () => axios.get(`${API}/users/calculator-access
 export const setCalcAccessApi = (userId, mode) => axios.put(`${API}/users/${userId}/calculator-access`, { mode }).then((r) => r.data);
 export const removeCalcAccessApi = (userId) => axios.delete(`${API}/users/${userId}/calculator-access`).then((r) => r.data);
 
+// Prompt 3 — canonical payment ledger + money engine
+export const getJobLedgerApi = (ident) => axios.get(`${API}/jobs/${ident}/ledger`).then((r) => r.data);
+export const recordJobPaymentApi = (ident, payload) => axios.post(`${API}/jobs/${ident}/payments`, payload).then((r) => r.data);
+export const recordJobRefundApi = (ident, payload) => axios.post(`${API}/jobs/${ident}/refunds`, payload).then((r) => r.data);
+export const recordJobAdjustmentApi = (ident, payload) => axios.post(`${API}/jobs/${ident}/adjustments`, payload).then((r) => r.data);
+export const getJobRemainingBalanceApi = (ident) => axios.get(`${API}/jobs/${ident}/remaining-balance`).then((r) => r.data);
+export const listFinanceAccessApi = () => axios.get(`${API}/users/finance-access`).then((r) => r.data.access);
+export const grantFinanceAccessApi = (userId) => axios.put(`${API}/users/${userId}/finance-access`).then((r) => r.data);
+export const revokeFinanceAccessApi = (userId) => axios.delete(`${API}/users/${userId}/finance-access`).then((r) => r.data);
+
 export const getBusinessApi = () => axios.get(`${API}/settings/business`).then((r) => r.data);
 export const saveBusinessApi = (b) => axios.put(`${API}/settings/business`, b).then((r) => r.data);
 export const getSquareStatusApi = () => axios.get(`${API}/square/status`).then((r) => r.data);

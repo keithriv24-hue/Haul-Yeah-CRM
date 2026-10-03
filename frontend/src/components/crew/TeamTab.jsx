@@ -16,6 +16,7 @@ import { SearchBar, searchMatch } from "@/components/Bits";
 import {
   listUsersApi, createUserApi, patchUserApi, deleteUserApi, listTrucksApi, createTruckApi, patchTruckApi, deleteTruckApi,
   getCrewRatesApi, saveCrewRatesApi, apiErrorMessage, listCalcAccessApi, setCalcAccessApi, removeCalcAccessApi,
+  listFinanceAccessApi, grantFinanceAccessApi, revokeFinanceAccessApi,
 } from "@/lib/api";
 
 const ROW_LINK =
@@ -30,6 +31,30 @@ const ROLE_BADGE = {
 };
 
 /* Owner-only control: grant / toggle / remove Job Scope Calculator access */
+const FinanceAccessControl = ({ user, granted, onChanged }) => {
+  const [busy, setBusy] = useState(false);
+  const toggle = async () => {
+    setBusy(true);
+    try {
+      if (granted) {
+        await revokeFinanceAccessApi(user.id);
+        toast.success(`Finance (money) access removed from ${user.name}.`);
+      } else {
+        await grantFinanceAccessApi(user.id);
+        toast.success(`${user.name} can now record payments & refunds.`);
+      }
+      onChanged();
+    } catch (e) { toast.error(apiErrorMessage(e)); }
+    setBusy(false);
+  };
+  return (
+    <Button data-testid="finance-access-btn" variant={granted ? "secondary" : "outline"} size="sm" className="gap-1.5"
+      onClick={toggle} disabled={busy}>
+      <DollarSign className="w-3.5 h-3.5" /> {granted ? "Finance access ✓" : "Give finance access"}
+    </Button>
+  );
+};
+
 const CalcAccessControl = ({ user, mode, onChanged }) => {
   const [pickOpen, setPickOpen] = useState(false);
   const [picked, setPicked] = useState("survey");
@@ -310,6 +335,7 @@ export const TeamTab = () => {
   const [users, setUsers] = useState([]);
   const [trucks, setTrucks] = useState([]);
   const [calcAccess, setCalcAccess] = useState({});
+  const [financeAccess, setFinanceAccess] = useState([]);
   const [rates, setRates] = useState({ driver: 28, helper: 24 });
   const [addOpen, setAddOpen] = useState(false);
   const [resetUser, setResetUser] = useState(null);
@@ -322,11 +348,12 @@ export const TeamTab = () => {
 
   const load = useCallback(async () => {
     try {
-      const [u, t, r, ca] = await Promise.all([listUsersApi(), listTrucksApi(), getCrewRatesApi(), listCalcAccessApi().catch(() => ({}))]);
+      const [u, t, r, ca, fa] = await Promise.all([listUsersApi(), listTrucksApi(), getCrewRatesApi(), listCalcAccessApi().catch(() => ({})), listFinanceAccessApi().catch(() => [])]);
       setUsers(u);
       setTrucks(t);
       setRates(r);
       setCalcAccess(ca);
+      setFinanceAccess(Array.isArray(fa) ? fa : []);
     } catch (e) {
       toast.error(apiErrorMessage(e));
     }
@@ -434,6 +461,9 @@ export const TeamTab = () => {
                 </Button>
                 {!(u.roles?.length ? u.roles : [u.role]).includes("owner") && (
                   <CalcAccessControl user={u} mode={calcAccess[u.id]} onChanged={load} />
+                )}
+                {!(u.roles?.length ? u.roles : [u.role]).includes("owner") && (
+                  <FinanceAccessControl user={u} granted={financeAccess.includes(u.id)} onChanged={load} />
                 )}
                 <div className="ml-auto flex flex-wrap items-center gap-x-0.5 sm:ml-1">
                   {u.active && (

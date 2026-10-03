@@ -31,6 +31,7 @@ import jwt
 from dotenv import load_dotenv
 from fastapi import APIRouter, Body, Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
 from motor.motor_asyncio import AsyncIOMotorClient
+from pymongo.errors import DuplicateKeyError
 from pydantic import BaseModel
 from starlette.middleware.cors import CORSMiddleware
 
@@ -488,6 +489,7 @@ def _user_public(user: Dict[str, Any]) -> Dict[str, Any]:
         "gps_consent": bool(user.get("gps_consent_at")), "created_at": user.get("created_at"),
         "surveyor_attested": bool(user.get("surveyor_attested")),
         "crew_docs_expiry": user.get("crew_docs_expiry"),
+        "finance_access": bool(user.get("finance_access")),
     }
 
 
@@ -2016,6 +2018,36 @@ def normalize_phone(phone: Optional[str]) -> Optional[str]:
     return None
 
 
+def _square_idem(lead_id: Optional[str], purpose: Optional[str], amount: Optional[float],
+                 op: str, version: int = 1) -> str:
+    """Deterministic Square idempotency key (Problem #55): a retry of the SAME business operation
+    reuses the same key, so Square returns the original result instead of creating a duplicate
+    customer/order/invoice. A different amount or operation deliberately yields a new key."""
+    cents = int(round(float(amount or 0) * 100))
+    raw = f"v{version}|lead:{lead_id or '-'}|purpose:{purpose or '-'}|amount:{cents}|op:{op}"
+    return "hy_" + hashlib.sha256(raw.encode()).hexdigest()[:40]
+
+
+async def _find_or_create_square_customer(payload: "SquareInvoicePayload") -> str:
+    """Reuse an existing Square customer (search by email then phone) before creating one, so a
+    retry never spawns a duplicate customer. Falls back to create with a deterministic key."""
+    email = payload.email.strip().lower()
+    phone = normalize_phone(payload.phone)
+    for field, value in (("email_address", email), ("phone_number", phone)):
+        if not value:
+            continue
+        try:
+            data = await square_request("POST", "/v2/customers/search",
+                                        {"query": {"filter": {field: {"exact": value}}}, "limit": 5})
+        except HTTPException:
+            data = {}
+        hits = data.get("customers") or []
+        if hits:
+            return sorted(hits, key=lambda x: x.get("created_at", ""))[0]["id"]
+    cust = await square_request("POST", "/v2/customers", _square_customer_body(payload))
+    return cust["customer"]["id"]
+
+
 class InvoiceLineItem(BaseModel):
     name: str
     amount: float
@@ -2043,7 +2075,7 @@ async def square_status(role: str = Depends(require_auth)):
 def _square_customer_body(payload: SquareInvoicePayload) -> Dict[str, Any]:
     name_parts = payload.name.strip().split(None, 1)
     body: Dict[str, Any] = {
-        "idempotency_key": str(uuid4()),
+        "idempotency_key": _square_idem(payload.lead_id, "customer", 0, "create_customer"),
         "given_name": name_parts[0] if name_parts else "Customer",
         "email_address": payload.email.strip(),
     }
@@ -2067,10 +2099,12 @@ def _square_order_lines(payload: SquareInvoicePayload) -> List[Dict[str, Any]]:
              "base_price_money": {"amount": int(round(payload.amount * 100)), "currency": "USD"}}]
 
 
-async def _publish_square_invoice(location_id: str, customer_id: str, order_id: str) -> Dict[str, Any]:
+async def _publish_square_invoice(location_id: str, customer_id: str, order_id: str, *,
+                                  lead_id: Optional[str] = None, purpose: Optional[str] = None,
+                                  amount: Optional[float] = None) -> Dict[str, Any]:
     due_date = (datetime.now(timezone.utc) + timedelta(days=7)).date().isoformat()
     inv_body = {
-        "idempotency_key": str(uuid4()),
+        "idempotency_key": _square_idem(lead_id, purpose, amount, "create_invoice"),
         "invoice": {
             "location_id": location_id,
             "order_id": order_id,
@@ -2084,7 +2118,8 @@ async def _publish_square_invoice(location_id: str, customer_id: str, order_id: 
     inv = await square_request("POST", "/v2/invoices", inv_body)
     invoice = inv["invoice"]
     pub = await square_request("POST", f"/v2/invoices/{invoice['id']}/publish",
-                               {"version": invoice["version"], "idempotency_key": str(uuid4())})
+                               {"version": invoice["version"],
+                                "idempotency_key": _square_idem(lead_id, purpose, amount, "publish_invoice")})
     return pub["invoice"]
 
 
@@ -2112,12 +2147,22 @@ async def send_square_invoice(payload: SquareInvoicePayload, role: str = Depends
         raise HTTPException(status_code=422, detail="The invoice amount must be more than $0.")
     if "@" not in payload.email:
         raise HTTPException(status_code=422, detail="This lead needs a valid email before you can send an invoice.")
+    # Problem #6 — a "remaining balance" invoice amount is computed by the backend from the ledger,
+    # never trusted from the browser. We never invoice more than the job actually still owes.
+    if (payload.purpose or "").lower() in ("balance", "remaining", "remaining_balance") and payload.lead_id:
+        job = await _resolve_job_for_payment(lead_id=payload.lead_id)
+        if job:
+            server_balance = await _server_remaining_balance(job)
+            if server_balance > 0 and abs(server_balance - float(payload.amount or 0)) > 0.01:
+                logger.info("Balance invoice for lead %s: client asked $%s, server owes $%s — using server value.",
+                            payload.lead_id, payload.amount, server_balance)
+                payload.amount = round(server_balance, 2)
+                payload.line_items = None
     location_id = (await square_creds())["location_id"]
 
-    cust = await square_request("POST", "/v2/customers", _square_customer_body(payload))
-    customer_id = cust["customer"]["id"]
+    customer_id = await _find_or_create_square_customer(payload)
     order_body = {
-        "idempotency_key": str(uuid4()),
+        "idempotency_key": _square_idem(payload.lead_id, payload.purpose, payload.amount, "create_order"),
         "order": {
             "location_id": location_id,
             "customer_id": customer_id,
@@ -2125,7 +2170,9 @@ async def send_square_invoice(payload: SquareInvoicePayload, role: str = Depends
         },
     }
     order = await square_request("POST", "/v2/orders", order_body)
-    published = await _publish_square_invoice(location_id, customer_id, order["order"]["id"])
+    published = await _publish_square_invoice(location_id, customer_id, order["order"]["id"],
+                                              lead_id=payload.lead_id, purpose=payload.purpose,
+                                              amount=payload.amount)
     await _record_square_invoice(payload, published)
     return {
         "invoice_id": published["id"],
@@ -2668,16 +2715,22 @@ async def apply_invoice_to_jobs(inv: Dict[str, Any], notify_owner: bool = True) 
         if purpose != "deposit":
             await _mark_job_payment_pending(inv)
         return
+    if status == "REFUNDED":
+        # A refunded invoice reverses its dollars in the canonical ledger (original row kept).
+        await _sync_square_invoice_refund_to_ledger(inv)
+        return
     if status != "PAID":
         return
     await _alert_payment_landed(inv, purpose)
     await _maybe_fire_capi_purchase(inv)
     if inv.get("lead_id") and purpose != "deposit":
         await mark_lead_commission_payment(inv["lead_id"], "fully")
+    # Deposit/full invoices still create the job container; mark_full is no longer inferred from the
+    # invoice purpose — the money engine decides paid-in-full from the ACTUAL dollars in the ledger.
     if purpose in ("deposit", "full"):
-        await ensure_job_for_deposit(inv, mark_full=(purpose == "full"), notify_owner=notify_owner)
-        return
-    await _mark_job_paid_in_full(inv, notify_owner)
+        await ensure_job_for_deposit(inv, mark_full=False, notify_owner=notify_owner)
+    # Record the actual money received into the ONE canonical ledger (deduped per invoice).
+    await _sync_square_invoice_payment_to_ledger(inv)
 
 
 async def refresh_invoice_doc(d: Dict[str, Any], now: float) -> None:
@@ -2794,6 +2847,8 @@ async def handle_square_event(event: Dict[str, Any]) -> None:
     obj = (event.get("data") or {}).get("object") or {}
     if etype.startswith("invoice."):
         await _handle_invoice_event(obj.get("invoice") or obj, event)
+    elif etype.startswith("refund."):
+        await _handle_refund_event(obj.get("refund") or obj, event)
     elif etype == "payment.updated":
         docs = await mongo_db.square_invoices.find(
             {"status": {"$nin": list(SQUARE_TERMINAL_STATUSES)}}, {"_id": 0}).to_list(100)
@@ -2893,6 +2948,434 @@ async def square_sync_status(p: Dict[str, Any] = Depends(require_owner)):
         "openphone_connected": bool(op["api_key"] and op["number"]),
         "notification_url": (doc.get("square_notification_url") or "").strip(),
     }
+
+
+# ======================================================================================
+# PROMPT 3 — ONE canonical payment ledger + ONE money engine
+# ======================================================================================
+# Every dollar for a job is a row in the `payments` ledger. collected / balance_due /
+# paid_in_full are COMPUTED from the ledger — never inferred from an invoice's title,
+# "purpose", or a status click. The ledger is keyed to the Mongo job (_id = the money
+# container) and carries the canonical project_record_id when known. A Square payment
+# that can't be confidently tied to a job is kept (job_id = None) and flagged for owner
+# review — never guessed onto a Project. Refunds are new negative entries; the original
+# payment is never deleted. This is the single source of truth the money engine reads.
+
+LEDGER_MANUAL_METHODS = {"cash", "zelle", "ach", "check", "other"}
+LEDGER_ALL_METHODS = LEDGER_MANUAL_METHODS | {"square"}
+MONEY_EPSILON = 0.005
+
+
+def _signed_amount(entry: Dict[str, Any]) -> float:
+    """A ledger entry's effect on `collected`: payments add, refunds subtract, adjustments are signed."""
+    amt = float(entry.get("amount") or 0)
+    kind = entry.get("kind")
+    if kind == "refund":
+        return -abs(amt)
+    if kind == "adjustment":
+        return amt
+    return abs(amt)
+
+
+def _job_total_for_money(job: Dict[str, Any]) -> float:
+    """Authoritative job total balance_due is measured against (user-confirmed): the booked quote
+    on the job for active jobs; Final Revenue where it has been recorded for a completed job. The
+    immutable Scope snapshot is history and is never used as the live balance."""
+    fr = job.get("final_revenue")
+    if fr is not None:
+        try:
+            return round(float(fr), 2)
+        except (TypeError, ValueError):
+            pass
+    try:
+        return round(float(job.get("quote_total") or 0), 2)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def compute_money_from_entries(entries: List[Dict[str, Any]], job_total: float) -> Dict[str, Any]:
+    collected = round(sum(_signed_amount(e) for e in entries if e.get("status") == "completed"), 2)
+    job_total = round(job_total, 2)
+    return {
+        "job_total": job_total,
+        "collected": collected,
+        "balance_due": round(job_total - collected, 2),
+        "paid_in_full": bool(job_total > 0 and collected >= job_total - MONEY_EPSILON),
+        "overpaid": bool(collected - job_total > MONEY_EPSILON),
+    }
+
+
+async def _ledger_entries_for_job(job: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Every ledger row for a job, resolved by the canonical project_record_id when present OR the
+    job's own _id. MongoDB returns each document once even when both $or clauses match."""
+    ors: List[Dict[str, Any]] = [{"job_id": job.get("_id")}]
+    pid = job.get("project_record_id")
+    if pid:
+        ors.append({"project_record_id": pid})
+    return await mongo_db.payments.find({"$or": ors}).sort("occurred_at", 1).to_list(2000)
+
+
+async def compute_job_money(job: Dict[str, Any]) -> Dict[str, Any]:
+    entries = await _ledger_entries_for_job(job)
+    out = compute_money_from_entries(entries, _job_total_for_money(job))
+    out["entry_count"] = len(entries)
+    return out
+
+
+async def _recompute_job_money(job: Dict[str, Any], *, notify_full: bool = False) -> Dict[str, Any]:
+    """Recompute a job's money from the ledger and refresh the money_state + the legacy
+    deposit_paid/paid_in_full flags (a compatibility mirror retired in Prompt 4). The legacy flags
+    are only written when the ledger actually has rows for this job, so pre-ledger paid state on a
+    job we haven't captured yet is never silently wiped."""
+    m = await compute_job_money(job)
+    money_state = {k: m[k] for k in ("job_total", "collected", "balance_due", "paid_in_full", "overpaid")}
+    money_state["updated_at"] = now_iso()
+    set_ops: Dict[str, Any] = {"money_state": money_state}
+    prev_full = (job.get("paid_in_full") or {}).get("status") == "paid"
+    if m["entry_count"] > 0:
+        if m["paid_in_full"]:
+            set_ops["paid_in_full"] = {"status": "paid", "amount": m["collected"],
+                                       "paid_at": (job.get("paid_in_full") or {}).get("paid_at") or now_iso()}
+        else:
+            set_ops["paid_in_full"] = {"status": "pending" if m["collected"] > 0 else "unpaid",
+                                       "amount": m["collected"] or None, "paid_at": None}
+        if m["collected"] > 0 and (job.get("deposit_paid") or {}).get("status") != "paid":
+            set_ops["deposit_paid"] = {"status": "paid", "amount": m["collected"], "paid_at": now_iso()}
+    await mongo_db.jobs.update_one({"_id": job["_id"]}, {"$set": set_ops})
+    job.update(set_ops)
+    if notify_full and m["paid_in_full"] and not prev_full:
+        await notify(None, "owner", "Paid in full",
+                     f"Job #{job.get('invoice_number')} is fully paid (${m['collected']:,.2f}).",
+                     "success", {"job_id": job["_id"]})
+    return money_state
+
+
+async def _resolve_money_job(ident: str) -> Optional[Dict[str, Any]]:
+    """Resolve a job container from either the Mongo job _id OR the canonical project_record_id."""
+    j = await mongo_db.jobs.find_one({"_id": ident})
+    if j:
+        return j
+    return await mongo_db.jobs.find_one({"project_record_id": ident})
+
+
+async def _resolve_job_for_payment(*, lead_id: Optional[str] = None, invoice_id: Optional[str] = None,
+                                   project_record_id: Optional[str] = None,
+                                   payment_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Find the job a Square payment belongs to WITHOUT guessing: by canonical project link, by the
+    deposit invoice, by an existing ledger row for the same payment, then by lead. None -> flagged."""
+    if project_record_id:
+        j = await mongo_db.jobs.find_one({"project_record_id": project_record_id})
+        if j:
+            return j
+    if invoice_id:
+        j = await mongo_db.jobs.find_one({"deposit_invoice_id": invoice_id})
+        if j:
+            return j
+    if payment_id:
+        prior = await mongo_db.payments.find_one({"external_id": payment_id, "job_id": {"$ne": None}})
+        if prior:
+            j = await mongo_db.jobs.find_one({"_id": prior["job_id"]})
+            if j:
+                return j
+    if lead_id:
+        j = await mongo_db.jobs.find_one({"lead_id": lead_id})
+        if j:
+            return j
+    return None
+
+
+def _ledger_out(e: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "id": e.get("_id"), "kind": e.get("kind"), "method": e.get("method"),
+        "amount": e.get("amount"), "signed_amount": round(_signed_amount(e), 2),
+        "type": e.get("type"), "status": e.get("status"), "source": e.get("source"),
+        "entered_by": e.get("entered_by"), "note": e.get("note"),
+        "project_record_id": e.get("project_record_id"), "job_id": e.get("job_id"),
+        "needs_project_review": bool(e.get("needs_project_review")),
+        "external_id": e.get("external_id"), "refund_of": e.get("refund_of"),
+        "occurred_at": e.get("occurred_at"), "created_at": e.get("created_at"),
+    }
+
+
+async def record_ledger_entry(*, kind: str, method: str, amount: float, type_: str,
+                              status: str = "completed", source: str,
+                              job: Optional[Dict[str, Any]] = None, lead_id: Optional[str] = None,
+                              project_record_id: Optional[str] = None, external_id: Optional[str] = None,
+                              square_invoice_id: Optional[str] = None, refund_of: Optional[str] = None,
+                              entered_by: Optional[str] = None, entered_by_id: Optional[str] = None,
+                              note: Optional[str] = None, occurred_at: Optional[str] = None,
+                              dedupe_key: Optional[str] = None) -> Tuple[Dict[str, Any], bool]:
+    """Append one ledger row. `dedupe_key` (unique index) makes Square/network/webhook retries a
+    no-op — the same payment/invoice/refund can never be counted twice. Recomputes the job's money."""
+    key = dedupe_key or external_id
+    if key:
+        existing = await mongo_db.payments.find_one({"dedupe_key": key})
+        if existing:
+            return existing, False
+    doc: Dict[str, Any] = {
+        "_id": str(uuid4()),
+        "job_id": job.get("_id") if job else None,
+        "project_record_id": (job.get("project_record_id") if job else None) or project_record_id,
+        "lead_id": (job.get("lead_id") if job else None) or lead_id,
+        "kind": kind, "method": method,
+        "amount": round(float(amount), 2) if kind == "adjustment" else round(abs(float(amount)), 2),
+        "type": type_, "status": status, "source": source,
+        "external_id": external_id, "square_invoice_id": square_invoice_id, "refund_of": refund_of,
+        "entered_by": entered_by, "entered_by_id": entered_by_id, "note": note,
+        "needs_project_review": bool(job is None),
+        "occurred_at": occurred_at or now_iso(), "created_at": now_iso(),
+        "dedupe_key": key,
+    }
+    try:
+        await mongo_db.payments.insert_one(doc)
+    except DuplicateKeyError:
+        existing = await mongo_db.payments.find_one({"dedupe_key": key})
+        if existing:
+            return existing, False
+        raise
+    if job:
+        await _recompute_job_money(job, notify_full=(kind == "payment"))
+    return doc, True
+
+
+async def _sync_square_invoice_payment_to_ledger(inv: Dict[str, Any]) -> None:
+    """A PAID Square invoice records the ACTUAL dollars received (one entry per invoice, deduped).
+    The money engine — not the invoice's purpose — then decides whether the job is paid in full."""
+    amt = float(inv.get("amount") or 0)
+    if amt <= 0:
+        return
+    job = await _resolve_job_for_payment(lead_id=inv.get("lead_id"), invoice_id=inv.get("invoice_id"))
+    await record_ledger_entry(
+        kind="payment", method="square", amount=amt, type_=_infer_purpose(inv),
+        source="square_invoice", job=job, lead_id=inv.get("lead_id"),
+        external_id=inv.get("invoice_id"), square_invoice_id=inv.get("invoice_id"),
+        dedupe_key=f"sqinv:{inv.get('invoice_id')}", occurred_at=inv.get("paid_at"))
+
+
+async def _sync_square_invoice_refund_to_ledger(inv: Dict[str, Any]) -> None:
+    amt = float(inv.get("amount") or 0)
+    if amt <= 0:
+        return
+    job = await _resolve_job_for_payment(lead_id=inv.get("lead_id"), invoice_id=inv.get("invoice_id"))
+    await record_ledger_entry(
+        kind="refund", method="square", amount=amt, type_="refund", source="square_invoice",
+        job=job, lead_id=inv.get("lead_id"), external_id=f"refund:{inv.get('invoice_id')}",
+        square_invoice_id=inv.get("invoice_id"), dedupe_key=f"sqinvrefund:{inv.get('invoice_id')}")
+
+
+async def _handle_refund_event(refund: Dict[str, Any], event: Dict[str, Any]) -> None:
+    """Square refund webhook. Book the negative ledger entry only when the refund is COMPLETED,
+    deduped by refund id so a repeated webhook (or a cumulative payment.refunded_money snapshot)
+    never double-reverses. The original payment entry is preserved."""
+    if (refund.get("status") or "").upper() != "COMPLETED":
+        return
+    rid = refund.get("id")
+    if not rid:
+        return
+    money = refund.get("amount_money") or {}
+    amt = round(float(money.get("amount") or 0) / 100, 2)
+    if amt <= 0:
+        return
+    payment_id = refund.get("payment_id")
+    job = await _resolve_job_for_payment(payment_id=payment_id)
+    await record_ledger_entry(
+        kind="refund", method="square", amount=amt, type_="refund", source="square_webhook",
+        job=job, external_id=rid, refund_of=payment_id, dedupe_key=f"sqrefund:{rid}",
+        occurred_at=event.get("created_at"))
+
+
+async def _server_remaining_balance(job: Dict[str, Any]) -> float:
+    """The exact outstanding balance, computed by the backend from the ledger — NEVER trusted from
+    the browser. Used when issuing a Square 'remaining balance' invoice."""
+    m = await compute_job_money(job)
+    return max(0.0, m["balance_due"])
+
+
+async def _job_ledger_block(job: Dict[str, Any]) -> Dict[str, Any]:
+    entries = await _ledger_entries_for_job(job)
+    money = compute_money_from_entries(entries, _job_total_for_money(job))
+    return {"money": money,
+            "entries": [_ledger_out(e) for e in sorted(entries,
+                         key=lambda e: e.get("occurred_at") or "", reverse=True)]}
+
+
+async def _backfill_payments_ledger() -> int:
+    """Opening balances: one ledger entry per existing PAID Square invoice so current collected
+    totals survive the cutover. Idempotent (dedupe by invoice id); safe to run every startup."""
+    created = 0
+    try:
+        docs = await mongo_db.square_invoices.find(
+            {"status": "PAID"}, {"_id": 0, "invoice_id": 1, "amount": 1, "lead_id": 1,
+                                 "purpose": 1, "quote_total": 1, "paid_at": 1}).to_list(5000)
+    except Exception as exc:
+        logger.warning("payments ledger backfill skipped: %s", exc)
+        return 0
+    for inv in docs:
+        if not inv.get("invoice_id"):
+            continue
+        _entry, was_new = await record_ledger_entry(
+            kind="payment", method="square", amount=float(inv.get("amount") or 0) or 0.0,
+            type_=_infer_purpose(inv), source="backfill",
+            job=await _resolve_job_for_payment(lead_id=inv.get("lead_id"), invoice_id=inv.get("invoice_id")),
+            lead_id=inv.get("lead_id"), external_id=inv.get("invoice_id"),
+            square_invoice_id=inv.get("invoice_id"), dedupe_key=f"sqinv:{inv.get('invoice_id')}",
+            occurred_at=inv.get("paid_at")) if float(inv.get("amount") or 0) > 0 else ({}, False)
+        created += 1 if was_new else 0
+    if created:
+        logger.info("payments ledger backfill: %s opening entries created", created)
+    return created
+
+
+# ---- finance permission: owner + users the owner grants finance_access ----
+async def _principal_has_finance(p: Dict[str, Any]) -> bool:
+    """True for the owner or a user the owner granted finance_access. Non-raising, so money
+    views (Job Detail ledger + balance) can light up for authorized users."""
+    if p.get("role") == "owner":
+        return True
+    if p.get("user_id"):
+        u = await mongo_db.users.find_one({"_id": p["user_id"]})
+        return bool(u and u.get("finance_access"))
+    return False
+
+
+async def require_finance(request: Request) -> Dict[str, Any]:
+    p = await current_principal(request)
+    if await _principal_has_finance(p):
+        return p
+    raise HTTPException(status_code=403, detail="Only the owner or an authorized finance user can record money.")
+
+
+@api_router.get("/users/finance-access")
+async def list_finance_access(p: Dict[str, Any] = Depends(require_owner)):
+    docs = await mongo_db.users.find({"finance_access": True}).to_list(200)
+    return {"access": [d["_id"] for d in docs]}
+
+
+@api_router.put("/users/{user_id}/finance-access")
+async def grant_finance_access(user_id: str, p: Dict[str, Any] = Depends(require_owner)):
+    u = await mongo_db.users.find_one({"_id": user_id})
+    if not u:
+        raise HTTPException(status_code=404, detail="No such team member.")
+    await mongo_db.users.update_one({"_id": user_id}, {"$set": {"finance_access": True}})
+    await audit(p, "granted finance (money) access", u.get("name") or user_id, {})
+    return {"user_id": user_id, "finance_access": True}
+
+
+@api_router.delete("/users/{user_id}/finance-access")
+async def revoke_finance_access(user_id: str, p: Dict[str, Any] = Depends(require_owner)):
+    u = await mongo_db.users.find_one({"_id": user_id})
+    if not u:
+        raise HTTPException(status_code=404, detail="No such team member.")
+    await mongo_db.users.update_one({"_id": user_id}, {"$unset": {"finance_access": ""}})
+    await audit(p, "removed finance (money) access", u.get("name") or user_id, {})
+    return {"user_id": user_id, "finance_access": False}
+
+
+class ManualPaymentPayload(BaseModel):
+    method: str
+    amount: float
+    type: Optional[str] = "payment"
+    note: Optional[str] = None
+    occurred_at: Optional[str] = None
+
+
+class ManualRefundPayload(BaseModel):
+    amount: float
+    reason: str
+    method: Optional[str] = "square"
+    of_payment_id: Optional[str] = None
+
+
+class AdjustmentPayload(BaseModel):
+    amount: float   # signed: positive increases collected, negative decreases
+    reason: str
+
+
+@api_router.get("/jobs/{ident}/ledger")
+async def get_job_ledger(ident: str, p: Dict[str, Any] = Depends(require_finance)):
+    job = await _resolve_money_job(ident)
+    if not job:
+        raise HTTPException(status_code=404, detail="No such job.")
+    block = await _job_ledger_block(job)
+    return {"job_id": job["_id"], "project_record_id": job.get("project_record_id"),
+            "invoice_number": job.get("invoice_number"), **block}
+
+
+@api_router.post("/jobs/{ident}/payments")
+async def record_manual_payment(ident: str, payload: ManualPaymentPayload,
+                                p: Dict[str, Any] = Depends(require_finance)):
+    job = await _resolve_money_job(ident)
+    if not job:
+        raise HTTPException(status_code=404, detail="No such job.")
+    method = (payload.method or "").strip().lower()
+    if method not in LEDGER_MANUAL_METHODS:
+        raise HTTPException(status_code=422, detail=f"Method must be one of: {', '.join(sorted(LEDGER_MANUAL_METHODS))}.")
+    if payload.amount is None or payload.amount <= 0:
+        raise HTTPException(status_code=422, detail="The amount must be more than $0.")
+    entry, _new = await record_ledger_entry(
+        kind="payment", method=method, amount=payload.amount, type_=(payload.type or "payment"),
+        source="manual", job=job, entered_by=p.get("name"), entered_by_id=p.get("user_id"),
+        note=(payload.note or None), occurred_at=payload.occurred_at, dedupe_key=f"manual:{uuid4()}")
+    await audit(p, f"recorded a {method} payment", f"job {job.get('invoice_number')}",
+                {"amount": payload.amount, "method": method})
+    fresh = await mongo_db.jobs.find_one({"_id": job["_id"]})
+    return {"entry": _ledger_out(entry), **(await _job_ledger_block(fresh))}
+
+
+@api_router.post("/jobs/{ident}/refunds")
+async def record_manual_refund(ident: str, payload: ManualRefundPayload,
+                               p: Dict[str, Any] = Depends(require_finance)):
+    job = await _resolve_money_job(ident)
+    if not job:
+        raise HTTPException(status_code=404, detail="No such job.")
+    if payload.amount is None or payload.amount <= 0:
+        raise HTTPException(status_code=422, detail="The refund amount must be more than $0.")
+    if len((payload.reason or "").strip()) < 3:
+        raise HTTPException(status_code=422, detail="Give a short reason for the refund (3+ characters).")
+    money = await compute_job_money(job)
+    if payload.amount > money["collected"] + MONEY_EPSILON:
+        raise HTTPException(status_code=422,
+                            detail=f"A refund can't exceed the ${money['collected']:,.2f} collected on this job.")
+    method = (payload.method or "square").strip().lower()
+    if method not in LEDGER_ALL_METHODS:
+        method = "other"
+    entry, _new = await record_ledger_entry(
+        kind="refund", method=method, amount=payload.amount, type_="refund", source="manual",
+        job=job, refund_of=payload.of_payment_id, entered_by=p.get("name"),
+        entered_by_id=p.get("user_id"), note=payload.reason.strip(), dedupe_key=f"manual:{uuid4()}")
+    await audit(p, "recorded a refund", f"job {job.get('invoice_number')}",
+                {"amount": payload.amount, "reason": payload.reason.strip()})
+    fresh = await mongo_db.jobs.find_one({"_id": job["_id"]})
+    return {"entry": _ledger_out(entry), **(await _job_ledger_block(fresh))}
+
+
+@api_router.post("/jobs/{ident}/adjustments")
+async def record_adjustment(ident: str, payload: AdjustmentPayload,
+                            p: Dict[str, Any] = Depends(require_owner)):
+    job = await _resolve_money_job(ident)
+    if not job:
+        raise HTTPException(status_code=404, detail="No such job.")
+    if len((payload.reason or "").strip()) < 3:
+        raise HTTPException(status_code=422, detail="Give a short reason for the adjustment (3+ characters).")
+    if payload.amount == 0:
+        raise HTTPException(status_code=422, detail="An adjustment can't be $0.")
+    entry, _new = await record_ledger_entry(
+        kind="adjustment", method="other", amount=payload.amount, type_="adjustment", source="manual",
+        job=job, entered_by=p.get("name"), entered_by_id=p.get("user_id"),
+        note=payload.reason.strip(), dedupe_key=f"manual:{uuid4()}")
+    await audit(p, "recorded a money adjustment", f"job {job.get('invoice_number')}",
+                {"amount": payload.amount, "reason": payload.reason.strip()})
+    fresh = await mongo_db.jobs.find_one({"_id": job["_id"]})
+    return {"entry": _ledger_out(entry), **(await _job_ledger_block(fresh))}
+
+
+@api_router.get("/jobs/{ident}/remaining-balance")
+async def get_remaining_balance(ident: str, p: Dict[str, Any] = Depends(require_finance)):
+    job = await _resolve_money_job(ident)
+    if not job:
+        raise HTTPException(status_code=404, detail="No such job.")
+    return {"job_id": job["_id"], "remaining_balance": await _server_remaining_balance(job),
+            "money": await compute_job_money(job)}
 
 
 # ------- Owner Jobs board
@@ -7325,7 +7808,7 @@ async def _job_quality_links(project_id: str, name: str) -> Dict[str, Any]:
 async def job_mgmt_detail(project_id: str, request: Request) -> Dict[str, Any]:
     p = await _require_job_mgmt(request)
     role = p["role"]
-    money = role == "owner"
+    money = await _principal_has_finance(p)
     show_contact = role in ("owner", "sales")
     try:
         record = await _fetch_project(project_id)
@@ -7429,6 +7912,8 @@ async def job_mgmt_detail(project_id: str, request: Request) -> Dict[str, Any]:
         "history": await _job_history(project_id, money),
         "can_edit": role == "owner",
         "can_see_money": money,
+        "can_record_money": money,
+        "money_ledger": (await _job_ledger_block(job)) if (job and money) else None,
         "can_see_quality": role in ("owner", "sales", "quality"),
         "can_see_compliance": role in ("owner", "sales", "quality"),
     }
@@ -14766,6 +15251,9 @@ async def seed_on_startup():
         await mongo_db.project_migration_queue.create_index("status")
         await mongo_db.canonical_link_events.create_index("project_record_id")
         await mongo_db.job_booking.create_index("project_record_id")
+        await mongo_db.payments.create_index("dedupe_key", unique=True, sparse=True)
+        await mongo_db.payments.create_index("job_id")
+        await mongo_db.payments.create_index("project_record_id")
         owner_email = os.environ.get("OWNER_EMAIL", "haulyeahadmin").strip().lower()
         owner_pw = os.environ.get("APP_PASSWORD", "")
         for legacy in ("keithriv24@gmail.com", "haulyeahowner"):
@@ -14820,6 +15308,10 @@ async def seed_on_startup():
         await backfill_jobs_from_paid_invoices()
     except Exception as exc:
         logger.error("Job backfill on startup failed: %s", exc)
+    try:
+        await _backfill_payments_ledger()
+    except Exception as exc:
+        logger.error("Payments ledger backfill on startup failed: %s", exc)
 
 
 app.include_router(auth_router)
